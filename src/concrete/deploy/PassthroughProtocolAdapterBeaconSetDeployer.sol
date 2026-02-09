@@ -66,13 +66,14 @@ contract PassthroughProtocolAdapterBeaconSetDeployer {
         external
         returns (PassthroughProtocolAdapter)
     {
-        PassthroughProtocolAdapter adapter =
-            PassthroughProtocolAdapter(address(new BeaconProxy(address(I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON), "")));
+        PassthroughProtocolAdapter adapter = PassthroughProtocolAdapter(
+            address(new BeaconProxy(address(I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON), ""))
+        );
 
         if (
             adapter.initialize(
-                abi.encode(PassthroughProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
-            ) != ICLONEABLE_V2_SUCCESS
+                    abi.encode(PassthroughProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
+                ) != ICLONEABLE_V2_SUCCESS
         ) {
             revert InitializeAdapterFailed();
         }

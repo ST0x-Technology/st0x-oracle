@@ -66,8 +66,8 @@ contract MorphoProtocolAdapterBeaconSetDeployer {
 
         if (
             adapter.initialize(
-                abi.encode(MorphoProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
-            ) != ICLONEABLE_V2_SUCCESS
+                    abi.encode(MorphoProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
+                ) != ICLONEABLE_V2_SUCCESS
         ) {
             revert InitializeAdapterFailed();
         }

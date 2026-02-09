@@ -6,8 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {OracleUnifiedDeployer} from "src/concrete/deploy/OracleUnifiedDeployer.sol";
 import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 import {PythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
-import {PassthroughProtocolAdapterBeaconSetDeployer} from
-    "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {
+    PassthroughProtocolAdapterBeaconSetDeployer
+} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
 import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
 import {PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {OracleRegistry, OracleRegistryConfig} from "src/concrete/registry/OracleRegistry.sol";
@@ -24,8 +25,7 @@ contract OracleUnifiedDeployerTest is Test {
         I_REGISTRY_IMPLEMENTATION = new OracleRegistry();
         I_REGISTRY_DEPLOYER = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
+                initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
     }

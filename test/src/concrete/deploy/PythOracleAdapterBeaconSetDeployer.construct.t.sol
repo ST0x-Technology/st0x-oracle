@@ -17,21 +17,19 @@ contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
         new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner,
-                initialPythOracleAdapterImplementation: address(0)
+                initialOwner: initialOwner, initialPythOracleAdapterImplementation: address(0)
             })
         );
     }
 
-    function testPythOracleAdapterBeaconSetDeployerConstructZeroBeaconOwner(
-        address initialPythOracleAdapterImplementation
-    ) external {
+    function testPythOracleAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialPythOracleAdapterImplementation)
+        external
+    {
         vm.assume(initialPythOracleAdapterImplementation != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: address(0),
-                initialPythOracleAdapterImplementation: initialPythOracleAdapterImplementation
+                initialOwner: address(0), initialPythOracleAdapterImplementation: initialPythOracleAdapterImplementation
             })
         );
     }
@@ -42,8 +40,7 @@ contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
 
         PythOracleAdapterBeaconSetDeployer deployer = new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner,
-                initialPythOracleAdapterImplementation: address(implementation)
+                initialOwner: initialOwner, initialPythOracleAdapterImplementation: address(implementation)
             })
         );
 

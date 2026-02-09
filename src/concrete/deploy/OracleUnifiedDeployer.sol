@@ -3,8 +3,9 @@
 pragma solidity =0.8.25;
 
 import {PythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
-import {PassthroughProtocolAdapterBeaconSetDeployer} from
-    "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {
+    PassthroughProtocolAdapterBeaconSetDeployer
+} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
 import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
 import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
@@ -34,20 +35,21 @@ contract OracleUnifiedDeployer {
     {
         // 1. Deploy oracle adapter
         PythOracleAdapter oracleAdapter = PythOracleAdapterBeaconSetDeployer(
-            LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
-        ).newPythOracleAdapter(
-            PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: maxAge, admin: msg.sender})
-        );
+                LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
+            )
+            .newPythOracleAdapter(
+                PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: maxAge, admin: msg.sender})
+            );
 
         // 2. Deploy Morpho protocol adapter
         MorphoProtocolAdapter morphoAdapter = MorphoProtocolAdapterBeaconSetDeployer(
-            LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER
-        ).newMorphoProtocolAdapter(registry, vault, msg.sender);
+                LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER
+            ).newMorphoProtocolAdapter(registry, vault, msg.sender);
 
         // 3. Deploy passthrough protocol adapter (for Aave/Compound)
         PassthroughProtocolAdapter passthroughAdapter = PassthroughProtocolAdapterBeaconSetDeployer(
-            LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER
-        ).newPassthroughProtocolAdapter(registry, vault, msg.sender);
+                LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER
+            ).newPassthroughProtocolAdapter(registry, vault, msg.sender);
 
         emit Deployment(msg.sender, address(oracleAdapter), address(morphoAdapter), address(passthroughAdapter));
     }

@@ -17,8 +17,7 @@ contract OracleRegistryTest is Test {
         I_IMPLEMENTATION = new OracleRegistry();
         I_DEPLOYER = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialOracleRegistryImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this), initialOracleRegistryImplementation: address(I_IMPLEMENTATION)
             })
         );
     }
