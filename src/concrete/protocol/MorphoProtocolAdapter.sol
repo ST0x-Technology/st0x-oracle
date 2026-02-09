@@ -10,6 +10,9 @@ import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 /// @dev Error raised when the caller is not the admin.
 error OnlyAdmin();
 
+/// @dev Error raised when a zero address is provided for the admin.
+error ZeroAdmin();
+
 /// @dev Error raised when a zero address is provided for the registry.
 error ZeroRegistry();
 
@@ -56,6 +59,8 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
     event MorphoProtocolAdapterInitialized(address indexed sender, MorphoProtocolAdapterConfig config);
     /// @dev Emitted when the registry reference is updated.
     event RegistrySet(address indexed oldRegistry, address indexed newRegistry);
+    /// @dev Emitted when the admin is changed.
+    event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
@@ -75,6 +80,7 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
 
         if (address(config.registry) == address(0)) revert ZeroRegistry();
         if (config.vault == address(0)) revert ZeroVault();
+        if (config.admin == address(0)) revert ZeroAdmin();
 
         registry = config.registry;
         vault = config.vault;
@@ -95,6 +101,14 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
         if (address(newRegistry) == address(0)) revert ZeroRegistry();
         emit RegistrySet(address(registry), address(newRegistry));
         registry = newRegistry;
+    }
+
+    /// @notice Update the admin address. Admin only.
+    /// @param newAdmin The new admin address.
+    function setAdmin(address newAdmin) external onlyAdmin {
+        if (newAdmin == address(0)) revert ZeroAdmin();
+        emit AdminSet(admin, newAdmin);
+        admin = newAdmin;
     }
 
     /// @notice Returns the price scaled to 36 decimals as required by Morpho

@@ -10,6 +10,9 @@ import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 /// @dev Error raised when the caller is not the admin.
 error OnlyAdmin();
 
+/// @dev Error raised when a zero address is provided for the admin.
+error ZeroAdmin();
+
 /// @dev Error raised when a zero address is provided for the registry.
 error ZeroRegistry();
 
@@ -36,7 +39,7 @@ struct PassthroughProtocolAdapterConfig {
 /// calls to the underlying oracle adapter. The registry reference is updatable
 /// by the admin, allowing oracle swaps without protocol governance.
 /// Deploy multiple proxy instances from the same beacon for different protocols.
-contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
+contract PassthroughProtocolAdapter is AggregatorV3Interface, ICloneableV2, Initializable {
     /// @dev The oracle registry for looking up the oracle adapter.
     OracleRegistry public registry;
     /// @dev The vault address this adapter serves.
@@ -48,6 +51,8 @@ contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
     event PassthroughProtocolAdapterInitialized(address indexed sender, PassthroughProtocolAdapterConfig config);
     /// @dev Emitted when the registry reference is updated.
     event RegistrySet(address indexed oldRegistry, address indexed newRegistry);
+    /// @dev Emitted when the admin is changed.
+    event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
@@ -67,6 +72,7 @@ contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
 
         if (address(config.registry) == address(0)) revert ZeroRegistry();
         if (config.vault == address(0)) revert ZeroVault();
+        if (config.admin == address(0)) revert ZeroAdmin();
 
         registry = config.registry;
         vault = config.vault;
@@ -89,6 +95,14 @@ contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
         registry = newRegistry;
     }
 
+    /// @notice Update the admin address. Admin only.
+    /// @param newAdmin The new admin address.
+    function setAdmin(address newAdmin) external onlyAdmin {
+        if (newAdmin == address(0)) revert ZeroAdmin();
+        emit AdminSet(admin, newAdmin);
+        admin = newAdmin;
+    }
+
     /// @dev Internal helper to get the oracle from registry and revert if not found.
     function _getOracle() internal view returns (AggregatorV3Interface) {
         AggregatorV3Interface oracle = registry.getOracle(vault);
@@ -96,26 +110,32 @@ contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
         return oracle;
     }
 
-    /// @notice Returns the number of decimals from the underlying oracle.
-    function decimals() external view returns (uint8) {
+    /// @inheritdoc AggregatorV3Interface
+    function decimals() external view override returns (uint8) {
         return _getOracle().decimals();
     }
 
-    /// @notice Returns the description from the underlying oracle.
-    function description() external view returns (string memory) {
+    /// @inheritdoc AggregatorV3Interface
+    function description() external view override returns (string memory) {
         return _getOracle().description();
     }
 
-    /// @notice Returns the latest answer from the underlying oracle.
-    function latestAnswer() external view returns (int256) {
+    /// @inheritdoc AggregatorV3Interface
+    function version() external view override returns (uint256) {
+        return _getOracle().version();
+    }
+
+    /// @inheritdoc AggregatorV3Interface
+    function latestAnswer() external view override returns (int256) {
         return _getOracle().latestAnswer();
     }
 
-    /// @notice Returns the latest round data from the underlying oracle.
+    /// @inheritdoc AggregatorV3Interface
     // slither-disable-next-line unused-return
     function latestRoundData()
         external
         view
+        override
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
         return _getOracle().latestRoundData();

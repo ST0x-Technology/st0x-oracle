@@ -7,6 +7,7 @@ import {
     MorphoProtocolAdapter,
     MorphoProtocolAdapterConfig,
     OnlyAdmin,
+    ZeroAdmin,
     ZeroRegistry,
     ZeroVault,
     OracleNotFound,
@@ -63,10 +64,20 @@ contract MorphoProtocolAdapterTest is Test {
         I_DEPLOYER.newMorphoProtocolAdapter(registry, address(0), admin);
     }
 
+    /// Test that initialization with zero admin reverts.
+    function testInitializeZeroAdmin(address registryAdmin, address vault) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, address(0));
+    }
+
     /// Test successful initialization.
     function testInitializeSuccess(address registryAdmin, address vault, address admin) external {
         vm.assume(registryAdmin != address(0));
         vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
 
         OracleRegistry registry = _createRegistry(registryAdmin);
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
@@ -80,6 +91,7 @@ contract MorphoProtocolAdapterTest is Test {
     function testInitializeEvent(address registryAdmin, address vault, address admin) external {
         vm.assume(registryAdmin != address(0));
         vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
 
         OracleRegistry registry = _createRegistry(registryAdmin);
 

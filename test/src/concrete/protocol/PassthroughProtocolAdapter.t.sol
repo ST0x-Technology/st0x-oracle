@@ -7,6 +7,7 @@ import {
     PassthroughProtocolAdapter,
     PassthroughProtocolAdapterConfig,
     OnlyAdmin,
+    ZeroAdmin,
     ZeroRegistry,
     ZeroVault,
     OracleNotFound
@@ -57,15 +58,26 @@ contract PassthroughProtocolAdapterTest is Test {
     /// Test that initialization with zero vault reverts.
     function testInitializeZeroVault(address registryAdmin, address admin) external {
         vm.assume(registryAdmin != address(0));
+        vm.assume(admin != address(0));
         OracleRegistry registry = _createRegistry(registryAdmin);
         vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
         I_DEPLOYER.newPassthroughProtocolAdapter(registry, address(0), admin);
+    }
+
+    /// Test that initialization with zero admin reverts.
+    function testInitializeZeroAdmin(address registryAdmin, address vault) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, address(0));
     }
 
     /// Test successful initialization.
     function testInitializeSuccess(address registryAdmin, address vault, address admin) external {
         vm.assume(registryAdmin != address(0));
         vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
 
         OracleRegistry registry = _createRegistry(registryAdmin);
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
@@ -79,6 +91,7 @@ contract PassthroughProtocolAdapterTest is Test {
     function testInitializeEvent(address registryAdmin, address vault, address admin) external {
         vm.assume(registryAdmin != address(0));
         vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
 
         OracleRegistry registry = _createRegistry(registryAdmin);
 
