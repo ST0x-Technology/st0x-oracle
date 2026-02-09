@@ -34,13 +34,15 @@ contract MorphoProtocolAdapterTest is Test {
         I_IMPLEMENTATION = new MorphoProtocolAdapter();
         I_DEPLOYER = new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this), initialMorphoProtocolAdapterImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this),
+                initialMorphoProtocolAdapterImplementation: address(I_IMPLEMENTATION)
             })
         );
         I_REGISTRY_IMPLEMENTATION = new OracleRegistry();
         I_REGISTRY_DEPLOYER = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
+                initialOwner: address(this),
+                initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
     }
@@ -262,5 +264,52 @@ contract MorphoProtocolAdapterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
         adapter.price();
+    }
+
+    /// Test setAdmin by admin.
+    function testSetAdmin(address registryAdmin, address vault, address admin, address newAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(newAdmin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectEmit(true, true, true, true);
+        emit MorphoProtocolAdapter.AdminSet(admin, newAdmin);
+        vm.prank(admin);
+        adapter.setAdmin(newAdmin);
+
+        assertEq(adapter.admin(), newAdmin);
+    }
+
+    /// Test setAdmin reverts for non-admin.
+    function testSetAdminOnlyAdmin(address registryAdmin, address vault, address admin, address nonAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(nonAdmin != admin);
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.prank(nonAdmin);
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        adapter.setAdmin(address(1));
+    }
+
+    /// Test setAdmin with zero address reverts.
+    function testSetAdminZeroAddress(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        adapter.setAdmin(address(0));
     }
 }

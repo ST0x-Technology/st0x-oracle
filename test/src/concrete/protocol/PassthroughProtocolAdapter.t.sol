@@ -33,13 +33,15 @@ contract PassthroughProtocolAdapterTest is Test {
         I_IMPLEMENTATION = new PassthroughProtocolAdapter();
         I_DEPLOYER = new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this), initialPassthroughProtocolAdapterImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this),
+                initialPassthroughProtocolAdapterImplementation: address(I_IMPLEMENTATION)
             })
         );
         I_REGISTRY_IMPLEMENTATION = new OracleRegistry();
         I_REGISTRY_DEPLOYER = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
+                initialOwner: address(this),
+                initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
     }
@@ -160,6 +162,53 @@ contract PassthroughProtocolAdapterTest is Test {
         adapter.setRegistry(OracleRegistry(address(0)));
     }
 
+    /// Test setAdmin by admin.
+    function testSetAdmin(address registryAdmin, address vault, address admin, address newAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(newAdmin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        vm.expectEmit(true, true, true, true);
+        emit PassthroughProtocolAdapter.AdminSet(admin, newAdmin);
+        vm.prank(admin);
+        adapter.setAdmin(newAdmin);
+
+        assertEq(adapter.admin(), newAdmin);
+    }
+
+    /// Test setAdmin reverts for non-admin.
+    function testSetAdminOnlyAdmin(address registryAdmin, address vault, address admin, address nonAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(nonAdmin != admin);
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        vm.prank(nonAdmin);
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        adapter.setAdmin(address(1));
+    }
+
+    /// Test setAdmin with zero address reverts.
+    function testSetAdminZeroAddress(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        adapter.setAdmin(address(0));
+    }
+
     /// Test passthrough functions revert when oracle not found.
     function testOracleNotFound(address registryAdmin, address vault, address admin) external {
         vm.assume(registryAdmin != address(0));
@@ -174,6 +223,9 @@ contract PassthroughProtocolAdapterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(OracleNotFound.selector));
         adapter.description();
+
+        vm.expectRevert(abi.encodeWithSelector(OracleNotFound.selector));
+        adapter.version();
 
         vm.expectRevert(abi.encodeWithSelector(OracleNotFound.selector));
         adapter.latestAnswer();
@@ -269,5 +321,24 @@ contract PassthroughProtocolAdapterTest is Test {
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
 
         assertEq(adapter.description(), "");
+    }
+
+    /// Test passthrough of version.
+    function testPassthroughVersion(address admin) external {
+        vm.assume(admin != address(0));
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        // Create registry and register oracle
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+
+        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV3Interface.version.selector), abi.encode(uint256(1)));
+
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        assertEq(adapter.version(), 1);
     }
 }

@@ -27,7 +27,8 @@ contract PythOracleAdapterLatestAnswerTest is Test {
         PythOracleAdapter implementation = new PythOracleAdapter();
         I_DEPLOYER = new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this), initialPythOracleAdapterImplementation: address(implementation)
+                initialOwner: address(this),
+                initialPythOracleAdapterImplementation: address(implementation)
             })
         );
     }
@@ -50,7 +51,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -70,7 +74,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle2x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault2x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault2x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -79,7 +86,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -97,7 +107,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -112,7 +125,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -135,7 +151,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -150,7 +169,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracleDiv = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVaultDiv, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVaultDiv,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 
@@ -159,7 +181,10 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this)
             })
         );
 

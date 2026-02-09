@@ -12,19 +12,22 @@ import {
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
 
 contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
-    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
+    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner)
+        external
+    {
         vm.assume(initialOwner != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
         new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner, initialPassthroughProtocolAdapterImplementation: address(0)
+                initialOwner: initialOwner,
+                initialPassthroughProtocolAdapterImplementation: address(0)
             })
         );
     }
 
-    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialPassthroughProtocolAdapterImplementation)
-        external
-    {
+    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(
+        address initialPassthroughProtocolAdapterImplementation
+    ) external {
         vm.assume(initialPassthroughProtocolAdapterImplementation != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new PassthroughProtocolAdapterBeaconSetDeployer(
@@ -41,7 +44,8 @@ contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
 
         PassthroughProtocolAdapterBeaconSetDeployer deployer = new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner, initialPassthroughProtocolAdapterImplementation: address(implementation)
+                initialOwner: initialOwner,
+                initialPassthroughProtocolAdapterImplementation: address(implementation)
             })
         );
 

@@ -18,7 +18,8 @@ contract OracleRegistryBeaconSetDeployerConstructTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
         new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: initialOwner, initialOracleRegistryImplementation: address(0)
+                initialOwner: initialOwner,
+                initialOracleRegistryImplementation: address(0)
             })
         );
     }
@@ -29,7 +30,8 @@ contract OracleRegistryBeaconSetDeployerConstructTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(0), initialOracleRegistryImplementation: implementation
+                initialOwner: address(0),
+                initialOracleRegistryImplementation: implementation
             })
         );
     }
@@ -42,7 +44,8 @@ contract OracleRegistryBeaconSetDeployerConstructTest is Test {
 
         OracleRegistryBeaconSetDeployer deployer = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: initialOwner, initialOracleRegistryImplementation: address(implementation)
+                initialOwner: initialOwner,
+                initialOracleRegistryImplementation: address(implementation)
             })
         );
 

@@ -222,12 +222,20 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         oracles[2] = AggregatorV3Interface(address(6));
 
         vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit OracleSet(vaults[0], address(0), address(oracles[0]));
+        vm.expectEmit(true, true, true, true);
+        emit OracleSet(vaults[1], address(0), address(oracles[1]));
+        vm.expectEmit(true, true, true, true);
+        emit OracleSet(vaults[2], address(0), address(oracles[2]));
         registry.setOracleBulk(vaults, oracles);
 
         assertEq(address(registry.getOracle(vaults[0])), address(oracles[0]));
         assertEq(address(registry.getOracle(vaults[1])), address(oracles[1]));
         assertEq(address(registry.getOracle(vaults[2])), address(oracles[2]));
     }
+
+    event OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle);
 }
 
 contract OracleRegistryGetOracleTest is OracleRegistryTest {

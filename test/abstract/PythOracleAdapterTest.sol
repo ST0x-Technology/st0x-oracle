@@ -17,7 +17,8 @@ contract PythOracleAdapterTest is Test {
         I_IMPLEMENTATION = new PythOracleAdapter();
         I_DEPLOYER = new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this), initialPythOracleAdapterImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this),
+                initialPythOracleAdapterImplementation: address(I_IMPLEMENTATION)
             })
         );
     }
