@@ -33,15 +33,13 @@ contract PassthroughProtocolAdapterTest is Test {
         I_IMPLEMENTATION = new PassthroughProtocolAdapter();
         I_DEPLOYER = new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialPassthroughProtocolAdapterImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this), initialPassthroughProtocolAdapterImplementation: address(I_IMPLEMENTATION)
             })
         );
         I_REGISTRY_IMPLEMENTATION = new OracleRegistry();
         I_REGISTRY_DEPLOYER = new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
+                initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
     }

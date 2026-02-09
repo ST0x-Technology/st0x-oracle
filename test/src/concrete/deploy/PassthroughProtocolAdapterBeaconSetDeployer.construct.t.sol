@@ -22,9 +22,9 @@ contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
         );
     }
 
-    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(
-        address initialPassthroughProtocolAdapterImplementation
-    ) external {
+    function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialPassthroughProtocolAdapterImplementation)
+        external
+    {
         vm.assume(initialPassthroughProtocolAdapterImplementation != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new PassthroughProtocolAdapterBeaconSetDeployer(

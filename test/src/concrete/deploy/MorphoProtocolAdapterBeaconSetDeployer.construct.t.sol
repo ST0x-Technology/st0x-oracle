@@ -22,9 +22,9 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
         );
     }
 
-    function testMorphoProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(
-        address initialMorphoProtocolAdapterImplementation
-    ) external {
+    function testMorphoProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialMorphoProtocolAdapterImplementation)
+        external
+    {
         vm.assume(initialMorphoProtocolAdapterImplementation != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new MorphoProtocolAdapterBeaconSetDeployer(
