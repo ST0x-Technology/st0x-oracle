@@ -58,4 +58,4 @@ jobs:
           ETHERSCAN_API_KEY: ${{ secrets.BASESCAN_API_KEY }}
           DEPLOY_VERIFY: '1'
           DEPLOY_VERIFIER: 'etherscan'
-          DEPLOY_VERIFIER_URL: 'https://api.basescan.org/api'
+          DEPLOY_VERIFIER_URL: 'https://api.etherscan.io/v2/api?chainid=8453'
