@@ -38,15 +38,41 @@ library LibProdOracles {
 /// These tests run against real deployed contracts on a Base fork to verify
 /// correct behavior with live Pyth prices and vault state.
 ///
-/// To run: forge test --match-contract ProdForkTest --fork-url $RPC_URL_BASE
+/// To run: forge test --match-contract ProdForkTest --fork-url $RPC_URL_BASE_FORK
 ///
 /// NOTE: Tests will be skipped (pass vacuously) until oracle addresses are
 /// set in LibProdOracles. This allows the PR to merge before deployment.
 contract ProdForkTest is Test {
-    /// @dev Skip modifier for tests that require deployed oracles.
-    /// Remove once addresses are populated.
-    modifier onlyIfDeployed() {
+    /// @dev Skip modifier for oracle-only tests.
+    modifier onlyIfOracleDeployed() {
         if (LibProdOracles.WTCOIN_ORACLE == address(0)) {
+            return;
+        }
+        _;
+    }
+
+    /// @dev Skip modifier for Morpho adapter tests.
+    modifier onlyIfMorphoDeployed() {
+        if (LibProdOracles.WTCOIN_MORPHO == address(0)) {
+            return;
+        }
+        _;
+    }
+
+    /// @dev Skip modifier for Passthrough adapter tests.
+    modifier onlyIfPassthroughDeployed() {
+        if (LibProdOracles.WTCOIN_PASSTHROUGH == address(0)) {
+            return;
+        }
+        _;
+    }
+
+    /// @dev Skip modifier for tests that require all three deployed.
+    modifier onlyIfAllDeployed() {
+        if (
+            LibProdOracles.WTCOIN_ORACLE == address(0) || LibProdOracles.WTCOIN_MORPHO == address(0)
+                || LibProdOracles.WTCOIN_PASSTHROUGH == address(0)
+        ) {
             return;
         }
         _;
@@ -61,7 +87,7 @@ contract ProdForkTest is Test {
     // =========================================================================
 
     /// @notice Oracle returns a positive price for wtCOIN.
-    function testProdWtcoinOracleLatestAnswer() external onlyIfDeployed {
+    function testProdWtcoinOracleLatestAnswer() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -74,7 +100,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Oracle returns valid latestRoundData.
-    function testProdWtcoinOracleLatestRoundData() external onlyIfDeployed {
+    function testProdWtcoinOracleLatestRoundData() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -91,7 +117,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Oracle reports 8 decimals.
-    function testProdWtcoinOracleDecimals() external onlyIfDeployed {
+    function testProdWtcoinOracleDecimals() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -99,7 +125,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Oracle config matches expected values.
-    function testProdWtcoinOracleConfig() external onlyIfDeployed {
+    function testProdWtcoinOracleConfig() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -110,7 +136,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Oracle reverts when paused.
-    function testProdWtcoinOracleRevertsWhenPaused() external onlyIfDeployed {
+    function testProdWtcoinOracleRevertsWhenPaused() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -131,7 +157,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Only admin can pause.
-    function testProdWtcoinOracleOnlyAdminCanPause() external onlyIfDeployed {
+    function testProdWtcoinOracleOnlyAdminCanPause() external onlyIfOracleDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -146,7 +172,7 @@ contract ProdForkTest is Test {
     // =========================================================================
 
     /// @notice Morpho adapter returns price scaled to 36 decimals.
-    function testProdWtcoinMorphoPrice() external onlyIfDeployed {
+    function testProdWtcoinMorphoPrice() external onlyIfMorphoDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -160,7 +186,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Morpho adapter points to the correct oracle.
-    function testProdWtcoinMorphoOracleRef() external onlyIfDeployed {
+    function testProdWtcoinMorphoOracleRef() external onlyIfMorphoDeployed {
         _forkBase();
 
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MORPHO);
@@ -174,7 +200,7 @@ contract ProdForkTest is Test {
     // =========================================================================
 
     /// @notice Passthrough adapter returns same answer as oracle.
-    function testProdWtcoinPassthroughAnswer() external onlyIfDeployed {
+    function testProdWtcoinPassthroughAnswer() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -187,7 +213,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Passthrough adapter returns same roundData as oracle.
-    function testProdWtcoinPassthroughRoundData() external onlyIfDeployed {
+    function testProdWtcoinPassthroughRoundData() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -201,7 +227,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Passthrough adapter reports 8 decimals.
-    function testProdWtcoinPassthroughDecimals() external onlyIfDeployed {
+    function testProdWtcoinPassthroughDecimals() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
@@ -209,7 +235,7 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Passthrough adapter points to the correct oracle.
-    function testProdWtcoinPassthroughOracleRef() external onlyIfDeployed {
+    function testProdWtcoinPassthroughOracleRef() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
@@ -225,7 +251,7 @@ contract ProdForkTest is Test {
     // =========================================================================
 
     /// @notice All three contracts return consistent prices.
-    function testProdWtcoinPriceConsistency() external onlyIfDeployed {
+    function testProdWtcoinPriceConsistency() external onlyIfAllDeployed {
         _forkBase();
 
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
@@ -246,7 +272,7 @@ contract ProdForkTest is Test {
     // =========================================================================
 
     /// @notice Protocol adapters can swap oracle reference.
-    function testProdWtcoinSetOracle() external onlyIfDeployed {
+    function testProdWtcoinSetOracle() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
