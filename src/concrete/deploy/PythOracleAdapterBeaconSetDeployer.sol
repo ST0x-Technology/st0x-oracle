@@ -53,6 +53,7 @@ contract PythOracleAdapterBeaconSetDeployer {
     /// @notice Deploys and initializes a new PythOracleAdapter proxy.
     /// @param config The initialization configuration.
     /// @return adapter The deployed PythOracleAdapter proxy.
+    // slither-disable-next-line reentrancy-events
     function newPythOracleAdapter(PythOracleAdapterConfig memory config) external returns (PythOracleAdapter) {
         PythOracleAdapter adapter =
             PythOracleAdapter(address(new BeaconProxy(address(I_PYTH_ORACLE_ADAPTER_BEACON), "")));

@@ -7,7 +7,7 @@ import {UpgradeableBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/U
 import {BeaconProxy} from "openzeppelin-contracts/contracts/proxy/beacon/BeaconProxy.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
 import {MorphoProtocolAdapter, MorphoProtocolAdapterConfig} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error ZeroImplementation();
@@ -52,10 +52,12 @@ contract MorphoProtocolAdapterBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new MorphoProtocolAdapter proxy.
-    /// @param oracle The oracle adapter address.
+    /// @param registry The oracle registry address.
+    /// @param vault The vault address this adapter serves.
     /// @param admin The admin address.
     /// @return adapter The deployed MorphoProtocolAdapter proxy.
-    function newMorphoProtocolAdapter(AggregatorV3Interface oracle, address admin)
+    // slither-disable-next-line reentrancy-events
+    function newMorphoProtocolAdapter(OracleRegistry registry, address vault, address admin)
         external
         returns (MorphoProtocolAdapter)
     {
@@ -63,8 +65,9 @@ contract MorphoProtocolAdapterBeaconSetDeployer {
             MorphoProtocolAdapter(address(new BeaconProxy(address(I_MORPHO_PROTOCOL_ADAPTER_BEACON), "")));
 
         if (
-            adapter.initialize(abi.encode(MorphoProtocolAdapterConfig({oracle: oracle, admin: admin})))
-                != ICLONEABLE_V2_SUCCESS
+            adapter.initialize(
+                    abi.encode(MorphoProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
+                ) != ICLONEABLE_V2_SUCCESS
         ) {
             revert InitializeAdapterFailed();
         }

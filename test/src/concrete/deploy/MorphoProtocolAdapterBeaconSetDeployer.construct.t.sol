@@ -17,15 +17,14 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
         new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner,
-                initialMorphoProtocolAdapterImplementation: address(0)
+                initialOwner: initialOwner, initialMorphoProtocolAdapterImplementation: address(0)
             })
         );
     }
 
-    function testMorphoProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(
-        address initialMorphoProtocolAdapterImplementation
-    ) external {
+    function testMorphoProtocolAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialMorphoProtocolAdapterImplementation)
+        external
+    {
         vm.assume(initialMorphoProtocolAdapterImplementation != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new MorphoProtocolAdapterBeaconSetDeployer(
@@ -42,8 +41,7 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
 
         MorphoProtocolAdapterBeaconSetDeployer deployer = new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: initialOwner,
-                initialMorphoProtocolAdapterImplementation: address(implementation)
+                initialOwner: initialOwner, initialMorphoProtocolAdapterImplementation: address(implementation)
             })
         );
 

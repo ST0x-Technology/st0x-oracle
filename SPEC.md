@@ -1,9 +1,9 @@
 # 🔮 ST0x Oracle Adapters Specification
 
 **Repository:** `st0x.oracle`
-**Version:** 1.0
+**Version:** 2.0
 **Status:** Draft
-**Date:** 2026-02-01
+**Date:** 2026-02-06
 
 ---
 
@@ -23,6 +23,7 @@ The underlying price source is **Pyth Network**, which provides NBBO pricing for
 2. Oracle addresses are often immutable once set in lending markets (especially Morpho)
 3. Corporate actions (splits, dividends) require pausing price feeds temporarily
 4. Upgrades to one layer shouldn't require upgrades to another
+5. Swapping oracles requires updating multiple protocol adapters individually
 
 ---
 
@@ -32,7 +33,8 @@ The underlying price source is **Pyth Network**, which provides NBBO pricing for
 2. **Industry standard interface**: Use Chainlink's `AggregatorV3Interface` as the contract boundary
 3. **Swappable sources**: Protocol adapters can point to any oracle (Pyth today, Chainlink tomorrow)
 4. **Independent upgrade paths**: Fix bugs in Pyth parsing without touching protocol adapters
-5. **Beacon proxy pattern**: Both layers use beacon proxies per `st0x.deploy` patterns
+5. **Beacon proxy pattern**: All layers use beacon proxies per `st0x.deploy` patterns
+6. **Centralized oracle management**: Single registry update propagates to all protocol adapters
 
 ### 2.1 Relationship to rain.pyth
 
@@ -55,17 +57,30 @@ The underlying price source is **Pyth Network**, which provides NBBO pricing for
 
 ```
 PROTOCOL ADAPTERS
-(indirection layer - allows oracle swaps without protocol governance)
+(indirection layer - looks up oracle from registry)
 
 ┌─────────────────┐  ┌────────────────────────────────────┐
 │ MorphoAdapter   │  │ PassthroughAdapter                 │
 │                 │  │ (multiple instances: Aave,         │
 │ IOracle         │  │  Compound, future protocols)       │
 │ (8→36 dec)      │  │ AggregatorV3 (passthrough)         │
+│                 │  │                                    │
+│ stores:         │  │ stores:                            │
+│  - registry     │  │  - registry                        │
+│  - vault        │  │  - vault                           │
 └───────┬─────────┘  └───────────────┬────────────────────┘
         │                            │
         └────────────┬───────────────┘
                      ▼
+           ┌─────────────────────────┐
+           │     OracleRegistry      │  ← centralized vault→oracle mapping
+           │                         │
+           │  getOracle(vault)       │
+           │  setOracle(vault, oracle)│
+           │  setOracleBulk(...)     │
+           └───────────┬─────────────┘
+                       │
+                       ▼
            ┌─────────────────────────┐
            │  AggregatorV3Interface  │  ← industry standard
            └─────────────────────────┘
@@ -86,7 +101,19 @@ ORACLE ADAPTERS
 (canonical oracle per asset, all governance here)
 ```
 
-**Why protocol adapters for ALL protocols (even Chainlink-compatible ones):**
+**Why a registry layer:**
+
+Without registry:
+- Each protocol adapter stores its own oracle reference
+- Pyth dies → Need to call `setOracle()` on every protocol adapter individually
+- N vaults × M protocols = N×M `setOracle()` calls
+
+With registry:
+- Protocol adapters look up oracle from registry at runtime
+- Pyth dies → Call `registry.setOracle(vault, chainlinkOracle)` once
+- N vaults = N `setOracle()` calls (regardless of protocol count)
+
+**Why protocol adapters still exist (even with registry):**
 
 Without protocol adapter:
 - Aave/Compound points directly to `PythOracleAdapter`
@@ -95,12 +122,53 @@ Without protocol adapter:
 
 With protocol adapter:
 - Aave/Compound points to `PassthroughProtocolAdapter`
-- Pyth dies → ST0x calls `protocolAdapter.setOracle(chainlinkOracleAdapter)`
+- Pyth dies → ST0x calls `registry.setOracle(vault, chainlinkOracleAdapter)`
 - Protocol is unaware, no governance action needed on their side
 
 ---
 
-## 4. Protocol Adapter Types
+## 4. OracleRegistry Implementation
+
+Centralized vault→oracle mapping. Beacon proxy pattern.
+
+**Storage:**
+
+```solidity
+address public admin;
+mapping(address vault => AggregatorV3Interface oracle) internal _oracles;
+```
+
+**Functions:**
+
+```solidity
+/// @notice Set or update the oracle for a vault. Admin only.
+/// @dev Upsert semantics - works for both new registration and updates.
+function setOracle(address vault, AggregatorV3Interface oracle) external onlyAdmin;
+
+/// @notice Bulk set or update oracles for multiple vaults. Admin only.
+function setOracleBulk(address[] calldata vaults, AggregatorV3Interface[] calldata oracles) external onlyAdmin;
+
+/// @notice Get the oracle for a vault.
+/// @return The oracle adapter, or address(0) if not registered.
+function getOracle(address vault) external view returns (AggregatorV3Interface);
+```
+
+**Events:**
+
+- `OracleRegistryInitialized(address indexed sender, OracleRegistryConfig config)`
+- `OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle)` — `oldOracle` is `address(0)` for new registrations
+
+**Errors:**
+
+- `OnlyAdmin()` — caller is not admin
+- `ZeroAdmin()` — zero admin address in config
+- `ZeroVault()` — zero vault address
+- `ZeroOracle()` — zero oracle address
+- `ArrayLengthMismatch()` — vaults and oracles arrays have different lengths
+
+---
+
+## 5. Protocol Adapter Types
 
 | Protocol | Interface | Adapter Type |
 |----------|-----------|-------------|
@@ -118,7 +186,7 @@ Deploy multiple proxy *instances* from the same beacon for different protocols.
 
 ---
 
-## 5. PythOracleAdapter Implementation
+## 6. PythOracleAdapter Implementation
 
 **Storage:**
 
@@ -170,34 +238,44 @@ function _vaultSharePrice(PythStructs.Price memory priceData) internal view retu
 
 ---
 
-## 6. PassthroughProtocolAdapter Implementation
+## 7. PassthroughProtocolAdapter Implementation
 
 For protocols using `AggregatorV3Interface` (Aave V3, Compound V3, future Chainlink-compatible protocols):
 
 ```solidity
-contract PassthroughProtocolAdapter is AggregatorV3Interface {
-    AggregatorV3Interface public oracle;   // Reference to oracle adapter (updatable)
+contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
+    OracleRegistry public registry;   // Registry for oracle lookup
+    address public vault;             // Vault this adapter serves
+    address public admin;             // Admin for governance
 
-    function setOracle(AggregatorV3Interface newOracle) external onlyAdmin {
-        oracle = newOracle;
+    function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
+        if (address(newRegistry) == address(0)) revert ZeroRegistry();
+        emit RegistrySet(address(registry), address(newRegistry));
+        registry = newRegistry;
     }
 
-    function decimals() external view override returns (uint8) {
-        return oracle.decimals();
+    function _getOracle() internal view returns (AggregatorV3Interface) {
+        AggregatorV3Interface oracle = registry.getOracle(vault);
+        if (address(oracle) == address(0)) revert OracleNotFound();
+        return oracle;
     }
 
-    function latestAnswer() external view override returns (int256) {
-        return oracle.latestAnswer();
+    function decimals() external view returns (uint8) {
+        return _getOracle().decimals();
     }
 
-    function latestRoundData() external view override returns (
+    function latestAnswer() external view returns (int256) {
+        return _getOracle().latestAnswer();
+    }
+
+    function latestRoundData() external view returns (
         uint80 roundId,
         int256 answer,
         uint256 startedAt,
         uint256 updatedAt,
         uint80 answeredInRound
     ) {
-        return oracle.latestRoundData();
+        return _getOracle().latestRoundData();
     }
 }
 ```
@@ -207,25 +285,33 @@ contract PassthroughProtocolAdapter is AggregatorV3Interface {
 - Deploy one proxy instance for Aave (AAPL)
 - Deploy another proxy instance for Compound (AAPL)
 - Both share the same beacon and implementation
-- Each instance has independent `oracle` reference
+- Both point to the same registry and look up oracle for their vault
+- Changing the oracle in the registry updates both adapters
 
 ---
 
-## 7. MorphoProtocolAdapter Implementation
+## 8. MorphoProtocolAdapter Implementation
 
 Morpho Blue requires `IOracle.price()` returning 36-decimal scaled price:
 
 ```solidity
-contract MorphoProtocolAdapter is IOracle {
-    AggregatorV3Interface public oracle;   // Reference to oracle adapter (updatable)
+contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
+    OracleRegistry public registry;   // Registry for oracle lookup
+    address public vault;             // Vault this adapter serves
+    address public admin;             // Admin for governance
 
-    function setOracle(AggregatorV3Interface newOracle) external onlyAdmin {
-        oracle = newOracle;
+    function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
+        if (address(newRegistry) == address(0)) revert ZeroRegistry();
+        emit RegistrySet(address(registry), address(newRegistry));
+        registry = newRegistry;
     }
 
     function price() external view override returns (uint256) {
+        AggregatorV3Interface oracle = registry.getOracle(vault);
+        if (address(oracle) == address(0)) revert OracleNotFound();
+
         int256 answer = oracle.latestAnswer();
-        require(answer > 0, "Invalid price");
+        if (answer <= 0) revert NonPositivePrice();
 
         // Scale from 8 decimals to 36 decimals
         return uint256(answer) * 1e28;
@@ -235,9 +321,20 @@ contract MorphoProtocolAdapter is IOracle {
 
 ---
 
-## 8. BeaconSetDeployer Pattern
+## 9. BeaconSetDeployer Pattern
 
 Following `st0x.deploy` patterns:
+
+**Oracle Registry:**
+
+```solidity
+contract OracleRegistryBeaconSetDeployer {
+    IBeacon public immutable I_ORACLE_REGISTRY_BEACON;
+
+    function newOracleRegistry(OracleRegistryConfig memory config)
+        external returns (OracleRegistry);
+}
+```
 
 **Oracle Adapter Layer:**
 
@@ -245,19 +342,8 @@ Following `st0x.deploy` patterns:
 contract PythOracleAdapterBeaconSetDeployer {
     IBeacon public immutable I_PYTH_ORACLE_ADAPTER_BEACON;
 
-    constructor(config) {
-        I_PYTH_ORACLE_ADAPTER_BEACON = new UpgradeableBeacon(
-            config.initialPythOracleAdapterImplementation,
-            config.initialOwner
-        );
-    }
-
-    function newPythOracleAdapter(
-        address st0xToken,
-        bytes32 priceId,
-        uint256 maxAge,
-        string memory description
-    ) external returns (PythOracleAdapter);
+    function newPythOracleAdapter(PythOracleAdapterConfig memory config)
+        external returns (PythOracleAdapter);
 }
 ```
 
@@ -268,40 +354,65 @@ contract PassthroughProtocolAdapterBeaconSetDeployer {
     IBeacon public immutable I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON;
 
     function newPassthroughProtocolAdapter(
-        AggregatorV3Interface oracle
+        OracleRegistry registry,
+        address vault,
+        address admin
     ) external returns (PassthroughProtocolAdapter);
+}
+
+contract MorphoProtocolAdapterBeaconSetDeployer {
+    IBeacon public immutable I_MORPHO_PROTOCOL_ADAPTER_BEACON;
+
+    function newMorphoProtocolAdapter(
+        OracleRegistry registry,
+        address vault,
+        address admin
+    ) external returns (MorphoProtocolAdapter);
 }
 ```
 
 ---
 
-## 9. Deployment Flow
+## 10. Deployment Flow
 
 **Initial deployment (once per chain):**
 
-1. Deploy PythOracleAdapterV1 implementation
-2. Deploy PythOracleAdapterBeaconSetDeployer (creates beacon internally)
-3. Deploy MorphoProtocolAdapterV1 implementation
-4. Deploy MorphoProtocolAdapterBeaconSetDeployer
-5. Deploy PassthroughProtocolAdapterV1 implementation
-6. Deploy PassthroughProtocolAdapterBeaconSetDeployer
-7. Deploy OracleUnifiedDeployer
+1. Deploy OracleRegistryV1 implementation
+2. Deploy OracleRegistryBeaconSetDeployer (creates beacon internally)
+3. Deploy the canonical OracleRegistry proxy
+4. Deploy PythOracleAdapterV1 implementation
+5. Deploy PythOracleAdapterBeaconSetDeployer
+6. Deploy MorphoProtocolAdapterV1 implementation
+7. Deploy MorphoProtocolAdapterBeaconSetDeployer
+8. Deploy PassthroughProtocolAdapterV1 implementation
+9. Deploy PassthroughProtocolAdapterBeaconSetDeployer
+10. Deploy OracleUnifiedDeployer
 
 **For a new vault (e.g., wrapped AAPL):**
 
 ```solidity
+// Step 1: Deploy oracle + protocol adapters
 OracleUnifiedDeployer.newOracleAndProtocolAdapters(
     vault,          // Wrapped AAPL ERC-4626 vault address
     priceId,        // AAPL/USD feed ID (from LibPyth constants)
-    60              // maxAge in seconds
+    60,             // maxAge in seconds
+    registry        // The canonical OracleRegistry
 );
-// Pyth address derived from LibPyth.getPriceFeedContract(block.chainid)
-// Vault share price = Pyth AAPL price * vault.totalAssets() / vault.totalSupply()
+// Returns oracleAdapter, morphoAdapter, passthroughAdapter addresses
+
+// Step 2: Register oracle in registry (admin action, separate tx)
+registry.setOracle(vault, oracleAdapter);
 ```
+
+**Why two-step deployment:**
+
+- `OracleUnifiedDeployer` can be called by anyone to deploy adapters
+- Only registry admin can register oracles
+- Separation prevents unauthorized oracle registration
 
 ---
 
-## 10. Repository Structure
+## 11. Repository Structure
 
 ```
 st0x.oracle/
@@ -312,10 +423,13 @@ st0x.oracle/
 │   ├── concrete/
 │   │   ├── oracle/
 │   │   │   └── PythOracleAdapter.sol
+│   │   ├── registry/
+│   │   │   └── OracleRegistry.sol              # Centralized vault→oracle mapping
 │   │   ├── protocol/
-│   │   │   ├── MorphoProtocolAdapter.sol       # Scales 8→36
-│   │   │   └── PassthroughProtocolAdapter.sol  # For Aave, Compound
+│   │   │   ├── MorphoProtocolAdapter.sol       # Scales 8→36, uses registry
+│   │   │   └── PassthroughProtocolAdapter.sol  # For Aave, Compound, uses registry
 │   │   └── deploy/
+│   │       ├── OracleRegistryBeaconSetDeployer.sol
 │   │       ├── PythOracleAdapterBeaconSetDeployer.sol
 │   │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
 │   │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
@@ -327,7 +441,7 @@ st0x.oracle/
 
 ---
 
-## 11. LibPyth Usage
+## 12. LibPyth Usage
 
 **Runtime (in PythOracleAdapter):**
 
@@ -351,31 +465,34 @@ IPyth constant PRICE_FEED_CONTRACT_BASE = IPyth(0x8250f4aF4B972684F7b336503E2D6d
 
 ---
 
-## 12. Governance
+## 13. Governance
 
 All admin roles held by founder multisig:
 
 - **Beacon Owner**: Can upgrade implementation
+- **Registry Admin**: Can register/update vault→oracle mappings
 - **Oracle Admin**: Can update priceId, maxAge, pause/unpause
-- **Protocol Adapter Admin**: Can update oracle reference
+- **Protocol Adapter Admin**: Can update registry reference (opt-out mechanism)
 
 No separation of roles.
 
 ---
 
-## 13. Upgrade & Migration Scenarios
+## 14. Upgrade & Migration Scenarios
 
 | Scenario | Action | Unchanged |
 |----------|--------|-----------|
-| Bug in Pyth price parsing | Upgrade PythOracleBeacon implementation | All protocol adapters |
-| Bug in Morpho scaling | Upgrade MorphoAdapterBeacon implementation | All oracle adapters |
-| Add Aave support | Deploy PassthroughAdapter proxy pointing to existing oracle | Everything else |
-| Pyth dies, switch to Chainlink | Deploy ChainlinkOracleAdapter, update protocol adapters' oracle references | Old PythOracle stays deployed |
+| Bug in Pyth price parsing | Upgrade PythOracleBeacon implementation | Registry, all protocol adapters |
+| Bug in Morpho scaling | Upgrade MorphoAdapterBeacon implementation | Registry, all oracle adapters |
+| Add Aave support | Deploy PassthroughAdapter proxy pointing to existing registry | Everything else |
+| Pyth dies, switch to Chainlink | Deploy ChainlinkOracleAdapter, call `registry.setOracle(vault, chainlinkOracle)` | Protocol adapters automatically use new oracle |
 | Corporate action (AAPL split) | Pause PythOracleAdapter, execute split, unpause | Protocol adapters unaware |
+| Bulk oracle update (10 vaults) | `registry.setOracleBulk(vaults, oracles)` | Single tx updates all |
+| Protocol adapter wants different registry | `adapter.setRegistry(alternativeRegistry)` | Other adapters unaffected |
 
 ---
 
-## 14. Security Considerations
+## 15. Security Considerations
 
 1. **Negative prices**: Pyth prices can theoretically be negative; handle appropriately (revert)
 2. **Confidence intervals**: Pyth provides confidence data; consider rejecting wide confidence
@@ -383,10 +500,12 @@ No separation of roles.
 4. **Corporate actions**: Pause mechanism exists to prevent trading during splits/dividends
 5. **Zero vault supply**: Revert when vault has no shares minted (no valid price)
 6. **Vault ratio manipulation**: Vault totalAssets/totalSupply is trusted — vault must be a known st0x deployment
+7. **Oracle not registered**: Protocol adapters revert with `OracleNotFound` if vault not in registry
+8. **Registry admin trust**: Registry admin can point any vault to any oracle — trust assumption
 
 ---
 
-## 15. References
+## 16. References
 
 - **rain.pyth**: https://github.com/rainlanguage/rain.pyth
 - **st0x.deploy**: https://github.com/S01-Issuer/st0x.deploy

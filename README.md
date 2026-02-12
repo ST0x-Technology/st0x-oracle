@@ -1,19 +1,30 @@
 # st0x.oracle
 
-Oracle adapter system that bridges Pyth Network price feeds to DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Two-layer architecture separates oracle adapters (price source) from protocol adapters (protocol-specific interface), allowing independent upgrades and oracle swaps without protocol governance.
+Oracle adapter system that bridges Pyth Network price feeds to DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Three-layer architecture: oracle adapters (price source), oracle registry (centralized vault→oracle mapping), and protocol adapters (protocol-specific interface). Allows independent upgrades, oracle swaps via single registry update, and protocol adapters that can opt-out to alternative registries.
 
 ## Architecture
 
 ```
-  PROTOCOL ADAPTERS (indirection layer)
+  PROTOCOL ADAPTERS (looks up oracle from registry)
 
   ┌───────────────────────┐   ┌──────────────────────────────────────┐
   │ MorphoProtocolAdapter │   │ PassthroughProtocolAdapter           │
   │ IOracle (8→36 dec)    │   │ (instances: Aave, Compound, ...)     │
   │                       │   │ AggregatorV3Interface passthrough    │
+  │ stores: registry,     │   │                                      │
+  │         vault         │   │ stores: registry, vault              │
   └──────────┬────────────┘   └──────────────────┬───────────────────┘
              │                                   │
              └────────────────┬──────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │    OracleRegistry     │  ← centralized vault→oracle mapping
+                  │                       │
+                  │  getOracle(vault)     │
+                  │  setOracle(vault, o)  │
+                  │  setOracleBulk(...)   │
+                  └───────────┬───────────┘
                               │
                               ▼
                   ┌───────────────────────┐
@@ -33,11 +44,13 @@ Oracle adapter system that bridges Pyth Network price feeds to DeFi lending prot
   ORACLE ADAPTERS (canonical price source per asset)
 ```
 
-**Oracle layer** -- one `PythOracleAdapter` per asset, implements `AggregatorV3Interface` at 8 decimals. Governance controls (pause for corporate actions) live here.
+**Oracle layer** -- one `PythOracleAdapter` per vault, implements `AggregatorV3Interface` at 8 decimals. Prices vault shares as `pythPrice * totalAssets / totalSupply`. Governance controls (pause for corporate actions) live here.
 
-**Protocol layer** -- `PassthroughProtocolAdapter` (Aave/Compound/any Chainlink-compatible) and `MorphoProtocolAdapter` (scales 8 to 36 decimals). Each has `setOracle()` so the underlying oracle can be swapped without touching protocol config.
+**Registry layer** -- `OracleRegistry` maintains centralized `vault → oracle` mapping. Single `setOracle()` call updates the oracle for all protocol adapters serving that vault. Supports bulk updates via `setOracleBulk()`.
 
-**Deployers** -- beacon proxy pattern via `st0x.deploy`. `OracleUnifiedDeployer` orchestrates deploying an oracle adapter + all protocol adapters for a new asset in one call.
+**Protocol layer** -- `PassthroughProtocolAdapter` (Aave/Compound/any Chainlink-compatible) and `MorphoProtocolAdapter` (scales 8 to 36 decimals). Each stores `registry + vault` and looks up oracle at runtime. Can opt-out via `setRegistry()` to point to an alternative registry.
+
+**Deployers** -- beacon proxy pattern via `st0x.deploy`. `OracleUnifiedDeployer` deploys an oracle adapter + all protocol adapters for a new vault. Admin must call `registry.setOracle()` separately to register the oracle.
 
 ## Setup
 
@@ -70,11 +83,14 @@ src/
 ├── concrete/
 │   ├── oracle/
 │   │   └── PythOracleAdapter.sol
+│   ├── registry/
+│   │   └── OracleRegistry.sol
 │   ├── protocol/
 │   │   ├── MorphoProtocolAdapter.sol
 │   │   └── PassthroughProtocolAdapter.sol
 │   └── deploy/
 │       ├── PythOracleAdapterBeaconSetDeployer.sol
+│       ├── OracleRegistryBeaconSetDeployer.sol
 │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
 │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
 │       └── OracleUnifiedDeployer.sol
@@ -84,13 +100,15 @@ src/
     └── LibProdDeploy.sol
 test/
 ├── abstract/
-│   └── PythOracleAdapterTest.sol
+│   ├── PythOracleAdapterTest.sol
+│   └── OracleRegistryTest.sol
 ├── lib/
 │   └── LibFork.sol
 └── src/
     └── concrete/
         ├── deploy/
         ├── oracle/
+        ├── registry/
         └── protocol/
 ```
 

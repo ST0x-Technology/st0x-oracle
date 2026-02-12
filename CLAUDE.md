@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Solidity oracle adapter system that prices ERC-4626 vault shares by combining Pyth Network price feeds with vault share ratios, for DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Two-layer architecture: oracle adapters (price source) and protocol adapters (protocol-specific interface). The oracle computes `vaultSharePrice = pythPrice * totalAssets / totalSupply`.
+Solidity oracle adapter system that prices ERC-4626 vault shares by combining Pyth Network price feeds with vault share ratios, for DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Three-layer architecture: oracle adapters (price source), oracle registry (centralized vault→oracle mapping), and protocol adapters (protocol-specific interface). The oracle computes `vaultSharePrice = pythPrice * totalAssets / totalSupply`.
 
 ## Environment Setup
 
@@ -26,14 +26,17 @@ forge fmt            # Format Solidity code
 forge fmt --check    # Check formatting without modifying
 ```
 
-## Architecture (Two Layers)
+## Architecture (Three Layers)
 
 **Oracle Layer** — canonical price source per vault, implements `AggregatorV3Interface` (8 decimals):
 - `PythOracleAdapter` — fetches from Pyth, multiplies by vault share ratio (totalAssets/totalSupply), scales to 8 decimals, has governance (pause)
 
+**Registry Layer** — centralized vault→oracle mapping:
+- `OracleRegistry` — maintains `vault → oracle adapter` mapping, allows admin to update oracles for all protocol adapters at once via single `setOracle()` call
+
 **Protocol Layer** — indirection so oracle swaps don't require protocol governance:
-- `PassthroughProtocolAdapter` — for Aave/Compound/any Chainlink-compatible protocol, passes through `AggregatorV3Interface`
-- `MorphoProtocolAdapter` — implements Morpho's `IOracle.price()`, scales 8→36 decimals
+- `PassthroughProtocolAdapter` — for Aave/Compound/any Chainlink-compatible protocol, looks up oracle from registry
+- `MorphoProtocolAdapter` — implements Morpho's `IOracle.price()`, looks up oracle from registry, scales 8→36 decimals
 
 **Deployers** — beacon proxy pattern per `st0x.deploy`:
 - Each contract type has a `BeaconSetDeployer` that owns a beacon and deploys proxies
@@ -45,7 +48,10 @@ forge fmt --check    # Check formatting without modifying
 - **No stored Pyth address**: Use `LibPyth.getPriceFeedContract(block.chainid)` at runtime (from `rain.pyth`)
 - **AggregatorV3Interface as boundary**: Industry standard between oracle and protocol layers
 - **Beacon proxies**: All instances share implementations, upgradeable via beacon owner
-- **All governance on oracle layer**: Protocol adapters only have `setOracle()` admin function
+- **Registry-based oracle lookup**: Protocol adapters store `registry + vault`, look up oracle via `registry.getOracle(vault)` at runtime
+- **Single registry update propagates everywhere**: Calling `registry.setOracle(vault, newOracle)` updates the oracle for all protocol adapters serving that vault
+- **"Opt out" via setRegistry**: Protocol adapters can point to a different registry entirely via `setRegistry()`
+- **Two-step deployment**: `OracleUnifiedDeployer` deploys oracle + adapters, admin calls `registry.setOracle()` separately
 - **Two protocol adapter contracts, not three**: `PassthroughProtocolAdapter` serves Aave, Compound, and any future Chainlink-compatible protocol via separate proxy instances
 
 ## Repository Structure
@@ -55,11 +61,14 @@ src/
 ├── concrete/
 │   ├── oracle/
 │   │   └── PythOracleAdapter.sol          # Vault-aware oracle, AggregatorV3Interface
+│   ├── registry/
+│   │   └── OracleRegistry.sol             # Centralized vault→oracle mapping
 │   ├── protocol/
-│   │   ├── MorphoProtocolAdapter.sol      # IOracle, scales 8→36
-│   │   └── PassthroughProtocolAdapter.sol # AggregatorV3Interface passthrough
+│   │   ├── MorphoProtocolAdapter.sol      # IOracle, scales 8→36, uses registry
+│   │   └── PassthroughProtocolAdapter.sol # AggregatorV3Interface passthrough, uses registry
 │   └── deploy/
 │       ├── PythOracleAdapterBeaconSetDeployer.sol
+│       ├── OracleRegistryBeaconSetDeployer.sol
 │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
 │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
 │       └── OracleUnifiedDeployer.sol
@@ -81,6 +90,7 @@ src/
 - Vault with zero total supply must revert (no valid price)
 - Pause mechanism for corporate actions (splits, dividends)
 - All admin roles held by founder multisig, no role separation
+- Protocol adapters revert with `OracleNotFound` if vault not registered in registry
 
 ## Conventions
 

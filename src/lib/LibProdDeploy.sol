@@ -20,4 +20,10 @@ library LibProdDeploy {
 
     /// TODO: Set after initial deployment to Base.
     address constant ORACLE_UNIFIED_DEPLOYER = address(0);
+
+    /// TODO: Set after initial deployment to Base.
+    address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = address(0);
+
+    /// TODO: Set after initial deployment to Base.
+    address constant ORACLE_REGISTRY = address(0);
 }

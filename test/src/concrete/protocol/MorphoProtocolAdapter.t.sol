@@ -7,56 +7,101 @@ import {
     MorphoProtocolAdapter,
     MorphoProtocolAdapterConfig,
     OnlyAdmin,
-    ZeroOracle,
+    ZeroAdmin,
+    ZeroRegistry,
+    ZeroVault,
+    OracleNotFound,
     NonPositivePrice
 } from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {
     MorphoProtocolAdapterBeaconSetDeployer,
     MorphoProtocolAdapterBeaconSetDeployerConfig
 } from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {OracleRegistry, OracleRegistryConfig} from "src/concrete/registry/OracleRegistry.sol";
+import {
+    OracleRegistryBeaconSetDeployer,
+    OracleRegistryBeaconSetDeployerConfig
+} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 
 contract MorphoProtocolAdapterTest is Test {
     MorphoProtocolAdapter internal immutable I_IMPLEMENTATION;
     MorphoProtocolAdapterBeaconSetDeployer internal immutable I_DEPLOYER;
+    OracleRegistry internal immutable I_REGISTRY_IMPLEMENTATION;
+    OracleRegistryBeaconSetDeployer internal immutable I_REGISTRY_DEPLOYER;
 
     constructor() {
         I_IMPLEMENTATION = new MorphoProtocolAdapter();
         I_DEPLOYER = new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialMorphoProtocolAdapterImplementation: address(I_IMPLEMENTATION)
+                initialOwner: address(this), initialMorphoProtocolAdapterImplementation: address(I_IMPLEMENTATION)
+            })
+        );
+        I_REGISTRY_IMPLEMENTATION = new OracleRegistry();
+        I_REGISTRY_DEPLOYER = new OracleRegistryBeaconSetDeployer(
+            OracleRegistryBeaconSetDeployerConfig({
+                initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
     }
 
-    /// Test that initialization with zero oracle reverts.
-    function testInitializeZeroOracle(address admin) external {
-        vm.expectRevert(abi.encodeWithSelector(ZeroOracle.selector));
-        I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(address(0)), admin);
+    function _createRegistry(address admin) internal returns (OracleRegistry) {
+        return I_REGISTRY_DEPLOYER.newOracleRegistry(OracleRegistryConfig({admin: admin}));
+    }
+
+    /// Test that initialization with zero registry reverts.
+    function testInitializeZeroRegistry(address vault, address admin) external {
+        vm.assume(vault != address(0));
+        vm.expectRevert(abi.encodeWithSelector(ZeroRegistry.selector));
+        I_DEPLOYER.newMorphoProtocolAdapter(OracleRegistry(address(0)), vault, admin);
+    }
+
+    /// Test that initialization with zero vault reverts.
+    function testInitializeZeroVault(address registryAdmin, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        I_DEPLOYER.newMorphoProtocolAdapter(registry, address(0), admin);
+    }
+
+    /// Test that initialization with zero admin reverts.
+    function testInitializeZeroAdmin(address registryAdmin, address vault) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, address(0));
     }
 
     /// Test successful initialization.
-    function testInitializeSuccess(address oracleAddr, address admin) external {
-        vm.assume(oracleAddr != address(0));
+    function testInitializeSuccess(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(oracleAddr), admin);
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
-        assertEq(address(adapter.oracle()), oracleAddr);
+        assertEq(address(adapter.registry()), address(registry));
+        assertEq(adapter.vault(), vault);
         assertEq(adapter.admin(), admin);
     }
 
     /// Test that initialization emits event.
-    function testInitializeEvent(address oracleAddr, address admin) external {
-        vm.assume(oracleAddr != address(0));
+    function testInitializeEvent(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
 
         vm.recordLogs();
-        I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(oracleAddr), admin);
+        I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         bool eventFound = false;
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == keccak256("MorphoProtocolAdapterInitialized(address,(address,address))")) {
+            if (logs[i].topics[0] == keccak256("MorphoProtocolAdapterInitialized(address,(address,address,address))")) {
                 eventFound = true;
                 break;
             }
@@ -64,52 +109,78 @@ contract MorphoProtocolAdapterTest is Test {
         assertTrue(eventFound, "MorphoProtocolAdapterInitialized event not found");
     }
 
-    /// Test setOracle by admin.
-    function testSetOracle(address oracleAddr, address newOracleAddr, address admin) external {
-        vm.assume(oracleAddr != address(0));
-        vm.assume(newOracleAddr != address(0));
+    /// Test setRegistry by admin.
+    function testSetRegistry(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
         vm.assume(admin != address(0));
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(oracleAddr), admin);
+        OracleRegistry registry1 = _createRegistry(registryAdmin);
+        OracleRegistry registry2 = _createRegistry(registryAdmin);
+
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry1, vault, admin);
 
         vm.expectEmit();
-        emit MorphoProtocolAdapter.OracleSet(oracleAddr, newOracleAddr);
+        emit MorphoProtocolAdapter.RegistrySet(address(registry1), address(registry2));
         vm.prank(admin);
-        adapter.setOracle(AggregatorV3Interface(newOracleAddr));
+        adapter.setRegistry(registry2);
 
-        assertEq(address(adapter.oracle()), newOracleAddr);
+        assertEq(address(adapter.registry()), address(registry2));
     }
 
-    /// Test setOracle reverts for non-admin.
-    function testSetOracleOnlyAdmin(address oracleAddr, address admin, address nonAdmin) external {
-        vm.assume(oracleAddr != address(0));
+    /// Test setRegistry reverts for non-admin.
+    function testSetRegistryOnlyAdmin(address registryAdmin, address vault, address admin, address nonAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
         vm.assume(admin != address(0));
         vm.assume(nonAdmin != admin);
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(oracleAddr), admin);
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(nonAdmin);
         vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
-        adapter.setOracle(AggregatorV3Interface(oracleAddr));
+        adapter.setRegistry(registry);
     }
 
-    /// Test setOracle with zero address reverts.
-    function testSetOracleZeroAddress(address oracleAddr, address admin) external {
-        vm.assume(oracleAddr != address(0));
+    /// Test setRegistry with zero address reverts.
+    function testSetRegistryZeroAddress(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
         vm.assume(admin != address(0));
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(oracleAddr), admin);
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroOracle.selector));
-        adapter.setOracle(AggregatorV3Interface(address(0)));
+        vm.expectRevert(abi.encodeWithSelector(ZeroRegistry.selector));
+        adapter.setRegistry(OracleRegistry(address(0)));
+    }
+
+    /// Test price() reverts when oracle not found in registry.
+    function testPriceOracleNotFound(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(abi.encodeWithSelector(OracleNotFound.selector));
+        adapter.price();
     }
 
     /// Test price() scales 8 decimals to 36 decimals correctly.
     function testPriceScaling(address admin) external {
         vm.assume(admin != address(0));
 
+        address vault = address(uint160(uint256(keccak256("vault"))));
         address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        // Create registry and register oracle
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
 
         // Mock a price of 100.00000000 (100 USD at 8 decimals)
         int256 mockPrice = 100e8;
@@ -117,7 +188,7 @@ contract MorphoProtocolAdapterTest is Test {
             mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(mockOracle), admin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         uint256 morphoPrice = adapter.price();
         // 100e8 * 1e28 = 100e36
@@ -130,12 +201,19 @@ contract MorphoProtocolAdapterTest is Test {
         // Price must be positive and not overflow when multiplied by 1e28.
         mockPrice = bound(mockPrice, 1, int256(type(uint256).max / 1e28));
 
+        address vault = address(uint160(uint256(keccak256("vault"))));
         address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        // Create registry and register oracle
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(mockOracle), admin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         uint256 morphoPrice = adapter.price();
         assertEq(morphoPrice, uint256(mockPrice) * 1e28);
@@ -145,12 +223,19 @@ contract MorphoProtocolAdapterTest is Test {
     function testPriceRevertsOnZero(address admin) external {
         vm.assume(admin != address(0));
 
+        address vault = address(uint160(uint256(keccak256("vault"))));
         address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        // Create registry and register oracle
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(int256(0))
         );
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(mockOracle), admin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
         adapter.price();
@@ -161,14 +246,68 @@ contract MorphoProtocolAdapterTest is Test {
         vm.assume(admin != address(0));
         negativePrice = bound(negativePrice, type(int256).min, -1);
 
+        address vault = address(uint160(uint256(keccak256("vault"))));
         address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        // Create registry and register oracle
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(negativePrice)
         );
 
-        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(AggregatorV3Interface(mockOracle), admin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
         adapter.price();
+    }
+
+    /// Test setAdmin by admin.
+    function testSetAdmin(address registryAdmin, address vault, address admin, address newAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(newAdmin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectEmit(true, true, true, true);
+        emit MorphoProtocolAdapter.AdminSet(admin, newAdmin);
+        vm.prank(admin);
+        adapter.setAdmin(newAdmin);
+
+        assertEq(adapter.admin(), newAdmin);
+    }
+
+    /// Test setAdmin reverts for non-admin.
+    function testSetAdminOnlyAdmin(address registryAdmin, address vault, address admin, address nonAdmin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+        vm.assume(nonAdmin != admin);
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.prank(nonAdmin);
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        adapter.setAdmin(address(1));
+    }
+
+    /// Test setAdmin with zero address reverts.
+    function testSetAdminZeroAddress(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        adapter.setAdmin(address(0));
     }
 }

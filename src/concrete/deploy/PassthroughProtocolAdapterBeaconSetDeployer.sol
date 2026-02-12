@@ -10,7 +10,7 @@ import {
     PassthroughProtocolAdapter,
     PassthroughProtocolAdapterConfig
 } from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error ZeroImplementation();
@@ -57,19 +57,23 @@ contract PassthroughProtocolAdapterBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new PassthroughProtocolAdapter proxy.
-    /// @param oracle The oracle adapter address.
+    /// @param registry The oracle registry address.
+    /// @param vault The vault address this adapter serves.
     /// @param admin The admin address.
     /// @return adapter The deployed PassthroughProtocolAdapter proxy.
-    function newPassthroughProtocolAdapter(AggregatorV3Interface oracle, address admin)
+    // slither-disable-next-line reentrancy-events
+    function newPassthroughProtocolAdapter(OracleRegistry registry, address vault, address admin)
         external
         returns (PassthroughProtocolAdapter)
     {
-        PassthroughProtocolAdapter adapter =
-            PassthroughProtocolAdapter(address(new BeaconProxy(address(I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON), "")));
+        PassthroughProtocolAdapter adapter = PassthroughProtocolAdapter(
+            address(new BeaconProxy(address(I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON), ""))
+        );
 
         if (
-            adapter.initialize(abi.encode(PassthroughProtocolAdapterConfig({oracle: oracle, admin: admin})))
-                != ICLONEABLE_V2_SUCCESS
+            adapter.initialize(
+                    abi.encode(PassthroughProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}))
+                ) != ICLONEABLE_V2_SUCCESS
         ) {
             revert InitializeAdapterFailed();
         }

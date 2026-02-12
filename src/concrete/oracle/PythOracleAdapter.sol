@@ -36,6 +36,9 @@ error ZeroAdmin();
 /// @dev Error raised when the vault has zero total supply (no shares minted).
 error ZeroVaultSupply();
 
+/// @dev Error raised when the computed vault share price is zero.
+error ZeroVaultSharePrice();
+
 /// @title PythOracleAdapterConfig
 /// @notice Configuration for PythOracleAdapter initialization.
 /// @param vault The ERC-4626 vault address this oracle prices shares for.
@@ -79,6 +82,8 @@ contract PythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initializable
     event PythOracleAdapterInitialized(address indexed sender, PythOracleAdapterConfig config);
     /// @dev Emitted when the pause state changes.
     event PauseSet(bool isPaused);
+    /// @dev Emitted when the admin is changed.
+    event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
@@ -132,16 +137,19 @@ contract PythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initializable
     }
 
     /// @inheritdoc AggregatorV3Interface
+    // slither-disable-next-line pyth-unchecked-confidence
     function latestAnswer() external view override returns (int256) {
         _validateNotPaused();
 
         IPyth pyth = LibPyth.getPriceFeedContract(block.chainid);
         PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(priceId, maxAge);
 
+        // Confidence is checked in _vaultSharePrice -> _conservativeScaledPrice
         return _vaultSharePrice(priceData);
     }
 
     /// @inheritdoc AggregatorV3Interface
+    // slither-disable-next-line pyth-unchecked-confidence
     function latestRoundData()
         external
         view
@@ -151,6 +159,7 @@ contract PythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initializable
         _validateNotPaused();
 
         IPyth pyth = LibPyth.getPriceFeedContract(block.chainid);
+        // Confidence is checked in _vaultSharePrice -> _conservativeScaledPrice
         PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(priceId, maxAge);
 
         int256 scaledPrice = _vaultSharePrice(priceData);
@@ -168,6 +177,14 @@ contract PythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initializable
     function setPaused(bool isPaused) external onlyAdmin {
         paused = isPaused;
         emit PauseSet(isPaused);
+    }
+
+    /// @notice Update the admin address. Admin only.
+    /// @param newAdmin The new admin address.
+    function setAdmin(address newAdmin) external onlyAdmin {
+        if (newAdmin == address(0)) revert ZeroAdmin();
+        emit AdminSet(admin, newAdmin);
+        admin = newAdmin;
     }
 
     /// @dev Reverts if the oracle is paused.
@@ -215,6 +232,10 @@ contract PythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initializable
         // Multiply before divide for precision. The 18-decimal units of
         // totalAssets and totalSupply cancel out, preserving the 8-decimal
         // scale of price8. Checked arithmetic guards against overflow.
-        return int256(uint256(price8) * totalAssets / totalSupply);
+        int256 vaultSharePrice = int256(uint256(price8) * totalAssets / totalSupply);
+
+        if (vaultSharePrice == 0) revert ZeroVaultSharePrice();
+
+        return vaultSharePrice;
     }
 }
