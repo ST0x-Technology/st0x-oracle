@@ -26,7 +26,7 @@ library LibProdOracles {
     address constant WTCOIN_PASSTHROUGH = address(0);
 
     /// wtCOIN ERC-4626 vault.
-    address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315F7F8963C85399c172204;
+    address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204;
 
     /// COIN/USD Pyth price feed ID.
     /// https://www.pyth.network/developers/price-feed-ids
