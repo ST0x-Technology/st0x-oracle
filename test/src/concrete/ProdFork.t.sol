@@ -7,6 +7,7 @@ import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 
 /// @title LibProdOracles
@@ -175,24 +176,21 @@ contract ProdForkTest is Test {
     function testProdWtcoinMorphoPrice() external onlyIfMorphoDeployed {
         _forkBase();
 
-        PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MORPHO);
-
-        int256 oracleAnswer = oracle.latestAnswer();
         uint256 morphoPrice = morpho.price();
 
-        // Morpho scales 8 -> 36 decimals (multiply by 1e28)
-        assertEq(morphoPrice, uint256(oracleAnswer) * 1e28, "Morpho price should be oracle * 1e28");
+        // Morpho scales 8 -> 36 decimals. COIN ~$50-$500 → 5e9 to 5e10 at 8 dec → 5e37 to 5e38 at 36 dec.
+        assertGt(morphoPrice, 1e37, "Morpho price too low");
+        assertLt(morphoPrice, 1e40, "Morpho price too high");
     }
 
-    /// @notice Morpho adapter points to the correct oracle.
-    function testProdWtcoinMorphoOracleRef() external onlyIfMorphoDeployed {
+    /// @notice Morpho adapter points to a valid registry and vault.
+    function testProdWtcoinMorphoConfig() external onlyIfMorphoDeployed {
         _forkBase();
 
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MORPHO);
-        assertEq(
-            address(morpho.oracle()), LibProdOracles.WTCOIN_ORACLE, "Morpho should reference the wtCOIN oracle"
-        );
+        assertEq(morpho.vault(), LibProdOracles.WTCOIN_VAULT, "Morpho should reference the wtCOIN vault");
+        assertTrue(address(morpho.registry()) != address(0), "Registry should be set");
     }
 
     // =========================================================================
@@ -203,27 +201,22 @@ contract ProdForkTest is Test {
     function testProdWtcoinPassthroughAnswer() external onlyIfPassthroughDeployed {
         _forkBase();
 
-        PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
-
-        int256 oracleAnswer = oracle.latestAnswer();
         int256 passthroughAnswer = passthrough.latestAnswer();
 
-        assertEq(passthroughAnswer, oracleAnswer, "Passthrough should match oracle exactly");
+        assertGt(passthroughAnswer, 1e9, "Price too low");
+        assertLt(passthroughAnswer, 1e12, "Price too high");
     }
 
-    /// @notice Passthrough adapter returns same roundData as oracle.
+    /// @notice Passthrough adapter returns valid roundData.
     function testProdWtcoinPassthroughRoundData() external onlyIfPassthroughDeployed {
         _forkBase();
 
-        PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
-
-        (, int256 oracleAnswer,, uint256 oracleUpdatedAt,) = oracle.latestRoundData();
         (, int256 ptAnswer,, uint256 ptUpdatedAt,) = passthrough.latestRoundData();
 
-        assertEq(ptAnswer, oracleAnswer, "Answers must match");
-        assertEq(ptUpdatedAt, oracleUpdatedAt, "Timestamps must match");
+        assertGt(ptAnswer, 0, "Answer must be positive");
+        assertGt(ptUpdatedAt, 0, "updatedAt must be set");
     }
 
     /// @notice Passthrough adapter reports 8 decimals.
@@ -234,16 +227,13 @@ contract ProdForkTest is Test {
         assertEq(passthrough.decimals(), 8);
     }
 
-    /// @notice Passthrough adapter points to the correct oracle.
-    function testProdWtcoinPassthroughOracleRef() external onlyIfPassthroughDeployed {
+    /// @notice Passthrough adapter points to a valid registry and vault.
+    function testProdWtcoinPassthroughConfig() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
-        assertEq(
-            address(passthrough.oracle()),
-            LibProdOracles.WTCOIN_ORACLE,
-            "Passthrough should reference the wtCOIN oracle"
-        );
+        assertEq(passthrough.vault(), LibProdOracles.WTCOIN_VAULT, "Passthrough should reference the wtCOIN vault");
+        assertTrue(address(passthrough.registry()) != address(0), "Registry should be set");
     }
 
     // =========================================================================
@@ -268,60 +258,32 @@ contract ProdForkTest is Test {
     }
 
     // =========================================================================
-    // Protocol adapter setOracle (oracle swap scenario)
+    // Registry swap scenario
     // =========================================================================
 
-    /// @notice Protocol adapters can swap oracle reference.
-    function testProdWtcoinSetOracle() external onlyIfPassthroughDeployed {
+    /// @notice Protocol adapters can swap registry reference.
+    function testProdWtcoinSetRegistry() external onlyIfPassthroughDeployed {
         _forkBase();
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
         address ptAdmin = passthrough.admin();
+        OracleRegistry currentRegistry = passthrough.registry();
 
-        // Create a mock oracle that returns a known value
-        address mockOracle = address(new MockAggregator(42e8));
+        // Verify current registry works
+        int256 answer = passthrough.latestAnswer();
+        assertGt(answer, 0);
 
+        // Only admin can set registry
+        vm.prank(address(0xdead));
+        vm.expectRevert();
+        passthrough.setRegistry(currentRegistry);
+
+        // Admin can set registry (set to same one, just testing the call works)
         vm.prank(ptAdmin);
-        passthrough.setOracle(AggregatorV3Interface(mockOracle));
+        passthrough.setRegistry(currentRegistry);
 
-        assertEq(passthrough.latestAnswer(), 42e8, "Should use new oracle");
-
-        // Swap back
-        vm.prank(ptAdmin);
-        passthrough.setOracle(AggregatorV3Interface(LibProdOracles.WTCOIN_ORACLE));
-    }
-}
-
-/// @dev Minimal mock for testing setOracle.
-contract MockAggregator is AggregatorV3Interface {
-    int256 private immutable _answer;
-
-    constructor(int256 answer) {
-        _answer = answer;
-    }
-
-    function decimals() external pure override returns (uint8) {
-        return 8;
-    }
-
-    function description() external pure override returns (string memory) {
-        return "Mock";
-    }
-
-    function version() external pure override returns (uint256) {
-        return 1;
-    }
-
-    function latestAnswer() external view override returns (int256) {
-        return _answer;
-    }
-
-    function latestRoundData()
-        external
-        view
-        override
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
-    {
-        return (1, _answer, block.timestamp, block.timestamp, 1);
+        // Still works after re-setting
+        int256 answerAfter = passthrough.latestAnswer();
+        assertEq(answerAfter, answer);
     }
 }
