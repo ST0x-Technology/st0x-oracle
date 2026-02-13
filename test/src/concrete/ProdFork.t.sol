@@ -15,23 +15,23 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 /// OracleUnifiedDeployer. Update these after each deployment.
 library LibProdOracles {
     /// wtCOIN oracle adapter (PythOracleAdapter proxy).
-    /// TODO: Set after deployment.
-    address constant WTCOIN_ORACLE = address(0);
+    /// Deployed to Base 2026-02-13.
+    address constant WTCOIN_ORACLE = 0x9f0fc96fef8e62bffd35bdb76e7287a3e4aa57b0;
 
     /// wtCOIN Morpho protocol adapter.
-    /// TODO: Set after deployment.
-    address constant WTCOIN_MORPHO = address(0);
+    /// Deployed to Base 2026-02-13.
+    address constant WTCOIN_MORPHO = 0xbe4fe57576e54595400195e6bc00002cb4ed232e;
 
     /// wtCOIN passthrough protocol adapter (Aave/Compound).
-    /// TODO: Set after deployment.
-    address constant WTCOIN_PASSTHROUGH = address(0);
+    /// Deployed to Base 2026-02-13.
+    address constant WTCOIN_PASSTHROUGH = 0x2e73ef522e9369576bd5fc8f25bf2f0e4cc6b57e;
 
     /// wtCOIN ERC-4626 vault.
     address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204;
 
     /// COIN/USD Pyth price feed ID.
     /// https://www.pyth.network/developers/price-feed-ids
-    bytes32 constant COIN_PRICE_ID = 0xe65ff435be2e5170520bca5af8e56241d18a8abe0e12face633cee71a685e08d;
+    bytes32 constant COIN_PRICE_ID = 0xfee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245;
 }
 
 /// @title ProdForkTest
