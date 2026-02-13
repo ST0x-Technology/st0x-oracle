@@ -259,12 +259,19 @@ contract MultiPythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initiali
 
     /// @dev Iterate feeds in order, return the first non-stale price.
     /// Reverts with AllFeedsStale if no feed returns a valid price.
+    // Slither false positives:
+    // - pyth-unchecked-confidence: confidence is checked downstream in
+    //   _conservativeScaledPrice (price - conf).
+    // - calls-inside-a-loop: intentional cascading design — max 8 iterations,
+    //   each calling the immutable Pyth contract. Not a reentrancy risk.
+    // slither-disable-next-line calls-loop
     function _getFirstValidPrice() internal view returns (uint256 feedIndex, PythStructs.Price memory priceData) {
         IPyth pyth = LibPyth.getPriceFeedContract(block.chainid);
         uint256 count = feedCount;
 
         for (uint256 i = 0; i < count; i++) {
             FeedConfig memory feed = _feeds[i];
+            // slither-disable-next-line pyth-unchecked-confidence
             try pyth.getPriceNoOlderThan(feed.priceId, feed.maxAge) returns (PythStructs.Price memory price) {
                 return (i, price);
             } catch {
