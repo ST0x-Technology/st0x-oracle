@@ -40,8 +40,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         MultiPythOracleAdapter implementation = new MultiPythOracleAdapter();
         I_DEPLOYER = new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialMultiPythOracleAdapterImplementation: address(implementation)
+                initialOwner: address(this), initialMultiPythOracleAdapterImplementation: address(implementation)
             })
         );
     }
@@ -65,11 +64,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({
-                vault: mockVault,
-                feeds: feeds,
-                admin: address(this)
-            })
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
 
         int256 answer = adapter.latestAnswer();
@@ -89,11 +84,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         feeds[1] = FeedConfig({priceId: FEED_COIN_REGULAR, maxAge: 3600});
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({
-                vault: mockVault,
-                feeds: feeds,
-                admin: address(this)
-            })
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
 
         int256 answer = adapter.latestAnswer();
@@ -111,11 +102,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         feeds[1] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({
-                vault: mockVault,
-                feeds: feeds,
-                admin: address(this)
-            })
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
 
         int256 answer = adapter.latestAnswer();
@@ -132,11 +119,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         feeds[1] = FeedConfig({priceId: FEED_COIN_REGULAR, maxAge: 1});
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({
-                vault: mockVault,
-                feeds: feeds,
-                admin: address(this)
-            })
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
 
         vm.expectRevert(abi.encodeWithSelector(AllFeedsStale.selector));

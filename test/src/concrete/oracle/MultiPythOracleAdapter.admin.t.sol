@@ -38,8 +38,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter implementation = new MultiPythOracleAdapter();
         I_DEPLOYER = new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialMultiPythOracleAdapterImplementation: address(implementation)
+                initialOwner: address(this), initialMultiPythOracleAdapterImplementation: address(implementation)
             })
         );
     }
