@@ -22,6 +22,7 @@ on:
           - passthrough-protocol-adapter-beacon-set
           - oracle-unified-deployer
           - oracle-registry-beacon-set
+          - multi-pyth-oracle-adapter-beacon-set
 
 jobs:
   deploy:
