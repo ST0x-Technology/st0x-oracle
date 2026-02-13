@@ -21,6 +21,11 @@ import {
     MorphoProtocolAdapterBeaconSetDeployerConfig
 } from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
 import {OracleUnifiedDeployer} from "src/concrete/deploy/OracleUnifiedDeployer.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+import {
+    OracleRegistryBeaconSetDeployer,
+    OracleRegistryBeaconSetDeployerConfig
+} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
 /// @dev The deployment suite name for the pyth oracle adapter beacon set.
 bytes32 constant DEPLOYMENT_SUITE_PYTH_ORACLE_ADAPTER_BEACON_SET = keccak256("pyth-oracle-adapter-beacon-set");
@@ -35,6 +40,9 @@ bytes32 constant DEPLOYMENT_SUITE_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET =
 
 /// @dev The deployment suite name for the oracle unified deployer.
 bytes32 constant DEPLOYMENT_SUITE_ORACLE_UNIFIED_DEPLOYER = keccak256("oracle-unified-deployer");
+
+/// @dev The deployment suite name for the oracle registry beacon set.
+bytes32 constant DEPLOYMENT_SUITE_ORACLE_REGISTRY_BEACON_SET = keccak256("oracle-registry-beacon-set");
 
 contract Deploy is Script {
     /// @notice Deploys the PythOracleAdapterBeaconSetDeployer contract.
@@ -97,6 +105,23 @@ contract Deploy is Script {
         vm.stopBroadcast();
     }
 
+    /// @notice Deploys the OracleRegistryBeaconSetDeployer contract.
+    /// Creates an OracleRegistry anew for the initial implementation.
+    /// Initial owner is set to the BEACON_INITIAL_OWNER constant in
+    /// LibProdDeploy.
+    function deployOracleRegistryBeaconSet(uint256 deploymentKey) internal {
+        vm.startBroadcast(deploymentKey);
+
+        new OracleRegistryBeaconSetDeployer(
+            OracleRegistryBeaconSetDeployerConfig({
+                initialOwner: LibProdDeploy.BEACON_INITIAL_OWNER,
+                initialOracleRegistryImplementation: address(new OracleRegistry())
+            })
+        );
+
+        vm.stopBroadcast();
+    }
+
     /// @notice Entry point for the deployment script. Dispatches to the
     /// appropriate deployment function based on the DEPLOYMENT_SUITE environment
     /// variable.
@@ -112,6 +137,8 @@ contract Deploy is Script {
             deployPassthroughProtocolAdapterBeaconSet(deployerPrivateKey);
         } else if (suite == DEPLOYMENT_SUITE_ORACLE_UNIFIED_DEPLOYER) {
             deployOracleUnifiedDeployer(deployerPrivateKey);
+        } else if (suite == DEPLOYMENT_SUITE_ORACLE_REGISTRY_BEACON_SET) {
+            deployOracleRegistryBeaconSet(deployerPrivateKey);
         } else {
             revert("Unknown deployment suite");
         }

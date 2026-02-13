@@ -21,6 +21,7 @@ on:
           - morpho-protocol-adapter-beacon-set
           - passthrough-protocol-adapter-beacon-set
           - oracle-unified-deployer
+          - oracle-registry-beacon-set
 
 jobs:
   deploy:
