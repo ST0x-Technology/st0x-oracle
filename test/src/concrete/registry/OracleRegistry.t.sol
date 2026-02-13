@@ -17,10 +17,14 @@ import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 import {Vm} from "forge-std/Test.sol";
 
 contract OracleRegistryInitializeTest is OracleRegistryTest {
-    /// Test that zero admin address reverts.
-    function testInitializeZeroAdmin() external {
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
-        I_DEPLOYER.newOracleRegistry(OracleRegistryConfig({admin: address(0)}));
+    /// Test that deployer sets msg.sender as admin.
+    /// Note: zero admin is no longer possible through the deployer since
+    /// msg.sender cannot be address(0).
+    function testInitializeAdminIsMsgSender(address admin) external {
+        vm.assume(admin != address(0));
+        vm.prank(admin);
+        OracleRegistry registry = I_DEPLOYER.newOracleRegistry();
+        assertEq(registry.admin(), admin);
     }
 
     /// Test successful initialization sets admin correctly.

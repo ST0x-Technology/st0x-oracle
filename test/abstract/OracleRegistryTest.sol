@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {OracleRegistry, OracleRegistryConfig} from "src/concrete/registry/OracleRegistry.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
@@ -23,6 +23,7 @@ contract OracleRegistryTest is Test {
     }
 
     function createRegistry(address admin) internal returns (OracleRegistry) {
-        return I_DEPLOYER.newOracleRegistry(OracleRegistryConfig({admin: admin}));
+        vm.prank(admin);
+        return I_DEPLOYER.newOracleRegistry();
     }
 }

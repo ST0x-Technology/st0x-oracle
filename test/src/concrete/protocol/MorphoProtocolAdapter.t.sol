@@ -17,7 +17,7 @@ import {
     MorphoProtocolAdapterBeaconSetDeployer,
     MorphoProtocolAdapterBeaconSetDeployerConfig
 } from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {OracleRegistry, OracleRegistryConfig} from "src/concrete/registry/OracleRegistry.sol";
+import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
@@ -46,7 +46,8 @@ contract MorphoProtocolAdapterTest is Test {
     }
 
     function _createRegistry(address admin) internal returns (OracleRegistry) {
-        return I_REGISTRY_DEPLOYER.newOracleRegistry(OracleRegistryConfig({admin: admin}));
+        vm.prank(admin);
+        return I_REGISTRY_DEPLOYER.newOracleRegistry();
     }
 
     /// Test that initialization with zero registry reverts.
