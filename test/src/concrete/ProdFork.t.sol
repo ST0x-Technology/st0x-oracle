@@ -307,9 +307,9 @@ contract ProdForkTest is Test {
         address registryAdmin = registry.admin();
 
         address[] memory vaults = new address[](3);
-        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
-        vaults[1] = address(0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB);
-        vaults[2] = address(0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC);
+        vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
+        vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
+        vaults[2] = address(0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC);
 
         AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](3);
         oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
@@ -345,7 +345,7 @@ contract ProdForkTest is Test {
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
 
         address[] memory vaults = new address[](1);
-        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
+        vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
         AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
         oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
 
@@ -362,8 +362,8 @@ contract ProdForkTest is Test {
         address registryAdmin = registry.admin();
 
         address[] memory vaults = new address[](2);
-        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
-        vaults[1] = address(0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB);
+        vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
+        vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
         AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
         oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
 
@@ -440,7 +440,7 @@ contract ProdForkTest is Test {
 
         // Swap the oracle in registry to a dummy — adapters should revert or return different data
         address registryAdmin = registry.admin();
-        address dummyOracle = address(0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef);
+        address dummyOracle = address(0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF);
 
         vm.prank(registryAdmin);
         registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(dummyOracle));
