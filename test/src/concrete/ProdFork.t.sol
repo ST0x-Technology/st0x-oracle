@@ -26,6 +26,10 @@ library LibProdOracles {
     /// Deployed to Base 2026-02-13.
     address constant WTCOIN_PASSTHROUGH = 0x2e73ef522e9369576bd5fc8f25bf2f0e4cc6b57e;
 
+    /// OracleRegistry instance.
+    /// Deployed to Base 2026-02-13.
+    address constant ORACLE_REGISTRY = 0x36a14d00a8597731fb6db1e0e7eea0bb81ffd156;
+
     /// wtCOIN ERC-4626 vault.
     address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204;
 
@@ -63,6 +67,14 @@ contract ProdForkTest is Test {
     /// @dev Skip modifier for Passthrough adapter tests.
     modifier onlyIfPassthroughDeployed() {
         if (LibProdOracles.WTCOIN_PASSTHROUGH == address(0)) {
+            return;
+        }
+        _;
+    }
+
+    /// @dev Skip modifier for registry tests.
+    modifier onlyIfRegistryDeployed() {
+        if (LibProdOracles.ORACLE_REGISTRY == address(0)) {
             return;
         }
         _;
@@ -255,6 +267,198 @@ contract ProdForkTest is Test {
         // All three should be consistent
         assertEq(passthroughPrice, oraclePrice, "Passthrough != Oracle");
         assertEq(morphoPrice, uint256(oraclePrice) * 1e28, "Morpho != Oracle * 1e28");
+    }
+
+    // =========================================================================
+    // OracleRegistry tests
+    // =========================================================================
+
+    /// @notice Registry has wtCOIN oracle registered.
+    function testProdRegistryHasWtcoinOracle() external onlyIfRegistryDeployed onlyIfOracleDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
+        assertEq(address(oracle), LibProdOracles.WTCOIN_ORACLE, "Registry should map wtCOIN vault to oracle");
+    }
+
+    /// @notice Registry admin can update an oracle.
+    function testProdRegistrySetOracle() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+
+        // Set a dummy oracle for a dummy vault
+        address dummyVault = address(0x1111111111111111111111111111111111111111);
+        address dummyOracle = address(0x2222222222222222222222222222222222222222);
+
+        vm.prank(registryAdmin);
+        registry.setOracle(dummyVault, AggregatorV3Interface(dummyOracle));
+
+        assertEq(address(registry.getOracle(dummyVault)), dummyOracle, "Oracle should be set");
+    }
+
+    /// @notice Registry admin can set oracles in bulk.
+    function testProdRegistrySetOracleBulk() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+
+        address[] memory vaults = new address[](3);
+        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
+        vaults[1] = address(0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB);
+        vaults[2] = address(0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC);
+
+        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](3);
+        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+        oracles[1] = AggregatorV3Interface(address(0x2222222222222222222222222222222222222222));
+        oracles[2] = AggregatorV3Interface(address(0x3333333333333333333333333333333333333333));
+
+        vm.prank(registryAdmin);
+        registry.setOracleBulk(vaults, oracles);
+
+        for (uint256 i = 0; i < vaults.length; i++) {
+            assertEq(address(registry.getOracle(vaults[i])), address(oracles[i]), "Bulk oracle mismatch");
+        }
+    }
+
+    /// @notice Non-admin cannot set oracles on the registry.
+    function testProdRegistryOnlyAdminCanSetOracle() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+
+        vm.prank(address(0xdead));
+        vm.expectRevert();
+        registry.setOracle(
+            address(0x1111111111111111111111111111111111111111),
+            AggregatorV3Interface(address(0x2222222222222222222222222222222222222222))
+        );
+    }
+
+    /// @notice Non-admin cannot bulk set oracles.
+    function testProdRegistryOnlyAdminCanSetOracleBulk() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+
+        address[] memory vaults = new address[](1);
+        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
+        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
+        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+
+        vm.prank(address(0xdead));
+        vm.expectRevert();
+        registry.setOracleBulk(vaults, oracles);
+    }
+
+    /// @notice Bulk set with mismatched array lengths reverts.
+    function testProdRegistryBulkMismatchedLengthsReverts() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+
+        address[] memory vaults = new address[](2);
+        vaults[0] = address(0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA);
+        vaults[1] = address(0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB);
+        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
+        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+
+        vm.prank(registryAdmin);
+        vm.expectRevert();
+        registry.setOracleBulk(vaults, oracles);
+    }
+
+    /// @notice Setting zero vault reverts.
+    function testProdRegistrySetOracleZeroVaultReverts() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+
+        vm.prank(registryAdmin);
+        vm.expectRevert();
+        registry.setOracle(address(0), AggregatorV3Interface(address(0x1111111111111111111111111111111111111111)));
+    }
+
+    /// @notice Setting zero oracle reverts.
+    function testProdRegistrySetOracleZeroOracleReverts() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+
+        vm.prank(registryAdmin);
+        vm.expectRevert();
+        registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV3Interface(address(0)));
+    }
+
+    /// @notice Admin can transfer admin role.
+    function testProdRegistrySetAdmin() external onlyIfRegistryDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        address registryAdmin = registry.admin();
+        address newAdmin = address(0x4444444444444444444444444444444444444444);
+
+        vm.prank(registryAdmin);
+        registry.setAdmin(newAdmin);
+        assertEq(registry.admin(), newAdmin, "Admin should be updated");
+
+        // New admin can act
+        vm.prank(newAdmin);
+        registry.setOracle(
+            address(0x5555555555555555555555555555555555555555),
+            AggregatorV3Interface(address(0x6666666666666666666666666666666666666666))
+        );
+
+        // Old admin cannot
+        vm.prank(registryAdmin);
+        vm.expectRevert();
+        registry.setOracle(
+            address(0x7777777777777777777777777777777777777777),
+            AggregatorV3Interface(address(0x8888888888888888888888888888888888888888))
+        );
+    }
+
+    /// @notice Registry oracle update propagates to protocol adapters.
+    function testProdRegistryUpdatePropagates() external onlyIfRegistryDeployed onlyIfAllDeployed {
+        _forkBase();
+
+        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MORPHO);
+        PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
+
+        // Get current price
+        uint256 morphoPriceBefore = morpho.price();
+        int256 ptPriceBefore = passthrough.latestAnswer();
+        assertGt(morphoPriceBefore, 0);
+        assertGt(ptPriceBefore, 0);
+
+        // Swap the oracle in registry to a dummy — adapters should revert or return different data
+        address registryAdmin = registry.admin();
+        address dummyOracle = address(0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef);
+
+        vm.prank(registryAdmin);
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(dummyOracle));
+
+        // Adapters now point to dummy — calls should revert
+        vm.expectRevert();
+        morpho.price();
+
+        vm.expectRevert();
+        passthrough.latestAnswer();
+
+        // Restore original oracle
+        vm.prank(registryAdmin);
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(LibProdOracles.WTCOIN_ORACLE));
+
+        // Should work again
+        uint256 morphoPriceAfter = morpho.price();
+        assertEq(morphoPriceAfter, morphoPriceBefore, "Price should be same after restore");
     }
 
     // =========================================================================
