@@ -50,13 +50,14 @@ contract OracleRegistryBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new OracleRegistry proxy.
-    /// @param config The initialization configuration.
+    /// The caller (msg.sender) becomes the registry admin, consistent with
+    /// OracleUnifiedDeployer which sets msg.sender as admin for all adapters.
     /// @return registry The deployed OracleRegistry proxy.
     // slither-disable-next-line reentrancy-events
-    function newOracleRegistry(OracleRegistryConfig memory config) external returns (OracleRegistry) {
+    function newOracleRegistry() external returns (OracleRegistry) {
         OracleRegistry registry = OracleRegistry(address(new BeaconProxy(address(I_ORACLE_REGISTRY_BEACON), "")));
 
-        if (registry.initialize(abi.encode(config)) != ICLONEABLE_V2_SUCCESS) {
+        if (registry.initialize(abi.encode(OracleRegistryConfig({admin: msg.sender}))) != ICLONEABLE_V2_SUCCESS) {
             revert InitializeRegistryFailed();
         }
 
