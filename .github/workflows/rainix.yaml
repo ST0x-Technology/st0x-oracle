@@ -40,4 +40,5 @@ jobs:
           ETH_RPC_URL: ${{ secrets.CI_DEPLOY_RPC_URL }}
           ETHERSCAN_API_KEY: ${{ secrets.EXPLORER_VERIFICATION_KEY }}
           RPC_URL_BASE_FORK: ${{ vars.CI_DEPLOY_BASE_RPC_URL }}
+          FORK_BLOCK_BASE: ${{ vars.FORK_BLOCK_BASE }}
         run: nix develop -c ${{ matrix.task }}
