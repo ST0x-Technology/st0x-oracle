@@ -21,8 +21,8 @@ library LibProdDeploy {
     /// Deployed to Base 2026-02-13. Run: 21982788744.
     address constant ORACLE_UNIFIED_DEPLOYER = 0x377c9657D1827b6bcd1e4B6d0a714815D5F2C615;
 
-    /// TODO: Redeploy after newOracleRegistry signature change.
-    address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = address(0);
+    /// Deployed to Base 2026-02-13. Run: 21984615902.
+    address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = 0x3B8E2056Dce6E6847e853c3FEdda379802cD07d3;
 
     /// TODO: Set after initial deployment to Base.
     address constant ORACLE_REGISTRY = address(0);
