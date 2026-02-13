@@ -9,8 +9,6 @@ import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
-import {IPyth} from "pyth-sdk/IPyth.sol";
-import {PythStructs} from "pyth-sdk/PythStructs.sol";
 
 /// @title LibProdOracles
 /// @notice Hardcoded production oracle addresses deployed via
@@ -93,24 +91,12 @@ contract ProdForkTest is Test {
         _;
     }
 
+    /// @dev Fork Base at a specific block. Use FORK_BLOCK_BASE env var to pin
+    /// to a block during NYSE market hours (required for COIN/USD Pyth feed).
     function _forkBase() internal {
-        vm.createSelectFork(vm.envString("RPC_URL_BASE_FORK"));
-        _warpToFreshPrice();
-    }
-
-    /// @dev Warp block.timestamp to the oracle's last publishTime so that
-    /// maxAge checks pass regardless of when CI runs. Equity feeds like
-    /// COIN/USD are only updated during NYSE market hours.
-    /// Calls Pyth's getPriceUnsafe (no staleness check) to read publishTime,
-    /// then warps to that timestamp.
-    function _warpToFreshPrice() internal {
-        if (LibProdOracles.WTCOIN_ORACLE == address(0)) return;
-        // Base mainnet Pyth contract
-        IPyth pyth = IPyth(0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a);
-        PythStructs.Price memory price = pyth.getPriceUnsafe(LibProdOracles.COIN_PRICE_ID);
-        if (price.publishTime > 0) {
-            vm.warp(uint256(uint64(price.publishTime)));
-        }
+        string memory rpc = vm.envString("RPC_URL_BASE_FORK");
+        uint256 blockNumber = vm.envUint("FORK_BLOCK_BASE");
+        vm.createSelectFork(rpc, blockNumber);
     }
 
     // =========================================================================
