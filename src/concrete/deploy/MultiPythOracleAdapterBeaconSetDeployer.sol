@@ -6,10 +6,7 @@ import {IBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/IBeacon.sol
 import {UpgradeableBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {BeaconProxy} from "openzeppelin-contracts/contracts/proxy/beacon/BeaconProxy.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
-import {
-    MultiPythOracleAdapter,
-    MultiPythOracleAdapterConfig
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+import {MultiPythOracleAdapter, MultiPythOracleAdapterConfig} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error MultiZeroImplementation();

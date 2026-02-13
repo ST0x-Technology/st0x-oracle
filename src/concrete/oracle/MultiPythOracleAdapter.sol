@@ -182,13 +182,7 @@ contract MultiPythOracleAdapter is AggregatorV3Interface, ICloneableV2, Initiali
         (, PythStructs.Price memory priceData) = _getFirstValidPrice();
         int256 scaledPrice = _vaultSharePrice(priceData);
 
-        return (
-            1,
-            scaledPrice,
-            uint256(uint64(priceData.publishTime)),
-            uint256(uint64(priceData.publishTime)),
-            1
-        );
+        return (1, scaledPrice, uint256(uint64(priceData.publishTime)), uint256(uint64(priceData.publishTime)), 1);
     }
 
     /// @notice Pause or unpause the oracle. Admin only.
