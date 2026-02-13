@@ -12,6 +12,7 @@ path = [
     "foundry.toml",
     "REUSE.toml",
     "foundry.lock",
+    "AGENTS.md",
     "CLAUDE.md",
     "SPEC.md",
     "slither.config.json"
