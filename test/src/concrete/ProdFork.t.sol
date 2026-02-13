@@ -16,19 +16,19 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 library LibProdOracles {
     /// wtCOIN oracle adapter (PythOracleAdapter proxy).
     /// Deployed to Base 2026-02-13.
-    address constant WTCOIN_ORACLE = 0x9f0fc96fef8e62bffd35bdb76e7287a3e4aa57b0;
+    address constant WTCOIN_ORACLE = 0x9f0fc96FeF8e62bfFD35bDb76e7287A3E4aa57B0;
 
     /// wtCOIN Morpho protocol adapter.
     /// Deployed to Base 2026-02-13.
-    address constant WTCOIN_MORPHO = 0xbe4fe57576e54595400195e6bc00002cb4ed232e;
+    address constant WTCOIN_MORPHO = 0xbe4fE57576e54595400195e6bc00002CB4ed232E;
 
     /// wtCOIN passthrough protocol adapter (Aave/Compound).
     /// Deployed to Base 2026-02-13.
-    address constant WTCOIN_PASSTHROUGH = 0x2e73ef522e9369576bd5fc8f25bf2f0e4cc6b57e;
+    address constant WTCOIN_PASSTHROUGH = 0x2e73ef522E9369576bD5fC8f25Bf2f0E4cC6b57E;
 
     /// OracleRegistry instance.
     /// Deployed to Base 2026-02-13.
-    address constant ORACLE_REGISTRY = 0x36a14d00a8597731fb6db1e0e7eea0bb81ffd156;
+    address constant ORACLE_REGISTRY = 0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156;
 
     /// wtCOIN ERC-4626 vault.
     address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204;
