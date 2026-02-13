@@ -18,8 +18,8 @@ library LibProdDeploy {
     /// Deployed to Base 2026-02-13. Run: 21982188432.
     address constant PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER = 0x62bb7076075a78dEc0e888668C44482235B93CD0;
 
-    /// TODO: Set after initial deployment to Base.
-    address constant ORACLE_UNIFIED_DEPLOYER = address(0);
+    /// Deployed to Base 2026-02-13. Run: 21982788744.
+    address constant ORACLE_UNIFIED_DEPLOYER = 0x377c9657D1827b6bcd1e4B6d0a714815D5F2C615;
 
     /// TODO: Set after initial deployment to Base.
     address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = address(0);
