@@ -6,14 +6,12 @@ import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {OnlyAdmin, OraclePaused, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
-    MultiOnlyAdmin,
-    MultiOraclePaused,
-    MultiZeroAdmin,
-    MultiZeroMaxAge,
+    ZeroMaxAge,
     ZeroFeeds,
     TooManyFeeds,
     FeedIndexOutOfBounds,
@@ -71,7 +69,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         adapter.setPaused(true);
         assertTrue(adapter.paused());
 
-        vm.expectRevert(abi.encodeWithSelector(MultiOraclePaused.selector));
+        vm.expectRevert(abi.encodeWithSelector(OraclePaused.selector));
         adapter.latestAnswer();
 
         adapter.setPaused(false);
@@ -86,7 +84,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(MultiOnlyAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
         adapter.setPaused(true);
     }
 
@@ -99,7 +97,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         assertEq(adapter.admin(), newAdmin);
 
         // Old admin can no longer call admin functions.
-        vm.expectRevert(abi.encodeWithSelector(MultiOnlyAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
         adapter.setPaused(true);
 
         // New admin can.
@@ -112,7 +110,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
     function testSetAdminRevertsZero() external {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
         adapter.setAdmin(address(0));
     }
 
@@ -166,7 +164,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(MultiOnlyAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
         adapter.setFeeds(feeds);
     }
 
@@ -204,7 +202,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
     function testSetMaxAgeRevertsZero() external {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroMaxAge.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector, 0));
         adapter.setMaxAge(0, 0);
     }
 
@@ -221,7 +219,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(MultiOnlyAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
         adapter.setMaxAge(0, 600);
     }
 

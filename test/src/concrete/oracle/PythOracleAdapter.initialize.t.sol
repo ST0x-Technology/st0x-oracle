@@ -3,13 +3,12 @@
 pragma solidity =0.8.25;
 
 import {PythOracleAdapterTest} from "test/abstract/PythOracleAdapterTest.sol";
+import {ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     PythOracleAdapter,
     PythOracleAdapterConfig,
-    ZeroVault,
     ZeroPriceId,
-    ZeroMaxAge,
-    ZeroAdmin
+    ZeroMaxAge
 } from "src/concrete/oracle/PythOracleAdapter.sol";
 import {Vm} from "forge-std/Test.sol";
 

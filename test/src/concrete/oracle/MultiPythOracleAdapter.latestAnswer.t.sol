@@ -6,12 +6,12 @@ import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {ZeroVaultSupply} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
-    AllFeedsStale,
-    MultiZeroVaultSupply
+    AllFeedsStale
 } from "src/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
@@ -159,7 +159,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
             MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
 
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroVaultSupply.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroVaultSupply.selector));
         adapter.latestAnswer();
     }
 

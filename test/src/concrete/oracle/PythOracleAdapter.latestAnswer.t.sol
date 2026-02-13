@@ -6,7 +6,8 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {PythOracleAdapter, PythOracleAdapterConfig, ZeroVaultSupply} from "src/concrete/oracle/PythOracleAdapter.sol";
+import {ZeroVaultSupply} from "src/abstract/BasePythOracleAdapter.sol";
+import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {
     PythOracleAdapterBeaconSetDeployer,
     PythOracleAdapterBeaconSetDeployerConfig

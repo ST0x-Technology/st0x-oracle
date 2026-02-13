@@ -4,14 +4,13 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
+import {ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
-    MultiZeroVault,
-    MultiZeroAdmin,
-    MultiZeroPriceId,
-    MultiZeroMaxAge,
+    ZeroPriceId,
+    ZeroMaxAge,
     ZeroFeeds,
     TooManyFeeds,
     MAX_FEEDS
@@ -95,7 +94,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
 
     /// Test initialization reverts with zero vault.
     function testInitializeRevertsZeroVault() external {
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroVault.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({vault: address(0), feeds: _singleFeedConfig(), admin: address(this)})
         );
@@ -104,7 +103,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     /// Test initialization reverts with zero admin.
     function testInitializeRevertsZeroAdmin() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeroadmin"))));
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroAdmin.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({vault: mockVault, feeds: _singleFeedConfig(), admin: address(0)})
         );
@@ -138,7 +137,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeropriceid"))));
         FeedConfig[] memory feeds = new FeedConfig[](1);
         feeds[0] = FeedConfig({priceId: bytes32(0), maxAge: 300});
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroPriceId.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ZeroPriceId.selector, 0));
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
@@ -149,7 +148,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeromaxage"))));
         FeedConfig[] memory feeds = new FeedConfig[](1);
         feeds[0] = FeedConfig({priceId: FEED_A, maxAge: 0});
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroMaxAge.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector, 0));
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
         );
