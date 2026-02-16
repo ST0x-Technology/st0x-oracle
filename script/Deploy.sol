@@ -31,6 +31,7 @@ import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
 } from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+import {MultiOracleUnifiedDeployer} from "src/concrete/deploy/MultiOracleUnifiedDeployer.sol";
 
 /// @dev The deployment suite name for the pyth oracle adapter beacon set.
 bytes32 constant DEPLOYMENT_SUITE_PYTH_ORACLE_ADAPTER_BEACON_SET = keccak256("pyth-oracle-adapter-beacon-set");
@@ -52,6 +53,9 @@ bytes32 constant DEPLOYMENT_SUITE_ORACLE_REGISTRY_BEACON_SET = keccak256("oracle
 /// @dev The deployment suite name for the multi pyth oracle adapter beacon set.
 bytes32 constant DEPLOYMENT_SUITE_MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET =
     keccak256("multi-pyth-oracle-adapter-beacon-set");
+
+/// @dev The deployment suite name for the multi oracle unified deployer.
+bytes32 constant DEPLOYMENT_SUITE_MULTI_ORACLE_UNIFIED_DEPLOYER = keccak256("multi-oracle-unified-deployer");
 
 contract Deploy is Script {
     /// @notice Deploys the PythOracleAdapterBeaconSetDeployer contract.
@@ -148,6 +152,15 @@ contract Deploy is Script {
         vm.stopBroadcast();
     }
 
+    /// @notice Deploys the MultiOracleUnifiedDeployer contract.
+    function deployMultiOracleUnifiedDeployer(uint256 deploymentKey) internal {
+        vm.startBroadcast(deploymentKey);
+
+        new MultiOracleUnifiedDeployer();
+
+        vm.stopBroadcast();
+    }
+
     /// @notice Entry point for the deployment script. Dispatches to the
     /// appropriate deployment function based on the DEPLOYMENT_SUITE environment
     /// variable.
@@ -167,6 +180,8 @@ contract Deploy is Script {
             deployOracleRegistryBeaconSet(deployerPrivateKey);
         } else if (suite == DEPLOYMENT_SUITE_MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET) {
             deployMultiPythOracleAdapterBeaconSet(deployerPrivateKey);
+        } else if (suite == DEPLOYMENT_SUITE_MULTI_ORACLE_UNIFIED_DEPLOYER) {
+            deployMultiOracleUnifiedDeployer(deployerPrivateKey);
         } else {
             revert("Unknown deployment suite");
         }
