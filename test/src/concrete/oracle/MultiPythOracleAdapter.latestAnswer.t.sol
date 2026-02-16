@@ -6,7 +6,15 @@ import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {ZeroVaultSupply} from "src/abstract/BasePythOracleAdapter.sol";
+import {IPyth} from "pyth-sdk/IPyth.sol";
+import {PythStructs} from "pyth-sdk/PythStructs.sol";
+import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
+import {
+    ZeroVaultSupply,
+    ZeroVaultSharePrice,
+    NonPositivePrice,
+    OraclePaused
+} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -99,7 +107,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         // First feed with maxAge=1 (will be stale), second with generous maxAge.
         FeedConfig[] memory feeds = new FeedConfig[](2);
         feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 1});
-        feeds[1] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
+        feeds[1] = FeedConfig({priceId: FEED_COIN_REGULAR, maxAge: 3600});
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
@@ -184,5 +192,86 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         assertTrue(startedAt > 0, "startedAt should be nonzero");
         assertEq(startedAt, updatedAt);
         assertEq(answer, adapter.latestAnswer());
+    }
+
+    /// Test reverts when paused.
+    function testRevertsWhenPaused() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.paused"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        FeedConfig[] memory feeds = new FeedConfig[](1);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+        );
+
+        adapter.setPaused(true);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePaused.selector));
+        adapter.latestAnswer();
+    }
+
+    /// Test reverts when paused (latestRoundData).
+    function testLatestRoundDataRevertsWhenPaused() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.paused.rounddata"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        FeedConfig[] memory feeds = new FeedConfig[](1);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+        );
+
+        adapter.setPaused(true);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePaused.selector));
+        adapter.latestRoundData();
+    }
+
+    /// Test NonPositivePrice reverts when confidence >= price.
+    /// We mock the Pyth contract to return a price where conf >= price.
+    function testRevertsNonPositivePrice() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.nonpositive"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        FeedConfig[] memory feeds = new FeedConfig[](1);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+        );
+
+        // Mock Pyth to return price where conf >= price (conservative price <= 0).
+        address pythAddr = address(LibPyth.getPriceFeedContract(block.chainid));
+        PythStructs.Price memory badPrice =
+            PythStructs.Price({price: 100, conf: 200, expo: -8, publishTime: block.timestamp});
+        vm.mockCall(
+            pythAddr,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, FEED_TSLA, uint256(3600)),
+            abi.encode(badPrice)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector, int256(100) - int256(200)));
+        adapter.latestAnswer();
+    }
+
+    /// Test ZeroVaultSharePrice reverts when totalAssets is tiny relative to
+    /// totalSupply, causing the price to round to zero.
+    function testRevertsZeroVaultSharePrice() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.zeroshareprice"))));
+        // totalAssets = 1 wei, totalSupply = huge => price rounds to 0
+        _mockVault(mockVault, 1, type(uint128).max);
+
+        FeedConfig[] memory feeds = new FeedConfig[](1);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(ZeroVaultSharePrice.selector));
+        adapter.latestAnswer();
     }
 }
