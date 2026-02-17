@@ -23,6 +23,7 @@ on:
           - oracle-unified-deployer
           - oracle-registry-beacon-set
           - multi-pyth-oracle-adapter-beacon-set
+          - multi-oracle-unified-deployer
 
 jobs:
   deploy:
