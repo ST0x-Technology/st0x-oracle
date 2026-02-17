@@ -1,0 +1,11 @@
+{
+  "lib/openzeppelin-contracts": {
+    "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
+  },
+  "lib/rain.pyth": {
+    "rev": "e7a45068d5aac93e92aec55d7bf1f58e66319a53"
+  },
+  "lib/st0x.deploy": {
+    "rev": "766b468f67149789337bdca39fdd2bab9b9216e2"
+  }
+}

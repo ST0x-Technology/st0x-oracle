@@ -25,5 +25,8 @@ library LibProdDeploy {
     address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = 0x3B8E2056Dce6E6847e853c3FEdda379802cD07d3;
 
     /// TODO: Set after initial deployment to Base.
+    address constant MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER = address(0);
+
+    /// TODO: Set after initial deployment to Base.
     address constant ORACLE_REGISTRY = address(0);
 }

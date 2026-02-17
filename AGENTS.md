@@ -24,6 +24,21 @@ nix develop -c rainix-sol-prelude
 
 This runs formatting, linting, and compilation — the same checks CI runs. If it fails locally, it will fail on CI.
 
+**Run all three CI tasks before every push:**
+
+```bash
+# 1. Tests (unit + fuzz + fork)
+nix develop -c rainix-sol-test
+
+# 2. Static analysis (slither) — catches unchecked confidence, reentrancy, etc.
+nix develop -c rainix-sol-static
+
+# 3. License compliance (REUSE)
+nix develop -c rainix-sol-legal
+```
+
+If any of these fail locally, CI will fail too. Do NOT push without running all three.
+
 At minimum:
 1. `forge fmt` — auto-format all Solidity files
 2. `forge build` — compile everything
@@ -31,8 +46,21 @@ At minimum:
 
 For fork tests (ProdFork.t.sol):
 ```bash
-RPC_URL_BASE_FORK=https://mainnet.base.org forge test --match-contract ProdForkTest
+RPC_URL_BASE_FORK=https://mainnet.base.org FORK_BLOCK_BASE=42102115 forge test --match-contract ProdForkTest
 ```
+
+## Slither Annotations
+
+When slither flags false positives, suppress them with inline comments:
+
+```solidity
+// slither-disable-next-line pyth-unchecked-confidence
+// slither-disable-next-line calls-loop
+// slither-disable-next-line reentrancy-events
+// slither-disable-next-line unused-return
+```
+
+Always add a comment explaining WHY the finding is a false positive. Check the existing PythOracleAdapter for examples.
 
 ## Address Checksums
 
@@ -67,6 +95,7 @@ Deployments happen via GitHub Actions (`manual-sol-artifacts.yaml`), not locally
 - `passthrough-protocol-adapter-beacon-set` — PassthroughProtocolAdapter beacon + impl
 - `oracle-unified-deployer` — OracleUnifiedDeployer (stateless, calls beacon set deployers)
 - `oracle-registry-beacon-set` — OracleRegistry beacon + impl
+- `multi-pyth-oracle-adapter-beacon-set` — MultiPythOracleAdapter beacon + impl
 
 ### Secret Naming Convention
 
@@ -78,7 +107,8 @@ Workflow secrets follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
 
 ## Architecture
 
-- **PythOracleAdapter** — wraps Pyth price feeds into AggregatorV3Interface (8 decimals)
+- **PythOracleAdapter** — wraps a single Pyth price feed into AggregatorV3Interface (8 decimals)
+- **MultiPythOracleAdapter** — cascading multi-feed version of PythOracleAdapter. Tries feeds in order, returns first non-stale price. Up to 8 feeds with per-feed maxAge. Used for equities with separate session feeds (regular, pre-market, post-market, overnight).
 - **MorphoProtocolAdapter** — scales oracle price to 36 decimals for Morpho
 - **PassthroughProtocolAdapter** — passes oracle price through unchanged (AggregatorV3Interface)
 - **OracleRegistry** — maps vault → oracle adapter. Protocol adapters look up their oracle from the registry at runtime.
