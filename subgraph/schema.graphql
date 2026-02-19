@@ -1,0 +1,62 @@
+"The OracleRegistry contract instance"
+type OracleRegistry @entity {
+  id: Bytes!
+  "Current admin address"
+  admin: Bytes!
+  "All vault-to-oracle mappings"
+  oracleMappings: [OracleMapping!]! @derivedFrom(field: "registry")
+  "Admin change history"
+  adminChanges: [AdminChange!]! @derivedFrom(field: "registry")
+}
+
+"A mapping from a vault to its oracle in the registry"
+type OracleMapping @entity {
+  id: Bytes!
+  "The registry this mapping belongs to"
+  registry: OracleRegistry!
+  "The vault address"
+  vault: Bytes!
+  "The current oracle address"
+  oracle: Bytes!
+  "History of oracle changes for this vault"
+  changes: [OracleChange!]! @derivedFrom(field: "mapping")
+}
+
+"An event recording an oracle change for a vault"
+type OracleChange @entity(immutable: true) {
+  id: Bytes!
+  "The oracle mapping that changed"
+  mapping: OracleMapping!
+  "The vault address"
+  vault: Bytes!
+  "The previous oracle address"
+  oldOracle: Bytes!
+  "The new oracle address"
+  newOracle: Bytes!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+"An admin change event"
+type AdminChange @entity(immutable: true) {
+  id: Bytes!
+  "The registry this change belongs to"
+  registry: OracleRegistry!
+  "The previous admin"
+  oldAdmin: Bytes!
+  "The new admin"
+  newAdmin: Bytes!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+type Transaction @entity(immutable: true) {
+  id: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  from: Bytes!
+}
