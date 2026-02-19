@@ -512,44 +512,16 @@ contract ProdForkTest is Test {
     // MultiPythOracleAdapter prod tests
     // =========================================================================
 
-    /// @dev Skip modifier for multi-feed oracle tests.
-    modifier onlyIfMultiOracleDeployed() {
-        if (LibProdOracles.WTCOIN_MULTI_ORACLE == address(0)) {
-            return;
-        }
-        _;
-    }
-
-    /// @dev Skip modifier for multi-feed Morpho tests.
-    modifier onlyIfMultiMorphoDeployed() {
-        if (LibProdOracles.WTCOIN_MULTI_MORPHO == address(0)) {
-            return;
-        }
-        _;
-    }
-
-    /// @dev Skip modifier for multi-feed passthrough tests.
-    modifier onlyIfMultiPassthroughDeployed() {
-        if (LibProdOracles.WTCOIN_MULTI_PASSTHROUGH == address(0)) {
-            return;
-        }
-        _;
-    }
-
-    /// @dev Skip modifier for all multi-feed adapters.
-    modifier onlyIfAllMultiDeployed() {
-        if (
-            LibProdOracles.WTCOIN_MULTI_ORACLE == address(0) || LibProdOracles.WTCOIN_MULTI_MORPHO == address(0)
-                || LibProdOracles.WTCOIN_MULTI_PASSTHROUGH == address(0)
-        ) {
-            return;
-        }
-        _;
+    /// @dev Checks if a multi-feed address exists on the fork. Fork block may
+    /// predate deployment, so we check code length after forking.
+    function _existsOnFork(address addr) internal view returns (bool) {
+        return addr != address(0) && addr.code.length > 0;
     }
 
     /// @notice Multi-feed oracle returns a positive price.
-    function testProdWtcoinMultiOracleLatestAnswer() external onlyIfMultiOracleDeployed {
+    function testProdWtcoinMultiOracleLatestAnswer() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         int256 answer = oracle.latestAnswer();
@@ -559,8 +531,9 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed oracle returns valid latestRoundData.
-    function testProdWtcoinMultiOracleLatestRoundData() external onlyIfMultiOracleDeployed {
+    function testProdWtcoinMultiOracleLatestRoundData() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
@@ -575,16 +548,18 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed oracle reports 8 decimals.
-    function testProdWtcoinMultiOracleDecimals() external onlyIfMultiOracleDeployed {
+    function testProdWtcoinMultiOracleDecimals() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         assertEq(oracle.decimals(), 8);
     }
 
     /// @notice Multi-feed oracle config: vault, feed count, not paused.
-    function testProdWtcoinMultiOracleConfig() external onlyIfMultiOracleDeployed {
+    function testProdWtcoinMultiOracleConfig() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         assertEq(oracle.vault(), LibProdOracles.WTCOIN_VAULT, "Wrong vault");
@@ -593,8 +568,9 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed oracle reverts when paused.
-    function testProdWtcoinMultiOracleRevertsWhenPaused() external onlyIfMultiOracleDeployed {
+    function testProdWtcoinMultiOracleRevertsWhenPaused() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         address oracleAdmin = oracle.admin();
@@ -613,8 +589,9 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed Morpho adapter returns price scaled to 36 decimals.
-    function testProdWtcoinMultiMorphoPrice() external onlyIfMultiMorphoDeployed {
+    function testProdWtcoinMultiMorphoPrice() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)) return;
 
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
         uint256 morphoPrice = morpho.price();
@@ -624,8 +601,9 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed passthrough returns same answer as multi-feed oracle.
-    function testProdWtcoinMultiPassthroughAnswer() external onlyIfMultiPassthroughDeployed {
+    function testProdWtcoinMultiPassthroughAnswer() external {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)) return;
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH);
         int256 answer = passthrough.latestAnswer();
@@ -635,8 +613,12 @@ contract ProdForkTest is Test {
     }
 
     /// @notice All three multi-feed contracts return consistent prices.
-    function testProdWtcoinMultiPriceConsistency() external onlyIfAllMultiDeployed {
+    function testProdWtcoinMultiPriceConsistency() external {
         _forkBase();
+        if (
+            !_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE) || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)
+                || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)
+        ) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
@@ -651,8 +633,9 @@ contract ProdForkTest is Test {
     }
 
     /// @notice Multi-feed oracle registered in registry matches expected address.
-    function testProdRegistryHasWtcoinMultiOracle() external onlyIfRegistryDeployed onlyIfMultiOracleDeployed {
+    function testProdRegistryHasWtcoinMultiOracle() external onlyIfRegistryDeployed {
         _forkBase();
+        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
         AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
