@@ -293,6 +293,8 @@ contract ProdForkTest is Test {
     /// @notice Registry has wtCOIN oracle registered.
     function testProdRegistryHasWtcoinOracle() external onlyIfRegistryDeployed onlyIfOracleDeployed {
         _forkBase();
+        // Registry now points to multi oracle after swap; skip on post-swap fork blocks.
+        if (_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
         AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
