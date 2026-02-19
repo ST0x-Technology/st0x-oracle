@@ -39,16 +39,16 @@ library LibProdOracles {
     bytes32 constant COIN_PRICE_ID = 0xfee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245;
 
     /// wtCOIN multi-feed oracle adapter (MultiPythOracleAdapter proxy).
-    /// TODO: Set after deployment.
-    address constant WTCOIN_MULTI_ORACLE = address(0);
+    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
+    address constant WTCOIN_MULTI_ORACLE = 0x1C63889a9FAd36C6a4422B3dAFCD57b11deC73d8;
 
     /// wtCOIN multi-feed Morpho protocol adapter.
-    /// TODO: Set after deployment.
-    address constant WTCOIN_MULTI_MORPHO = address(0);
+    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
+    address constant WTCOIN_MULTI_MORPHO = 0x9e775f2aB11E49E18924379A31502A8B593bBec7;
 
     /// wtCOIN multi-feed passthrough protocol adapter.
-    /// TODO: Set after deployment.
-    address constant WTCOIN_MULTI_PASSTHROUGH = address(0);
+    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
+    address constant WTCOIN_MULTI_PASSTHROUGH = 0x2F179Ee0F7ec2767C48e6c43fb6f0C7c715b5880;
 }
 
 /// @title ProdForkTest
