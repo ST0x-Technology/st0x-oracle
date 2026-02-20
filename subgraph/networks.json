@@ -3,6 +3,14 @@
         "OracleRegistry": {
             "address": "0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156",
             "startBlock": 26843790
+        },
+        "OracleUnifiedDeployer": {
+            "address": "0x377c9657D1827b6bcd1e4B6d0a714815D5F2C615",
+            "startBlock": 26843790
+        },
+        "MultiOracleUnifiedDeployer": {
+            "address": "0x4fcef5a7B3059586ad7A9552aCA0a60d075CB74c",
+            "startBlock": 26843790
         }
     }
 }

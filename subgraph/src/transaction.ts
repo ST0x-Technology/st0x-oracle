@@ -1,4 +1,4 @@
-import { ethereum } from "@graphprotocol/graph-ts";
+import { ethereum, Bytes } from "@graphprotocol/graph-ts";
 import { Transaction } from "../generated/schema";
 
 export function createTransactionEntity(event: ethereum.Event): Transaction {
@@ -11,4 +11,8 @@ export function createTransactionEntity(event: ethereum.Event): Transaction {
     tx.save();
   }
   return tx;
+}
+
+export function eventId(event: ethereum.Event): Bytes {
+  return event.transaction.hash.concatI32(event.logIndex.toI32());
 }

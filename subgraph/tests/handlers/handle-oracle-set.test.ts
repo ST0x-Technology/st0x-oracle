@@ -7,8 +7,7 @@ import {
 } from "matchstick-as";
 import { Address } from "@graphprotocol/graph-ts";
 import { createOracleSetEvent } from "../event-mocks.test";
-import { handleOracleSet } from "../../src/handlers";
-import { OracleMapping } from "../../generated/schema";
+import { handleOracleSet } from "../../src/registry";
 
 let VAULT = Address.fromString(
   "0x5cDa0E1CA4ce2af96315f7F8963C85399c172204"
@@ -29,13 +28,8 @@ describe("Handle OracleSet", () => {
     let event = createOracleSetEvent(VAULT, OLD_ORACLE, NEW_ORACLE);
     handleOracleSet(event);
 
-    // Should create an OracleMapping
     assert.entityCount("OracleMapping", 1);
-
-    // Should create an OracleChange
     assert.entityCount("OracleChange", 1);
-
-    // Should create a Transaction
     assert.entityCount("Transaction", 1);
   });
 
@@ -49,10 +43,7 @@ describe("Handle OracleSet", () => {
     let event2 = createOracleSetEvent(VAULT, NEW_ORACLE, NEWER_ORACLE);
     handleOracleSet(event2);
 
-    // Still one mapping (updated in place)
     assert.entityCount("OracleMapping", 1);
-
-    // But two changes
     assert.entityCount("OracleChange", 2);
   });
 });

@@ -1,9 +1,11 @@
 import { newMockEvent } from "matchstick-as";
-import { ethereum, Address, Bytes } from "@graphprotocol/graph-ts";
+import { ethereum, Address, Bytes, BigInt } from "@graphprotocol/graph-ts";
 import {
   OracleSet,
   AdminSet,
 } from "../generated/OracleRegistry/OracleRegistry";
+import { Deployment as SingleDeploymentEvent } from "../generated/OracleUnifiedDeployer/OracleUnifiedDeployer";
+import { Deployment as MultiDeploymentEvent } from "../generated/MultiOracleUnifiedDeployer/MultiOracleUnifiedDeployer";
 import { createTransactionEntity } from "../src/transaction";
 
 export function createOracleSetEvent(
@@ -58,6 +60,94 @@ export function createAdminSetEvent(
   );
   event.parameters.push(
     new ethereum.EventParam("newAdmin", ethereum.Value.fromAddress(newAdmin))
+  );
+
+  createTransactionEntity(event);
+  return event;
+}
+
+export function createSingleDeploymentEvent(
+  sender: Address,
+  pythOracleAdapter: Address,
+  morphoProtocolAdapter: Address,
+  passthroughProtocolAdapter: Address
+): SingleDeploymentEvent {
+  let mockEvent = newMockEvent();
+  let event = new SingleDeploymentEvent(
+    mockEvent.address,
+    mockEvent.logIndex,
+    mockEvent.transactionLogIndex,
+    mockEvent.logType,
+    mockEvent.block,
+    mockEvent.transaction,
+    mockEvent.parameters,
+    null
+  );
+  event.parameters = new Array();
+  event.parameters.push(
+    new ethereum.EventParam("sender", ethereum.Value.fromAddress(sender))
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "pythOracleAdapter",
+      ethereum.Value.fromAddress(pythOracleAdapter)
+    )
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "morphoProtocolAdapter",
+      ethereum.Value.fromAddress(morphoProtocolAdapter)
+    )
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "passthroughProtocolAdapter",
+      ethereum.Value.fromAddress(passthroughProtocolAdapter)
+    )
+  );
+
+  createTransactionEntity(event);
+  return event;
+}
+
+export function createMultiDeploymentEvent(
+  sender: Address,
+  multiPythOracleAdapter: Address,
+  morphoProtocolAdapter: Address,
+  passthroughProtocolAdapter: Address
+): MultiDeploymentEvent {
+  let mockEvent = newMockEvent();
+  let event = new MultiDeploymentEvent(
+    mockEvent.address,
+    mockEvent.logIndex,
+    mockEvent.transactionLogIndex,
+    mockEvent.logType,
+    mockEvent.block,
+    mockEvent.transaction,
+    mockEvent.parameters,
+    null
+  );
+  event.parameters = new Array();
+  event.parameters.push(
+    new ethereum.EventParam("sender", ethereum.Value.fromAddress(sender))
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "multiPythOracleAdapter",
+      ethereum.Value.fromAddress(multiPythOracleAdapter)
+    )
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "morphoProtocolAdapter",
+      ethereum.Value.fromAddress(morphoProtocolAdapter)
+    )
+  );
+  event.parameters.push(
+    new ethereum.EventParam(
+      "passthroughProtocolAdapter",
+      ethereum.Value.fromAddress(passthroughProtocolAdapter)
+    )
   );
 
   createTransactionEntity(event);
