@@ -1,7 +1,7 @@
 {
     "base": {
-        "OracleRegistry": {
-            "address": "0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156",
+        "OracleRegistryBeaconSetDeployer": {
+            "address": "0x3B8E2056Dce6E6847e853c3FEdda379802cD07d3",
             "startBlock": 26843790
         },
         "OracleUnifiedDeployer": {

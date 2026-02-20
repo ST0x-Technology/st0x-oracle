@@ -1,14 +1,21 @@
 import { Address } from "@graphprotocol/graph-ts";
+import { Deployment as RegistryDeployment } from "../generated/OracleRegistryBeaconSetDeployer/OracleRegistryBeaconSetDeployer";
 import { Deployment as SingleDeployment } from "../generated/OracleUnifiedDeployer/OracleUnifiedDeployer";
 import { Deployment as MultiDeployment } from "../generated/MultiOracleUnifiedDeployer/MultiOracleUnifiedDeployer";
 import { UnifiedDeployment } from "../generated/schema";
 import {
+  OracleRegistryTemplate,
   PythOracleAdapterTemplate,
   MultiPythOracleAdapterTemplate,
   MorphoProtocolAdapterTemplate,
   PassthroughProtocolAdapterTemplate,
 } from "../generated/templates";
 import { createTransactionEntity, eventId } from "./transaction";
+
+export function handleRegistryDeployment(event: RegistryDeployment): void {
+  createTransactionEntity(event);
+  OracleRegistryTemplate.create(event.params.oracleRegistry);
+}
 
 export function handleSingleDeployment(event: SingleDeployment): void {
   createTransactionEntity(event);
