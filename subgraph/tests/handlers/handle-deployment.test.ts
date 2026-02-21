@@ -33,7 +33,7 @@ describe("Handle Deployment", () => {
     clearStore();
   });
 
-  test("handleSingleDeployment() creates UnifiedDeployment", () => {
+  test("handleSingleDeployment() creates UnifiedDeployment with correct fields", () => {
     let event = createSingleDeploymentEvent(
       SENDER,
       ORACLE,
@@ -44,6 +44,35 @@ describe("Handle Deployment", () => {
 
     assert.entityCount("UnifiedDeployment", 1);
     assert.entityCount("Transaction", 1);
+
+    let id = event.transaction.hash
+      .concatI32(event.logIndex.toI32())
+      .toHexString();
+    assert.fieldEquals("UnifiedDeployment", id, "kind", "single");
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "sender",
+      SENDER.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "oracleAdapter",
+      ORACLE.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "morphoAdapter",
+      MORPHO.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "passthroughAdapter",
+      PASSTHROUGH.toHexString()
+    );
   });
 
   test("handleMultiDeployment() creates UnifiedDeployment with kind=multi", () => {
@@ -57,5 +86,34 @@ describe("Handle Deployment", () => {
 
     assert.entityCount("UnifiedDeployment", 1);
     assert.entityCount("Transaction", 1);
+
+    let id = event.transaction.hash
+      .concatI32(event.logIndex.toI32())
+      .toHexString();
+    assert.fieldEquals("UnifiedDeployment", id, "kind", "multi");
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "sender",
+      SENDER.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "oracleAdapter",
+      ORACLE.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "morphoAdapter",
+      MORPHO.toHexString()
+    );
+    assert.fieldEquals(
+      "UnifiedDeployment",
+      id,
+      "passthroughAdapter",
+      PASSTHROUGH.toHexString()
+    );
   });
 });

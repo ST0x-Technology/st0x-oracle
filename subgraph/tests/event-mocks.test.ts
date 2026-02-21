@@ -6,7 +6,6 @@ import {
 } from "../generated/OracleRegistry/OracleRegistry";
 import { Deployment as SingleDeploymentEvent } from "../generated/OracleUnifiedDeployer/OracleUnifiedDeployer";
 import { Deployment as MultiDeploymentEvent } from "../generated/MultiOracleUnifiedDeployer/MultiOracleUnifiedDeployer";
-import { createTransactionEntity } from "../src/transaction";
 
 export function createOracleSetEvent(
   vault: Address,
@@ -35,7 +34,6 @@ export function createOracleSetEvent(
     new ethereum.EventParam("newOracle", ethereum.Value.fromAddress(newOracle))
   );
 
-  createTransactionEntity(event);
   return event;
 }
 
@@ -62,7 +60,6 @@ export function createAdminSetEvent(
     new ethereum.EventParam("newAdmin", ethereum.Value.fromAddress(newAdmin))
   );
 
-  createTransactionEntity(event);
   return event;
 }
 
@@ -106,7 +103,6 @@ export function createSingleDeploymentEvent(
     )
   );
 
-  createTransactionEntity(event);
   return event;
 }
 
@@ -150,6 +146,5 @@ export function createMultiDeploymentEvent(
     )
   );
 
-  createTransactionEntity(event);
   return event;
 }
