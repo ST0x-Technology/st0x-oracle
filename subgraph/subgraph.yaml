@@ -24,6 +24,90 @@ dataSources:
       file: ./src/deployer.ts
 
   - kind: ethereum/contract
+    name: PythOracleAdapterBeaconSetDeployer
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"
+      abi: PythOracleAdapterBeaconSetDeployer
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transaction
+      abis:
+        - name: PythOracleAdapterBeaconSetDeployer
+          file: ../out/PythOracleAdapterBeaconSetDeployer.sol/PythOracleAdapterBeaconSetDeployer.json
+      eventHandlers:
+        - event: Deployment(address,address)
+          handler: handlePythAdapterDeployment
+      file: ./src/deployer.ts
+
+  - kind: ethereum/contract
+    name: MultiPythOracleAdapterBeaconSetDeployer
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"
+      abi: MultiPythOracleAdapterBeaconSetDeployer
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transaction
+      abis:
+        - name: MultiPythOracleAdapterBeaconSetDeployer
+          file: ../out/MultiPythOracleAdapterBeaconSetDeployer.sol/MultiPythOracleAdapterBeaconSetDeployer.json
+      eventHandlers:
+        - event: Deployment(address,address)
+          handler: handleMultiPythAdapterDeployment
+      file: ./src/deployer.ts
+
+  - kind: ethereum/contract
+    name: MorphoProtocolAdapterBeaconSetDeployer
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"
+      abi: MorphoProtocolAdapterBeaconSetDeployer
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transaction
+      abis:
+        - name: MorphoProtocolAdapterBeaconSetDeployer
+          file: ../out/MorphoProtocolAdapterBeaconSetDeployer.sol/MorphoProtocolAdapterBeaconSetDeployer.json
+      eventHandlers:
+        - event: Deployment(address,address)
+          handler: handleMorphoAdapterDeployment
+      file: ./src/deployer.ts
+
+  - kind: ethereum/contract
+    name: PassthroughProtocolAdapterBeaconSetDeployer
+    network: base
+    source:
+      address: "0x0000000000000000000000000000000000000000"
+      abi: PassthroughProtocolAdapterBeaconSetDeployer
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transaction
+      abis:
+        - name: PassthroughProtocolAdapterBeaconSetDeployer
+          file: ../out/PassthroughProtocolAdapterBeaconSetDeployer.sol/PassthroughProtocolAdapterBeaconSetDeployer.json
+      eventHandlers:
+        - event: Deployment(address,address)
+          handler: handlePassthroughAdapterDeployment
+      file: ./src/deployer.ts
+
+  - kind: ethereum/contract
     name: OracleUnifiedDeployer
     network: base
     source:

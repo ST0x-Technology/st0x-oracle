@@ -4,6 +4,22 @@
             "address": "0x3B8E2056Dce6E6847e853c3FEdda379802cD07d3",
             "startBlock": 26843790
         },
+        "PythOracleAdapterBeaconSetDeployer": {
+            "address": "0x29295438119dA1E773f6A103cC935c89BfdEbc4A",
+            "startBlock": 26843790
+        },
+        "MultiPythOracleAdapterBeaconSetDeployer": {
+            "address": "0xDc555fb8043b50d449667eE718527eCad2A267ad",
+            "startBlock": 26843790
+        },
+        "MorphoProtocolAdapterBeaconSetDeployer": {
+            "address": "0x5022bb2ecB539Ad54E49871389E134fb2c9fE9a5",
+            "startBlock": 26843790
+        },
+        "PassthroughProtocolAdapterBeaconSetDeployer": {
+            "address": "0x62bb7076075a78dEc0e888668C44482235B93CD0",
+            "startBlock": 26843790
+        },
         "OracleUnifiedDeployer": {
             "address": "0x377c9657D1827b6bcd1e4B6d0a714815D5F2C615",
             "startBlock": 26843790
