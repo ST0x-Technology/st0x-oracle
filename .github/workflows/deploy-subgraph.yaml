@@ -49,7 +49,9 @@ jobs:
         run: nix develop -c bash -c "cd subgraph && npx graph build --network ${{ inputs.network }}"
 
       - name: Login to Goldsky
-        run: nix develop -c goldsky login --token ${{ secrets.CI_GOLDSKY_TOKEN }}
+        env:
+          GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
+        run: nix develop -c goldsky login --token "$GOLDSKY_TOKEN"
 
       - name: Check repo is clean
         run: git diff --exit-code -- . ':(exclude)subgraph/subgraph.yaml'
