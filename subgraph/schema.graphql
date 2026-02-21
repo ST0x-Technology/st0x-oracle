@@ -1,3 +1,5 @@
+# --- Registry ---
+
 "The OracleRegistry contract instance"
 type OracleRegistry @entity {
   id: Bytes!
@@ -6,7 +8,7 @@ type OracleRegistry @entity {
   "All vault-to-oracle mappings"
   oracleMappings: [OracleMapping!]! @derivedFrom(field: "registry")
   "Admin change history"
-  adminChanges: [AdminChange!]! @derivedFrom(field: "registry")
+  adminChanges: [RegistryAdminChange!]! @derivedFrom(field: "registry")
 }
 
 "A mapping from a vault to its oracle in the registry"
@@ -39,8 +41,8 @@ type OracleChange @entity(immutable: true) {
   transaction: Transaction!
 }
 
-"An admin change event"
-type AdminChange @entity(immutable: true) {
+"A registry admin change event"
+type RegistryAdminChange @entity(immutable: true) {
   id: Bytes!
   "The registry this change belongs to"
   registry: OracleRegistry!
@@ -53,6 +55,159 @@ type AdminChange @entity(immutable: true) {
   "The transaction"
   transaction: Transaction!
 }
+
+# --- Oracle Adapters ---
+
+"A single-feed Pyth oracle adapter"
+type PythOracleAdapter @entity {
+  id: Bytes!
+  "The vault this oracle prices"
+  vault: Bytes!
+  "Pyth price feed ID"
+  priceId: Bytes!
+  "Maximum acceptable price age in seconds"
+  maxAge: BigInt!
+  "Admin address"
+  admin: Bytes!
+  "Whether the oracle is paused"
+  isPaused: Boolean!
+  "Block timestamp of initialization"
+  createdAt: BigInt!
+  "The transaction that created this adapter"
+  createdTransaction: Transaction!
+}
+
+"A multi-feed Pyth oracle adapter (tries feeds in order)"
+type MultiPythOracleAdapter @entity {
+  id: Bytes!
+  "The vault this oracle prices"
+  vault: Bytes!
+  "Admin address"
+  admin: Bytes!
+  "Whether the oracle is paused"
+  isPaused: Boolean!
+  "Number of configured feeds"
+  feedCount: BigInt!
+  "Ordered feed configurations"
+  feeds: [FeedConfig!]! @derivedFrom(field: "adapter")
+  "Block timestamp of initialization"
+  createdAt: BigInt!
+  "The transaction that created this adapter"
+  createdTransaction: Transaction!
+}
+
+"A feed configuration within a MultiPythOracleAdapter"
+type FeedConfig @entity {
+  id: Bytes!
+  "The multi-feed adapter this belongs to"
+  adapter: MultiPythOracleAdapter!
+  "Index position in the feed order"
+  index: BigInt!
+  "Pyth price feed ID"
+  priceId: Bytes!
+  "Maximum acceptable price age in seconds"
+  maxAge: BigInt!
+}
+
+# --- Protocol Adapters ---
+
+"A Morpho protocol adapter"
+type MorphoProtocolAdapter @entity {
+  id: Bytes!
+  "The vault this adapter serves"
+  vault: Bytes!
+  "The oracle registry address"
+  registry: Bytes!
+  "Admin address"
+  admin: Bytes!
+  "Block timestamp of initialization"
+  createdAt: BigInt!
+  "The transaction that created this adapter"
+  createdTransaction: Transaction!
+}
+
+"A passthrough protocol adapter (Aave/Compound/Chainlink-compatible)"
+type PassthroughProtocolAdapter @entity {
+  id: Bytes!
+  "The vault this adapter serves"
+  vault: Bytes!
+  "The oracle registry address"
+  registry: Bytes!
+  "Admin address"
+  admin: Bytes!
+  "Block timestamp of initialization"
+  createdAt: BigInt!
+  "The transaction that created this adapter"
+  createdTransaction: Transaction!
+}
+
+# --- Deployments ---
+
+"A unified deployment (oracle + morpho + passthrough for a vault)"
+type UnifiedDeployment @entity(immutable: true) {
+  id: Bytes!
+  "Deployer type: single or multi"
+  kind: String!
+  "The sender who triggered the deployment"
+  sender: Bytes!
+  "The oracle adapter address"
+  oracleAdapter: Bytes!
+  "The Morpho protocol adapter address"
+  morphoAdapter: Bytes!
+  "The passthrough protocol adapter address"
+  passthroughAdapter: Bytes!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+# --- Pause / Admin events (shared by adapters) ---
+
+"A pause state change on an oracle adapter"
+type PauseEvent @entity(immutable: true) {
+  id: Bytes!
+  "The adapter address"
+  adapter: Bytes!
+  "New pause state"
+  isPaused: Boolean!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+"An admin change on an adapter or protocol adapter"
+type AdapterAdminChange @entity(immutable: true) {
+  id: Bytes!
+  "The contract address"
+  contract: Bytes!
+  "The previous admin"
+  oldAdmin: Bytes!
+  "The new admin"
+  newAdmin: Bytes!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+"A registry reference change on a protocol adapter"
+type RegistryChange @entity(immutable: true) {
+  id: Bytes!
+  "The protocol adapter address"
+  adapter: Bytes!
+  "The previous registry"
+  oldRegistry: Bytes!
+  "The new registry"
+  newRegistry: Bytes!
+  "Block timestamp"
+  timestamp: BigInt!
+  "The transaction"
+  transaction: Transaction!
+}
+
+# --- Common ---
 
 type Transaction @entity(immutable: true) {
   id: Bytes!

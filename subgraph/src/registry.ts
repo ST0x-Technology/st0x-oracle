@@ -8,21 +8,9 @@ import {
   OracleRegistry,
   OracleMapping,
   OracleChange,
-  AdminChange,
+  RegistryAdminChange,
 } from "../generated/schema";
-import { createTransactionEntity } from "./transaction";
-
-function eventId(event: OracleSet): Bytes {
-  return event.transaction.hash.concatI32(event.logIndex.toI32());
-}
-
-function adminEventId(event: AdminSet): Bytes {
-  return event.transaction.hash.concatI32(event.logIndex.toI32());
-}
-
-function initEventId(event: OracleRegistryInitialized): Bytes {
-  return event.transaction.hash.concatI32(event.logIndex.toI32());
-}
+import { createTransactionEntity, eventId } from "./transaction";
 
 function oracleMappingId(registry: Bytes, vault: Bytes): Bytes {
   return registry.concat(vault);
@@ -61,7 +49,7 @@ export function handleOracleSet(event: OracleSet): void {
   change.save();
 }
 
-export function handleAdminSet(event: AdminSet): void {
+export function handleRegistryAdminSet(event: AdminSet): void {
   createTransactionEntity(event);
 
   let registry = OracleRegistry.load(event.address);
@@ -70,7 +58,7 @@ export function handleAdminSet(event: AdminSet): void {
     registry.save();
   }
 
-  let change = new AdminChange(adminEventId(event));
+  let change = new RegistryAdminChange(eventId(event));
   change.registry = event.address;
   change.oldAdmin = event.params.oldAdmin;
   change.newAdmin = event.params.newAdmin;
