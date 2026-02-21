@@ -124,12 +124,6 @@ dataSources:
       abis:
         - name: OracleUnifiedDeployer
           file: ../out/OracleUnifiedDeployer.sol/OracleUnifiedDeployer.json
-        - name: PythOracleAdapter
-          file: ../out/PythOracleAdapter.sol/PythOracleAdapter.json
-        - name: MorphoProtocolAdapter
-          file: ../out/MorphoProtocolAdapter.sol/MorphoProtocolAdapter.json
-        - name: PassthroughProtocolAdapter
-          file: ../out/PassthroughProtocolAdapter.sol/PassthroughProtocolAdapter.json
       eventHandlers:
         - event: Deployment(address,address,address,address)
           handler: handleSingleDeployment
@@ -152,12 +146,6 @@ dataSources:
       abis:
         - name: MultiOracleUnifiedDeployer
           file: ../out/MultiOracleUnifiedDeployer.sol/MultiOracleUnifiedDeployer.json
-        - name: MultiPythOracleAdapter
-          file: ../out/MultiPythOracleAdapter.sol/MultiPythOracleAdapter.json
-        - name: MorphoProtocolAdapter
-          file: ../out/MorphoProtocolAdapter.sol/MorphoProtocolAdapter.json
-        - name: PassthroughProtocolAdapter
-          file: ../out/PassthroughProtocolAdapter.sol/PassthroughProtocolAdapter.json
       eventHandlers:
         - event: Deployment(address,address,address,address)
           handler: handleMultiDeployment
