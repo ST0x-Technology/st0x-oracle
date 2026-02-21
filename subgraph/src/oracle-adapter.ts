@@ -1,4 +1,4 @@
-import { BigInt, Bytes } from "@graphprotocol/graph-ts";
+import { BigInt, Bytes, store } from "@graphprotocol/graph-ts";
 import {
   PythOracleAdapterInitialized,
   PauseSet as PythPauseSet,
@@ -111,19 +111,20 @@ export function handleFeedsSet(event: FeedsSet): void {
   let adapter = MultiPythOracleAdapter.load(event.address);
   if (adapter == null) return;
 
-  // Remove old feed configs
   let oldCount = adapter.feedCount.toI32();
-  for (let i = 0; i < oldCount; i++) {
+  let feeds = event.params.feeds;
+  let newCount = feeds.length;
+
+  // Remove stale FeedConfig entities that exceed the new count
+  for (let i = newCount; i < oldCount; i++) {
     let id = feedConfigId(event.address, BigInt.fromI32(i));
-    let old = FeedConfig.load(id);
-    // Can't delete in subgraphs, but we'll overwrite below
+    store.remove("FeedConfig", id.toHexString());
   }
 
-  let feeds = event.params.feeds;
-  adapter.feedCount = BigInt.fromI32(feeds.length);
+  adapter.feedCount = BigInt.fromI32(newCount);
   adapter.save();
 
-  for (let i = 0; i < feeds.length; i++) {
+  for (let i = 0; i < newCount; i++) {
     let idx = BigInt.fromI32(i);
     let feed = new FeedConfig(feedConfigId(event.address, idx));
     feed.adapter = event.address;

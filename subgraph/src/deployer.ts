@@ -1,4 +1,3 @@
-import { Address } from "@graphprotocol/graph-ts";
 import { Deployment as RegistryDeployment } from "../generated/OracleRegistryBeaconSetDeployer/OracleRegistryBeaconSetDeployer";
 import { Deployment as PythAdapterDeployment } from "../generated/PythOracleAdapterBeaconSetDeployer/PythOracleAdapterBeaconSetDeployer";
 import { Deployment as MultiPythAdapterDeployment } from "../generated/MultiPythOracleAdapterBeaconSetDeployer/MultiPythOracleAdapterBeaconSetDeployer";
