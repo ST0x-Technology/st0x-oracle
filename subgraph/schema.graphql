@@ -111,7 +111,7 @@ type FeedConfig @entity {
 
 # --- Protocol Adapters ---
 
-"A Morpho Blue protocol adapter"
+"A Morpho protocol adapter"
 type MorphoProtocolAdapter @entity {
   id: Bytes!
   "The vault this adapter serves"
