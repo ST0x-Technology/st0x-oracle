@@ -3,7 +3,7 @@ import {
   OracleRegistryInitialized,
   OracleSet,
   AdminSet,
-} from "../generated/OracleRegistry/OracleRegistry";
+} from "../generated/templates/OracleRegistryTemplate/OracleRegistry";
 import {
   OracleRegistry,
   OracleMapping,
