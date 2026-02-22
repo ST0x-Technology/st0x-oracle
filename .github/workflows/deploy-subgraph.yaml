@@ -1,0 +1,63 @@
+name: Deploy subgraph
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network to deploy to"
+        required: true
+        type: choice
+        options:
+          - base
+
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+
+      - run: nix develop -c rainix-sol-prelude
+
+      - name: Install subgraph dependencies
+        run: nix develop -c bash -c "cd subgraph && npm install"
+
+      - name: Codegen
+        run: nix develop -c bash -c "cd subgraph && npx graph codegen"
+
+      - name: Build
+        run: nix develop -c bash -c "cd subgraph && npx graph build --network ${{ inputs.network }}"
+
+      - name: Login to Goldsky
+        env:
+          GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
+        run: nix develop -c goldsky login --token "$GOLDSKY_TOKEN"
+
+      - name: Check repo is clean
+        run: git diff --exit-code -- . ':(exclude)subgraph/subgraph.yaml'
+
+      - name: Deploy to Goldsky
+        run: >
+          nix develop -c goldsky subgraph deploy
+          "st0x-oracle-${{ inputs.network }}/$(date -Idate)-$(openssl rand -hex 2)"
+        working-directory: subgraph
