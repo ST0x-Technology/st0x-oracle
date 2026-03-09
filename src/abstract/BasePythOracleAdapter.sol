@@ -72,7 +72,7 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
     // slither-disable-next-line pyth-unchecked-confidence
     function latestAnswer() external view override returns (int256) {
         _validateNotPaused();
-        // Confidence is checked in _vaultSharePrice -> _conservativeScaledPrice
+        // Confidence is checked in _vaultSharePrice -> _conservativePriceFloat
         PythStructs.Price memory priceData = _getPriceData();
         return _vaultSharePrice(priceData);
     }
@@ -86,7 +86,7 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
         _validateNotPaused();
-        // Confidence is checked in _vaultSharePrice -> _conservativeScaledPrice
+        // Confidence is checked in _vaultSharePrice -> _conservativePriceFloat
         PythStructs.Price memory priceData = _getPriceData();
         int256 scaledPrice = _vaultSharePrice(priceData);
 
@@ -117,31 +117,29 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         if (paused) revert OraclePaused();
     }
 
-    /// @dev Computes conservative price (price - confidence) and scales to 8
-    /// decimals using LibDecimalFloat. Reverts if the conservative price is not
-    /// positive.
+    /// @dev Computes conservative price (price - confidence) as a Rain Float.
+    /// Reverts if the conservative price is not positive.
     /// @param priceData The Pyth price data.
-    /// @return The conservative price scaled to 8 decimals.
-    function _conservativeScaledPrice(PythStructs.Price memory priceData) internal pure returns (int256) {
+    /// @return The conservative price as a Rain Float.
+    function _conservativePriceFloat(PythStructs.Price memory priceData) internal pure returns (Float) {
         // slither-disable-next-line pyth-unchecked-confidence
         int256 conservativePrice = int256(priceData.price) - int256(uint256(priceData.conf));
         if (conservativePrice <= 0) {
             revert NonPositivePrice(conservativePrice);
         }
-        Float conservativePriceFloat = LibDecimalFloat.packLossless(conservativePrice, int256(priceData.expo));
-        //slither-disable-next-line unused-return
-        (uint256 price8,) = LibDecimalFloat.toFixedDecimalLossy(conservativePriceFloat, 8);
-        return int256(price8);
+        return LibDecimalFloat.packLossless(conservativePrice, int256(priceData.expo));
     }
 
-    /// @dev Computes the vault share price by multiplying the conservative
-    /// Pyth price by the vault's assets-per-share ratio.
-    /// vaultSharePrice = pythPrice8 * totalAssets / totalSupply
+    /// @dev Computes the vault share price using Rain float arithmetic
+    /// throughout to avoid overflow. The conservative Pyth price is multiplied
+    /// by the vault's assets-per-share ratio entirely in float space, then
+    /// converted to 8-decimal fixed point only at the end.
+    /// vaultSharePrice = conservativePrice * totalAssets / totalSupply
     /// Reverts if the vault has zero total supply.
     /// @param priceData The Pyth price data.
     /// @return The vault share price at 8 decimals.
     function _vaultSharePrice(PythStructs.Price memory priceData) internal view returns (int256) {
-        int256 price8 = _conservativeScaledPrice(priceData);
+        Float priceFloat = _conservativePriceFloat(priceData);
 
         IERC4626 vaultContract = IERC4626(vault);
         uint256 totalAssets = vaultContract.totalAssets();
@@ -149,10 +147,16 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
 
         if (totalSupply == 0) revert ZeroVaultSupply();
 
-        int256 vaultSharePrice = int256(uint256(price8) * totalAssets / totalSupply);
+        // Perform vault ratio multiplication entirely in float space.
+        Float assetsFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(totalAssets, 0);
+        Float supplyFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(totalSupply, 0);
+        Float vaultSharePriceFloat = LibDecimalFloat.div(LibDecimalFloat.mul(priceFloat, assetsFloat), supplyFloat);
 
-        if (vaultSharePrice == 0) revert ZeroVaultSharePrice();
+        //slither-disable-next-line unused-return
+        (uint256 price8,) = LibDecimalFloat.toFixedDecimalLossy(vaultSharePriceFloat, 8);
 
-        return vaultSharePrice;
+        if (price8 == 0) revert ZeroVaultSharePrice();
+
+        return int256(price8);
     }
 }

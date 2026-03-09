@@ -143,7 +143,7 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
     /// @inheritdoc BasePythOracleAdapter
     // Slither false positives:
     // - pyth-unchecked-confidence: confidence is checked downstream in
-    //   _conservativeScaledPrice (price - conf).
+    //   _conservativePriceFloat (price - conf).
     // - calls-inside-a-loop: intentional cascading design — max 8 iterations,
     //   each calling the immutable Pyth contract. Not a reentrancy risk.
     // slither-disable-next-line calls-loop
@@ -165,7 +165,7 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
     /// @dev Attempts to get a price from Pyth, returning success flag.
     /// Extracted to avoid slither's pyth-unchecked-confidence detector
     /// crashing on try/catch with Pyth calls (slither bug).
-    /// Confidence IS checked downstream in _conservativeScaledPrice.
+    /// Confidence IS checked downstream in _conservativePriceFloat.
     // slither-disable-next-line pyth-unchecked-confidence,calls-loop
     function _tryGetPrice(IPyth pyth, bytes32 feedPriceId, uint256 feedMaxAge)
         internal
