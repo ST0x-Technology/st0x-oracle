@@ -29,6 +29,9 @@ error ZeroVaultSupply();
 /// @dev Error raised when the computed vault share price is zero.
 error ZeroVaultSharePrice();
 
+/// @dev Error raised when the vault share price overflows int256.
+error VaultSharePriceOverflow(uint256 price8);
+
 /// @title BasePythOracleAdapter
 /// @notice Abstract base for Pyth oracle adapters that price ERC-4626 vault
 /// shares. Provides shared logic for conservative pricing, vault share price
@@ -152,10 +155,13 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         Float supplyFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(totalSupply, 0);
         Float vaultSharePriceFloat = LibDecimalFloat.div(LibDecimalFloat.mul(priceFloat, assetsFloat), supplyFloat);
 
-        //slither-disable-next-line unused-return
+        // slither-disable-next-line unused-return
+        // The second return (bool lossy) is intentionally ignored — lossy
+        // conversion is expected and acceptable when scaling to 8 decimals.
         (uint256 price8,) = LibDecimalFloat.toFixedDecimalLossy(vaultSharePriceFloat, 8);
 
         if (price8 == 0) revert ZeroVaultSharePrice();
+        if (price8 > uint256(type(int256).max)) revert VaultSharePriceOverflow(price8);
 
         return int256(price8);
     }
