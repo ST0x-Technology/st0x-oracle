@@ -155,9 +155,9 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         Float supplyFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(totalSupply, 0);
         Float vaultSharePriceFloat = LibDecimalFloat.div(LibDecimalFloat.mul(priceFloat, assetsFloat), supplyFloat);
 
-        // slither-disable-next-line unused-return
         // The second return (bool lossy) is intentionally ignored — lossy
         // conversion is expected and acceptable when scaling to 8 decimals.
+        // slither-disable-next-line unused-return
         (uint256 price8,) = LibDecimalFloat.toFixedDecimalLossy(vaultSharePriceFloat, 8);
 
         if (price8 == 0) revert ZeroVaultSharePrice();
