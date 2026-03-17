@@ -114,7 +114,7 @@ test/
 
 ## Production Deployment (Base)
 
-All production addresses are hardcoded in `src/lib/LibProdDeploy.sol`. The oracle registry is at `0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156`.
+All production addresses are hardcoded in `src/lib/LibProdDeploy.sol`.
 
 ### Update Runbook
 
