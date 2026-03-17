@@ -133,7 +133,7 @@ When there are no live integrations depending on existing proxy addresses, it's 
 2. **Deploy a new OracleRegistry** — if the registry ABI changed, or to start clean
 3. **Update `LibProdDeploy.sol`** — replace all address constants with the new deployments, with date + run ID comments
 4. **Re-register vault oracles** — call `registry.setOracle()` (or `setOracleBulk()`) for each vault
-5. **Update the front end** — new contract addresses, ABIs, and subgraph endpoint in [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation)
+5. **Update the front end** — update the subgraph URL in [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation) to point to the new subgraph deployment
 6. **Redeploy the subgraph** — trigger the "Deploy subgraph" workflow (GitHub Actions, network: `base`). Update `subgraph.yaml` with new contract addresses if they changed
 7. **Verify** — check `latestRoundData()` on a proxy and confirm the subgraph is indexing
 
@@ -153,7 +153,7 @@ When existing proxies are live and their addresses are referenced by external pr
    ```bash
    cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
    ```
-5. **Update the front end** — update the subgraph URL in [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation) (contract addresses stay the same but the subgraph is redeployed with a new versioned name). Update ABIs if the interface changed
+5. **Update the front end** — update the subgraph URL in [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation) to point to the new subgraph deployment
 6. **Redeploy the subgraph** — trigger the "Deploy subgraph" workflow to pick up ABI changes
 7. **Verify the subgraph** — check Goldsky dashboard or query the endpoint to confirm data is flowing
 
