@@ -118,52 +118,44 @@ All production addresses are hardcoded in `src/lib/LibProdDeploy.sol`. The oracl
 
 ### Update Runbook
 
-When oracle adapter logic changes (e.g. price calculation, float math), the beacon implementation must be upgraded and the subgraph redeployed. Follow these steps:
+There are two paths depending on whether existing proxies are live in production.
 
-#### 1. Deploy new implementation
+#### Path A: Fresh deploy (pre-production / no live consumers)
 
-Deploy a new `PythOracleAdapter` (or `MultiPythOracleAdapter`) implementation contract via the forge deploy script:
+When there are no live integrations depending on existing proxy addresses, it's simpler to redeploy everything from scratch.
 
-```bash
-DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
-  --sig "deployPythOracleAdapterBeaconSet(uint256)" $DEPLOYMENT_KEY \
-  --rpc-url <base-rpc> --broadcast --verify
-```
+1. **Redeploy all beacon set deployers** — run the full deploy script to get fresh deployer + implementation contracts:
+   ```bash
+   DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
+     --sig "deployAll(uint256)" $DEPLOYMENT_KEY \
+     --rpc-url <base-rpc> --broadcast --verify
+   ```
+2. **Deploy a new OracleRegistry** — if the registry ABI changed, or to start clean
+3. **Update `LibProdDeploy.sol`** — replace all address constants with the new deployments, with date + run ID comments
+4. **Re-register vault oracles** — call `registry.setOracle()` (or `setOracleBulk()`) for each vault
+5. **Update the front end** — new contract addresses, ABIs, and subgraph endpoint in st0x.io
+6. **Redeploy the subgraph** — trigger the "Deploy subgraph" workflow (GitHub Actions, network: `base`). Update `subgraph.yaml` with new contract addresses if they changed
+7. **Verify** — check `latestRoundData()` on a proxy and confirm the subgraph is indexing
 
-Record the new deployer address from the broadcast output.
+#### Path B: Production upgrade (live proxies serving consumers)
 
-#### 2. Upgrade the beacon
+When existing proxies are live and their addresses are referenced by external protocols (Morpho, Aave, etc.), use the beacon upgrade path to avoid changing addresses.
 
-Call `upgradeTo(newImplementation)` on the existing beacon (owned by the multisig at `0x8E4b...9f5b`). This upgrades all existing proxy instances in-place — no per-vault redeployment needed.
-
-#### 3. Update `LibProdDeploy.sol`
-
-Update the relevant address constant(s) and add a comment with the deployment date and CI run ID:
-
-```solidity
-/// Re-deployed to Base YYYY-MM-DD. Run: <run-id>.
-address constant PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER = 0x...;
-```
-
-#### 4. Verify on-chain
-
-Confirm the upgrade took effect:
-
-```bash
-cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
-```
-
-#### 5. Update the front end
-
-If the ABI or contract addresses changed, update the front end (st0x.io) to reference the new deployment. This includes any ABI imports, contract address constants, and subgraph query endpoints.
-
-#### 6. Redeploy the subgraph
-
-Trigger the "Deploy subgraph" workflow from GitHub Actions (workflow_dispatch, network: `base`). This picks up any ABI changes and reindexes from the existing contract addresses.
-
-#### 7. Verify the subgraph
-
-Check the Goldsky dashboard or query the subgraph endpoint to confirm data is flowing correctly after redeployment.
+1. **Deploy new implementation** — deploy a new `PythOracleAdapter` (or `MultiPythOracleAdapter`) implementation:
+   ```bash
+   DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
+     --sig "deployPythOracleAdapterBeaconSet(uint256)" $DEPLOYMENT_KEY \
+     --rpc-url <base-rpc> --broadcast --verify
+   ```
+2. **Upgrade the beacon** — call `upgradeTo(newImplementation)` on the existing beacon (owned by the multisig at `0x8E4b...9f5b`). All existing proxy instances upgrade in-place — no per-vault redeployment needed
+3. **Update `LibProdDeploy.sol`** — update the relevant deployer address constant with date + run ID
+4. **Verify on-chain** — confirm the upgrade took effect:
+   ```bash
+   cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
+   ```
+5. **Update the front end** — if ABIs changed, update st0x.io. Contract addresses stay the same
+6. **Redeploy the subgraph** — trigger the "Deploy subgraph" workflow to pick up ABI changes
+7. **Verify the subgraph** — check Goldsky dashboard or query the endpoint to confirm data is flowing
 
 ### Adding a new vault oracle
 
