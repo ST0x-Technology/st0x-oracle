@@ -112,6 +112,63 @@ test/
         └── protocol/
 ```
 
+## Production Deployment (Base)
+
+All production addresses are hardcoded in `src/lib/LibProdDeploy.sol`. The oracle registry is at `0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156`.
+
+### Update Runbook
+
+When oracle adapter logic changes (e.g. price calculation, float math), the beacon implementation must be upgraded and the subgraph redeployed. Follow these steps:
+
+#### 1. Deploy new implementation
+
+Deploy a new `PythOracleAdapter` (or `MultiPythOracleAdapter`) implementation contract via the forge deploy script:
+
+```bash
+DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
+  --sig "deployPythOracleAdapterBeaconSet(uint256)" $DEPLOYMENT_KEY \
+  --rpc-url <base-rpc> --broadcast --verify
+```
+
+Record the new deployer address from the broadcast output.
+
+#### 2. Upgrade the beacon
+
+Call `upgradeTo(newImplementation)` on the existing beacon (owned by the multisig at `0x8E4b...9f5b`). This upgrades all existing proxy instances in-place — no per-vault redeployment needed.
+
+#### 3. Update `LibProdDeploy.sol`
+
+Update the relevant address constant(s) and add a comment with the deployment date and CI run ID:
+
+```solidity
+/// Re-deployed to Base YYYY-MM-DD. Run: <run-id>.
+address constant PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER = 0x...;
+```
+
+#### 4. Verify on-chain
+
+Confirm the upgrade took effect:
+
+```bash
+cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
+```
+
+#### 5. Redeploy the subgraph
+
+Trigger the "Deploy subgraph" workflow from GitHub Actions (workflow_dispatch, network: `base`). This picks up any ABI changes and reindexes from the existing contract addresses.
+
+#### 6. Verify the subgraph
+
+Check the Goldsky dashboard or query the subgraph endpoint to confirm data is flowing correctly after redeployment.
+
+### Adding a new vault oracle
+
+To deploy oracle + protocol adapters for a new vault:
+
+1. Call `OracleUnifiedDeployer.deploy(...)` (or `MultiOracleUnifiedDeployer` for multi-feed) with the vault address, Pyth feed ID(s), and protocol adapter config
+2. Call `OracleRegistry.setOracle(vault, oracleAdapter)` from the registry admin to register the new oracle
+3. Redeploy the subgraph to index the new contracts
+
 ## Dependencies
 
 - [rain.pyth](https://github.com/rainlanguage/rain.pyth) -- `LibPyth.getPriceFeedContract()` and price feed ID constants
