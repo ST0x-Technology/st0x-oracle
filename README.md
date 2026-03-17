@@ -153,11 +153,15 @@ Confirm the upgrade took effect:
 cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
 ```
 
-#### 5. Redeploy the subgraph
+#### 5. Update the front end
+
+If the ABI or contract addresses changed, update the front end (st0x.io) to reference the new deployment. This includes any ABI imports, contract address constants, and subgraph query endpoints.
+
+#### 6. Redeploy the subgraph
 
 Trigger the "Deploy subgraph" workflow from GitHub Actions (workflow_dispatch, network: `base`). This picks up any ABI changes and reindexes from the existing contract addresses.
 
-#### 6. Verify the subgraph
+#### 7. Verify the subgraph
 
 Check the Goldsky dashboard or query the subgraph endpoint to confirm data is flowing correctly after redeployment.
 
