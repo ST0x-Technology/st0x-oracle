@@ -153,7 +153,7 @@ When existing proxies are live and their addresses are referenced by external pr
    ```bash
    cast call <any-existing-proxy> "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url <base-rpc>
    ```
-5. **Update the front end** — if ABIs changed, update [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation). Contract addresses stay the same
+5. **Update the front end** — update the subgraph URL in [sft-tokenisation](https://github.com/h20liquidity/sft-tokenisation) (contract addresses stay the same but the subgraph is redeployed with a new versioned name). Update ABIs if the interface changed
 6. **Redeploy the subgraph** — trigger the "Deploy subgraph" workflow to pick up ABI changes
 7. **Verify the subgraph** — check Goldsky dashboard or query the endpoint to confirm data is flowing
 
