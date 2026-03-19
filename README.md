@@ -124,12 +124,20 @@ There are two paths depending on whether existing proxies are live in production
 
 When there are no live integrations depending on existing proxy addresses, it's simpler to redeploy everything from scratch.
 
-1. **Redeploy all beacon set deployers** — run the full deploy script to get fresh deployer + implementation contracts:
+1. **Redeploy required suites** — run `script/Deploy.sol` once per suite via the `DEPLOYMENT_SUITE` env var:
    ```bash
-   DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
-     --sig "deployAll(uint256)" $DEPLOYMENT_KEY \
+   export DEPLOYMENT_KEY=<key>
+   export DEPLOYMENT_SUITE=pyth-oracle-adapter-beacon-set
+   nix develop -c forge script script/Deploy.sol \
      --rpc-url <base-rpc> --broadcast --verify
    ```
+   Repeat for each suite as needed:
+   - `morpho-protocol-adapter-beacon-set`
+   - `passthrough-protocol-adapter-beacon-set`
+   - `oracle-unified-deployer`
+   - `oracle-registry-beacon-set`
+   - `multi-pyth-oracle-adapter-beacon-set`
+   - `multi-oracle-unified-deployer`
 2. **Deploy a new OracleRegistry** — if the registry ABI changed, or to start clean
 3. **Update `LibProdDeploy.sol`** — replace all address constants with the new deployments, with date + run ID comments
 4. **Re-register vault oracles** — call `registry.setOracle()` (or `setOracleBulk()`) for each vault
@@ -141,13 +149,15 @@ When there are no live integrations depending on existing proxy addresses, it's 
 
 When existing proxies are live and their addresses are referenced by external protocols (Morpho, Aave, etc.), use the beacon upgrade path to avoid changing addresses.
 
-1. **Deploy new implementation** — deploy a new `PythOracleAdapter` (or `MultiPythOracleAdapter`) implementation:
+1. **Deploy new implementation** — run the matching suite:
    ```bash
-   DEPLOYMENT_KEY=<key> nix develop -c forge script script/Deploy.sol \
-     --sig "deployPythOracleAdapterBeaconSet(uint256)" $DEPLOYMENT_KEY \
+   export DEPLOYMENT_KEY=<key>
+   export DEPLOYMENT_SUITE=pyth-oracle-adapter-beacon-set
+   nix develop -c forge script script/Deploy.sol \
      --rpc-url <base-rpc> --broadcast --verify
    ```
-2. **Upgrade the beacon** — call `upgradeTo(newImplementation)` on the existing beacon (owned by the multisig at `0x8E4b...9f5b`). All existing proxy instances upgrade in-place — no per-vault redeployment needed
+   Use `multi-pyth-oracle-adapter-beacon-set` for multi-feed adapters.
+2. **Upgrade the beacon** — call `upgradeTo(newImplementation)` on the existing beacon from the current beacon owner (see `BEACON_INITIAL_OWNER` in `LibProdDeploy.sol`). All existing proxy instances upgrade in-place — no per-vault redeployment needed
 3. **Update `LibProdDeploy.sol`** — update the relevant deployer address constant with date + run ID
 4. **Verify on-chain** — confirm the upgrade took effect:
    ```bash
