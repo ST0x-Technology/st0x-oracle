@@ -7,7 +7,12 @@ import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {IERC20} from "@openzeppelin-contracts-5.6.1/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
-import {ZeroVaultSupply, ZeroVaultSharePrice, NonPositivePrice} from "src/abstract/BasePythOracleAdapter.sol";
+import {
+    ZeroVaultSupply,
+    ZeroVaultSharePrice,
+    NonPositivePrice,
+    CorporateActionPauseConfig
+} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -42,6 +47,12 @@ contract MultiPythOracleAdapterFuzzTest is Test {
                 initialOwner: address(this), initialMultiPythOracleAdapterImplementation: address(implementation)
             })
         );
+    }
+
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
     }
 
     function setUp() external {
@@ -99,10 +110,14 @@ contract MultiPythOracleAdapterFuzzTest is Test {
         _mockFreshFeed(MOCK_FEED, 300, mockPrice, mockConf);
 
         MultiPythOracleAdapter adapterRatio = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: vaultRatio, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: vaultRatio, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
         MultiPythOracleAdapter adapterBase = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: vaultBase, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: vaultBase, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
 
         int256 ratioAnswer = adapterRatio.latestAnswer();
@@ -129,7 +144,9 @@ contract MultiPythOracleAdapterFuzzTest is Test {
         }
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
 
         // Mock each feed based on staleBitmap.
