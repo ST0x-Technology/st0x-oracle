@@ -7,7 +7,12 @@ import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibPyth} from "rain-pyth-0.0.0-git/src/lib/pyth/LibPyth.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
-import {BasePythOracleAdapter, ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
+import {
+    BasePythOracleAdapter,
+    CorporateActionPauseConfig,
+    ZeroVault,
+    ZeroAdmin
+} from "src/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Error raised when a zero price ID is provided.
 error ZeroPriceId();
@@ -21,11 +26,15 @@ error ZeroMaxAge();
 /// @param priceId The Pyth price feed ID for the underlying asset.
 /// @param maxAge Maximum acceptable price age in seconds.
 /// @param admin The admin address for governance.
+/// @param pauseConfig Corporate-action auto-pause config — see SPEC § 16.
+/// All-zero is the legacy/manual-only mode; `corporateActionsVault =
+/// address(0)` disables auto-pause for the life of the proxy.
 struct PythOracleAdapterConfig {
     address vault;
     bytes32 priceId;
     uint256 maxAge;
     address admin;
+    CorporateActionPauseConfig pauseConfig;
 }
 
 /// @title PythOracleAdapter
@@ -33,9 +42,9 @@ struct PythOracleAdapterConfig {
 /// underlying asset price from Pyth Network and multiplying by the vault's
 /// assets-per-share ratio. Exposes prices via Chainlink's
 /// AggregatorV3Interface. This is the canonical oracle per vault.
-/// Configuration (priceId, maxAge) is set once at initialization and is
-/// immutable thereafter - deploy a new proxy to change config and update
-/// protocol adapters via setOracle. Only governance is pause/unpause.
+/// Configuration (priceId, maxAge, pauseConfig) is set once at initialization
+/// and is immutable thereafter — deploy a new proxy to change config and
+/// update protocol adapters via setOracle. Only governance is pause/unpause.
 /// Pyth contract address is NOT stored - derived at runtime from
 /// LibPyth.getPriceFeedContract(block.chainid).
 /// Uses conservative pricing (price - confidence interval) per rain.pyth
@@ -76,6 +85,7 @@ contract PythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initializable
         priceId = config.priceId;
         maxAge = config.maxAge;
         admin = config.admin;
+        _setCorporateActionPauseConfig(config.pauseConfig);
 
         emit PythOracleAdapterInitialized(msg.sender, config);
 
