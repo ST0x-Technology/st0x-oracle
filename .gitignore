@@ -3,3 +3,6 @@ out
 dependencies
 
 .env
+
+.fixes/
+audit/

@@ -31,6 +31,12 @@ remappings = [
   # packages instead so transitive resolution works without nested submodules.
   "rain.math.float/=dependencies/rain-math-float-0.1.1/src/",
   "rain.intorastring/=dependencies/rain-intorastring-0.1.0/src/",
+  # rain-tofu-erc20-decimals is a transitive dep of st0x-deploy (via
+  # LibStockSplit). Soldeer's auto-generated remap for this dep points at
+  # `src/` (the dep's `script/` dir confuses its heuristic), but upstream
+  # imports use `rain-tofu-erc20-decimals-0.1.1/src/lib/...`. Override
+  # explicitly so the prefix resolves to the dep root.
+  "rain-tofu-erc20-decimals-0.1.1/=dependencies/rain-tofu-erc20-decimals-0.1.1/",
 ]
 
 [dependencies]
@@ -41,6 +47,7 @@ forge-std = "1.16.1"
 "rain-intorastring" = "0.1.0"
 "st0x-deploy" = "0.1.1"
 "rain-vats" = "0.1.5"
+"rain-tofu-erc20-decimals" = "0.1.1"
 
 [dependencies.rain-pyth]
 # rain-pyth is not yet published to soldeer; consume directly from git, pinned
