@@ -107,6 +107,6 @@ contract OracleUnifiedDeployerTest is Test {
 
         vm.expectEmit();
         emit OracleUnifiedDeployer.Deployment(address(this), oracleAdapter, morphoAdapter, passthroughAdapter);
-        unifiedDeployer.newOracleAndProtocolAdapters(vault, priceId, maxAge, registry);
+        unifiedDeployer.newOracleAndProtocolAdapters(vault, priceId, maxAge, registry, _emptyPauseConfig());
     }
 }

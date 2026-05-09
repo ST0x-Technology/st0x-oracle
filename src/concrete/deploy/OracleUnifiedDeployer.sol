@@ -30,26 +30,24 @@ contract OracleUnifiedDeployer {
     /// @param priceId The Pyth price feed ID for the underlying asset.
     /// @param maxAge Maximum acceptable price age in seconds.
     /// @param registry The oracle registry. Admin must call registry.setOracle() separately.
+    /// @param pauseConfig Corporate-action auto-pause configuration — see
+    /// SPEC § 16. Pass an all-zero struct to disable auto-pause (legacy /
+    /// manual-only mode).
     // slither-disable-next-line reentrancy-events
-    function newOracleAndProtocolAdapters(address vault, bytes32 priceId, uint256 maxAge, OracleRegistry registry)
-        external
-    {
+    function newOracleAndProtocolAdapters(
+        address vault,
+        bytes32 priceId,
+        uint256 maxAge,
+        OracleRegistry registry,
+        CorporateActionPauseConfig calldata pauseConfig
+    ) external {
         // 1. Deploy oracle adapter
         PythOracleAdapter oracleAdapter = PythOracleAdapterBeaconSetDeployer(
                 LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
             )
             .newPythOracleAdapter(
                 PythOracleAdapterConfig({
-                vault: vault,
-                priceId: priceId,
-                maxAge: maxAge,
-                admin: msg.sender,
-                // Auto-pause is opt-in per deployment and added in a
-                // follow-up PR (RAI-322); current callers get the
-                // legacy/manual-only mode.
-                pauseConfig: CorporateActionPauseConfig({
-                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
-            })
+                vault: vault, priceId: priceId, maxAge: maxAge, admin: msg.sender, pauseConfig: pauseConfig
             })
             );
 
