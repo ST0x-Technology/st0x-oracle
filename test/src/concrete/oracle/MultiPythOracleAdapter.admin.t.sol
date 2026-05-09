@@ -6,7 +6,12 @@ import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {OnlyAdmin, OraclePaused, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
+import {
+    OnlyAdmin,
+    OraclePausedManual,
+    ZeroAdmin,
+    CorporateActionPauseConfig
+} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -45,6 +50,12 @@ contract MultiPythOracleAdapterAdminTest is Test {
         vm.chainId(BASE_CHAIN_ID);
     }
 
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
+    }
+
     function _mockVault(address vaultAddr) internal {
         vm.mockCall(vaultAddr, abi.encodeWithSelector(IERC4626.totalAssets.selector), abi.encode(1000e18));
         vm.mockCall(vaultAddr, abi.encodeWithSelector(IERC20.totalSupply.selector), abi.encode(1000e18));
@@ -58,7 +69,9 @@ contract MultiPythOracleAdapterAdminTest is Test {
         feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 3600});
 
         return I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -69,7 +82,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         adapter.setPaused(true);
         assertTrue(adapter.paused());
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePaused.selector));
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
         adapter.latestAnswer();
 
         adapter.setPaused(false);

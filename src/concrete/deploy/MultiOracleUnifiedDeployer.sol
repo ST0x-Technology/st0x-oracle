@@ -12,6 +12,7 @@ import {
     MultiPythOracleAdapterConfig,
     FeedConfig
 } from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
@@ -49,7 +50,20 @@ contract MultiOracleUnifiedDeployer {
         // 1. Deploy multi-feed oracle adapter
         MultiPythOracleAdapter oracleAdapter = MultiPythOracleAdapterBeaconSetDeployer(
                 LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
-            ).newMultiPythOracleAdapter(MultiPythOracleAdapterConfig({vault: vault, feeds: feeds, admin: msg.sender}));
+            )
+            .newMultiPythOracleAdapter(
+                MultiPythOracleAdapterConfig({
+                vault: vault,
+                feeds: feeds,
+                admin: msg.sender,
+                // Auto-pause is opt-in per deployment and added in a
+                // follow-up PR (RAI-322); current callers get the
+                // legacy/manual-only mode.
+                pauseConfig: CorporateActionPauseConfig({
+                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+            })
+            })
+            );
 
         // 2. Deploy Morpho protocol adapter
         MorphoProtocolAdapter morphoAdapter = MorphoProtocolAdapterBeaconSetDeployer(

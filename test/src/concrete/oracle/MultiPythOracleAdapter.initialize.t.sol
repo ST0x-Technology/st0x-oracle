@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
-import {ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
+import {ZeroVault, ZeroAdmin, CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -56,12 +56,20 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         return feeds;
     }
 
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
+    }
+
     /// Test basic initialization succeeds.
     function testInitializeBasic() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.init"))));
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: _twoFeedConfig(), admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _twoFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
 
         assertEq(adapter.vault(), mockVault);
@@ -83,7 +91,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.getfeeds"))));
 
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: _twoFeedConfig(), admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _twoFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
 
         FeedConfig[] memory feeds = adapter.getFeeds();
@@ -96,7 +106,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     function testInitializeRevertsZeroVault() external {
         vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: address(0), feeds: _singleFeedConfig(), admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: address(0), feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -105,7 +117,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeroadmin"))));
         vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: _singleFeedConfig(), admin: address(0)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _singleFeedConfig(), admin: address(0), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -115,7 +129,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         FeedConfig[] memory emptyFeeds = new FeedConfig[](0);
         vm.expectRevert(abi.encodeWithSelector(ZeroFeeds.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: emptyFeeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: emptyFeeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -128,7 +144,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         }
         vm.expectRevert(abi.encodeWithSelector(TooManyFeeds.selector));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -139,7 +157,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         feeds[0] = FeedConfig({priceId: bytes32(0), maxAge: 300});
         vm.expectRevert(abi.encodeWithSelector(ZeroPriceId.selector, 0));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -150,7 +170,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         feeds[0] = FeedConfig({priceId: FEED_A, maxAge: 0});
         vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector, 0));
         I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -158,7 +180,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     function testDecimals() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.decimals"))));
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: _singleFeedConfig(), admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
         assertEq(adapter.decimals(), 8);
     }
@@ -167,7 +191,9 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     function testVersion() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.version"))));
         MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
-            MultiPythOracleAdapterConfig({vault: mockVault, feeds: _singleFeedConfig(), admin: address(this)})
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
         );
         assertEq(adapter.version(), 1);
     }

@@ -6,9 +6,17 @@ import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibDecimalFloat, Float} from "rain.math.float/lib/LibDecimalFloat.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
 
-/// @dev Error raised when the oracle is paused.
-error OraclePaused();
+/// @dev Error raised when the manual admin pause is active.
+error OraclePausedManual();
+
+/// @dev Error raised when an automatic corporate-action pause is active.
+/// @param effectiveTime The `effectiveTime` of the action whose window is
+/// currently open. When both a pending and a completed action's window
+/// overlap `now`, the pending action's `effectiveTime` is reported —
+/// integrators see the next event coming, not the last one done.
+error OraclePausedCorporateAction(uint64 effectiveTime);
 
 /// @dev Error raised when the conservative price (price - confidence) is not
 /// positive.
@@ -32,21 +40,73 @@ error ZeroVaultSharePrice();
 /// @dev Error raised when the vault share price overflows int256.
 error VaultSharePriceOverflow(uint256 price8);
 
+/// @title CorporateActionPauseConfig
+/// @notice Configuration for the corporate-action-aware auto-pause feature.
+/// All fields are immutable after initialize — see SPEC § 16.2.
+/// @param corporateActionsVault Address implementing `ICorporateActionsV1`.
+/// May be the same as the priced `vault` if it implements the interface, or a
+/// separate address (e.g. the underlying rebasing token under a wtStock
+/// wrapper). Zero address disables auto-pause entirely.
+/// @param actionTypeMask Bitmap of action types that trigger an auto-pause.
+/// `ACTION_TYPE_STOCK_SPLIT_V1` (`1 << 1`) for splits only, or
+/// `type(uint256).max` to catch every present and future action type.
+/// @param pauseTimeBefore Seconds before a pending action's `effectiveTime` to
+/// start pausing.
+/// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
+/// keep pausing.
+struct CorporateActionPauseConfig {
+    address corporateActionsVault;
+    uint256 actionTypeMask;
+    uint64 pauseTimeBefore;
+    uint64 pauseTimeAfter;
+}
+
 /// @title BasePythOracleAdapter
 /// @notice Abstract base for Pyth oracle adapters that price ERC-4626 vault
 /// shares. Provides shared logic for conservative pricing, vault share price
 /// computation, admin/pause governance, and AggregatorV3Interface metadata.
 /// Subclasses implement `_getPriceData()` to fetch price from Pyth (single
 /// feed or multi-feed cascading).
+///
+/// Pause behaviour is layered:
+///
+/// 1. **Manual** — admin can `setPaused(true)` for emergencies. Persists
+///    until `setPaused(false)`. Reverts with `OraclePausedManual()`.
+/// 2. **Auto, corporate-action-aware** — driven by `ICorporateActionsV1`
+///    on a configured vault. Reverts with
+///    `OraclePausedCorporateAction(effectiveTime)` whenever the current
+///    block is inside a configured pre- or post-window of a matching
+///    scheduled or completed action. See `LibCorporateActionsPause` for the
+///    exact semantics.
+///
+/// The two are independent and OR'd: either condition pauses the oracle.
+/// Distinct errors let integrators disambiguate via static-call introspection
+/// or simulation. Auto-pause configuration is set once at initialize and is
+/// immutable thereafter; manual pause stays as the operational escape hatch.
 abstract contract BasePythOracleAdapter is AggregatorV3Interface {
     /// @dev The ERC-4626 vault this oracle prices shares for.
     address public vault;
-    /// @dev Emergency pause flag.
+    /// @dev Manual emergency pause flag. Independent of the corporate-action
+    /// auto-pause — either condition causes price reads to revert.
     bool public paused;
     /// @dev Admin address for governance actions.
     address public admin;
 
-    /// @dev Emitted when the pause state changes.
+    /// @dev Address implementing `ICorporateActionsV1` consulted on every price
+    /// read for auto-pause. Zero address disables auto-pause. Immutable after
+    /// initialize — to repoint, redeploy and switch via
+    /// `OracleRegistry.setOracle`.
+    address public corporateActionsVault;
+    /// @dev Bitmap of action types that trigger an auto-pause. Immutable.
+    uint256 public actionTypeMask;
+    /// @dev Seconds before a pending action's `effectiveTime` to start
+    /// pausing. Immutable.
+    uint64 public pauseTimeBefore;
+    /// @dev Seconds after a completed action's `effectiveTime` to keep
+    /// pausing. Immutable.
+    uint64 public pauseTimeAfter;
+
+    /// @dev Emitted when the manual pause state changes.
     event PauseSet(bool isPaused);
     /// @dev Emitted when the admin is changed.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
@@ -96,7 +156,9 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         return (1, scaledPrice, uint256(uint64(priceData.publishTime)), uint256(uint64(priceData.publishTime)), 1);
     }
 
-    /// @notice Pause or unpause the oracle. Admin only.
+    /// @notice Pause or unpause the oracle's manual flag. Admin only.
+    /// @dev Independent of the corporate-action auto-pause; either condition
+    /// causes price reads to revert.
     function setPaused(bool isPaused) external onlyAdmin {
         paused = isPaused;
         emit PauseSet(isPaused);
@@ -115,9 +177,29 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
     /// Multi-feed adapters iterate and return the first non-stale price.
     function _getPriceData() internal view virtual returns (PythStructs.Price memory);
 
-    /// @dev Reverts if the oracle is paused.
+    /// @dev Reverts if either pause condition is currently active. Manual
+    /// pause is checked first because it is cheaper (single SLOAD) — when an
+    /// admin has explicitly set the manual flag we want that error returned,
+    /// not the corporate-action one.
     function _validateNotPaused() internal view {
-        if (paused) revert OraclePaused();
+        if (paused) revert OraclePausedManual();
+        (bool autoPaused, uint64 effectiveTime) = LibCorporateActionsPause.inPauseWindow(
+            corporateActionsVault, actionTypeMask, pauseTimeBefore, pauseTimeAfter
+        );
+        if (autoPaused) revert OraclePausedCorporateAction(effectiveTime);
+    }
+
+    /// @dev Subclass initializers call this exactly once to install the
+    /// corporate-action auto-pause config. All four fields may be zero —
+    /// `corporateActionsVault == address(0)` disables auto-pause for the
+    /// life of the proxy and is the right choice when an oracle is
+    /// redeployed against a vault that hasn't yet been upgraded to expose
+    /// `ICorporateActionsV1`.
+    function _setCorporateActionPauseConfig(CorporateActionPauseConfig memory config) internal {
+        corporateActionsVault = config.corporateActionsVault;
+        actionTypeMask = config.actionTypeMask;
+        pauseTimeBefore = config.pauseTimeBefore;
+        pauseTimeAfter = config.pauseTimeAfter;
     }
 
     /// @dev Computes conservative price (price - confidence) as a Rain Float.

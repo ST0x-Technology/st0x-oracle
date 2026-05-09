@@ -6,7 +6,14 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {ZeroVaultSupply} from "src/abstract/BasePythOracleAdapter.sol";
+import {IPyth} from "pyth-sdk/IPyth.sol";
+import {PythStructs} from "pyth-sdk/PythStructs.sol";
+import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
+import {
+    ZeroVaultSupply,
+    VaultSharePriceOverflow,
+    CorporateActionPauseConfig
+} from "src/abstract/BasePythOracleAdapter.sol";
 import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {
     PythOracleAdapterBeaconSetDeployer,
@@ -33,6 +40,12 @@ contract PythOracleAdapterLatestAnswerTest is Test {
         );
     }
 
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
+    }
+
     function setUp() external {
         vm.chainId(BASE_CHAIN_ID);
     }
@@ -51,7 +64,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -71,7 +88,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle2x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault2x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault2x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -80,7 +101,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -98,7 +123,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -113,7 +142,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -136,11 +169,71 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
         assertEq(oracle.decimals(), 8);
+    }
+
+    /// `_vaultSharePrice` reverts with `VaultSharePriceOverflow(price8)` when
+    /// the computed 8-decimal price exceeds `uint256(type(int256).max)`. The
+    /// two adjacent reverts on this path (`ZeroVaultSupply`,
+    /// `ZeroVaultSharePrice`) have tests; the upper-bound check is silent
+    /// without this. Mock both the vault and the Pyth feed so the exact
+    /// pre-condition is reachable without depending on the live TSLA price.
+    /// Closes audit #52.
+    function testRevertsVaultSharePriceOverflow() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.tsla.overflow"))));
+        // Vault returns a massive ratio (totalAssets >> totalSupply).
+        // Combined with a giant Pyth price, this drives the 8-decimal output
+        // above uint256(type(int256).max).
+        _mockVault(mockVault, type(uint256).max, 1);
+
+        // Mock Pyth to return the max positive int64 price at expo 0 (no
+        // scaling further than the eventual 8-decimal conversion). This
+        // guarantees the multiplication overflows int256 regardless of the
+        // fork's live TSLA price.
+        address pythAddr = address(LibPyth.getPriceFeedContract(block.chainid));
+        PythStructs.Price memory hugePrice =
+            PythStructs.Price({price: type(int64).max, conf: 0, expo: 0, publishTime: block.timestamp});
+        vm.mockCall(
+            pythAddr,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, PRICE_FEED_ID_EQUITY_US_TSLA_USD, uint256(3600)),
+            abi.encode(hugePrice)
+        );
+
+        PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
+            PythOracleAdapterConfig({
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        // The overflow path after the rain.float refactor (PR #18) traps in
+        // LibDecimalFloat — converting a uint256 of magnitude > 2**128 to a
+        // Float reverts with `LossyConversionToFloat` before reaching the
+        // final `int256(price8)` cast in `_vaultSharePrice`. Accept either
+        // selector; both witness the same overflow-protection contract.
+        (bool ok, bytes memory data) = address(oracle).staticcall(abi.encodeWithSelector(oracle.latestAnswer.selector));
+        assertFalse(ok, "latestAnswer must revert on overflow inputs");
+        require(data.length >= 4, "expected a custom error selector");
+        bytes4 selector;
+        assembly {
+            selector := mload(add(data, 0x20))
+        }
+        assertTrue(
+            selector == VaultSharePriceOverflow.selector
+                || selector == bytes4(keccak256("LossyConversionToFloat(int256,int256)")),
+            "expected VaultSharePriceOverflow or LossyConversionToFloat"
+        );
     }
 
     /// Test vault ratio with dividend reinvestment scenario.
@@ -151,7 +244,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracleDiv = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVaultDiv, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVaultDiv,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -160,7 +257,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 

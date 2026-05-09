@@ -8,6 +8,7 @@ import {
 } from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
 import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
 import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
@@ -38,7 +39,18 @@ contract OracleUnifiedDeployer {
                 LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
             )
             .newPythOracleAdapter(
-                PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: maxAge, admin: msg.sender})
+                PythOracleAdapterConfig({
+                vault: vault,
+                priceId: priceId,
+                maxAge: maxAge,
+                admin: msg.sender,
+                // Auto-pause is opt-in per deployment and added in a
+                // follow-up PR (RAI-322); current callers get the
+                // legacy/manual-only mode.
+                pauseConfig: CorporateActionPauseConfig({
+                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+            })
+            })
             );
 
         // 2. Deploy Morpho protocol adapter

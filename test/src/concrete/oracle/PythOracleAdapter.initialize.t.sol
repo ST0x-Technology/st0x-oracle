@@ -20,7 +20,9 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(admin != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
         I_DEPLOYER.newPythOracleAdapter(
-            PythOracleAdapterConfig({vault: address(0), priceId: priceId, maxAge: maxAge, admin: admin})
+            PythOracleAdapterConfig({
+                vault: address(0), priceId: priceId, maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -31,7 +33,9 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(admin != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroPriceId.selector));
         I_DEPLOYER.newPythOracleAdapter(
-            PythOracleAdapterConfig({vault: vault, priceId: bytes32(0), maxAge: maxAge, admin: admin})
+            PythOracleAdapterConfig({
+                vault: vault, priceId: bytes32(0), maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -42,7 +46,9 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(admin != address(0));
         vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector));
         I_DEPLOYER.newPythOracleAdapter(
-            PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: 0, admin: admin})
+            PythOracleAdapterConfig({
+                vault: vault, priceId: priceId, maxAge: 0, admin: admin, pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -53,7 +59,9 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(maxAge > 0);
         vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
         I_DEPLOYER.newPythOracleAdapter(
-            PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: maxAge, admin: address(0)})
+            PythOracleAdapterConfig({
+                vault: vault, priceId: priceId, maxAge: maxAge, admin: address(0), pauseConfig: _emptyPauseConfig()
+            })
         );
     }
 
@@ -90,7 +98,9 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         for (uint256 i = 0; i < logs.length; i++) {
             if (
                 logs[i].topics[0]
-                    == keccak256("PythOracleAdapterInitialized(address,(address,bytes32,uint256,address))")
+                    == keccak256(
+                        "PythOracleAdapterInitialized(address,(address,bytes32,uint256,address,(address,uint256,uint64,uint64)))"
+                    )
             ) {
                 // sender is indexed, so it's in topics[1].
                 address sender = address(uint160(uint256(logs[i].topics[1])));
