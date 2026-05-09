@@ -16,7 +16,8 @@ remappings = [
     "openzeppelin-contracts/=lib/openzeppelin-contracts/",
     "pyth-sdk/=lib/rain.pyth/lib/pyth-crosschain/target_chains/ethereum/sdk/solidity/",
     "rain.pyth/=lib/rain.pyth/",
-    "rain.factory/=lib/st0x.deploy/lib/ethgild/lib/rain.factory/src/",
+    "rain.factory/=lib/st0x.deploy/lib/rain.vats/lib/rain.factory/src/",
+    "st0x.deploy/=lib/st0x.deploy/",
     "src/=src/",
     # Transitive deps (forge doesn't use each lib's own remappings)
     "rain.math.float/=lib/rain.pyth/lib/rain.interpreter/lib/rain.interpreter.interface/lib/rain.math.float/src/",
