@@ -39,10 +39,16 @@ contract MultiOracleUnifiedDeployer {
     /// @param vault The ERC-4626 vault address.
     /// @param feeds Ordered list of Pyth feed configurations (tried in order).
     /// @param registry The oracle registry. Admin must call registry.setOracle() separately.
+    /// @param pauseConfig Corporate-action auto-pause configuration — see
+    /// SPEC § 16. Pass an all-zero struct to disable auto-pause (legacy /
+    /// manual-only mode).
     // slither-disable-next-line reentrancy-events
-    function newMultiOracleAndProtocolAdapters(address vault, FeedConfig[] calldata feeds, OracleRegistry registry)
-        external
-    {
+    function newMultiOracleAndProtocolAdapters(
+        address vault,
+        FeedConfig[] calldata feeds,
+        OracleRegistry registry,
+        CorporateActionPauseConfig calldata pauseConfig
+    ) external {
         if (LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
             revert MultiPythBeaconSetDeployerNotSet();
         }
@@ -52,17 +58,7 @@ contract MultiOracleUnifiedDeployer {
                 LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER
             )
             .newMultiPythOracleAdapter(
-                MultiPythOracleAdapterConfig({
-                vault: vault,
-                feeds: feeds,
-                admin: msg.sender,
-                // Auto-pause is opt-in per deployment and added in a
-                // follow-up PR (RAI-322); current callers get the
-                // legacy/manual-only mode.
-                pauseConfig: CorporateActionPauseConfig({
-                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
-            })
-            })
+                MultiPythOracleAdapterConfig({vault: vault, feeds: feeds, admin: msg.sender, pauseConfig: pauseConfig})
             );
 
         // 2. Deploy Morpho protocol adapter

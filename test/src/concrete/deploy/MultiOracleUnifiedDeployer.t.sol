@@ -19,6 +19,7 @@ import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
 } from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 
 contract MultiOracleUnifiedDeployerTest is Test {
     OracleRegistry internal immutable I_REGISTRY_IMPLEMENTATION;
@@ -31,6 +32,12 @@ contract MultiOracleUnifiedDeployerTest is Test {
                 initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
+    }
+
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
     }
 
     function _createRegistry(address admin) internal returns (OracleRegistry) {
@@ -55,6 +62,6 @@ contract MultiOracleUnifiedDeployerTest is Test {
 
         // Should not revert with MultiPythBeaconSetDeployerNotSet
         // (will revert for other reasons since feed ID is fake, but that's fine)
-        try deployer.newMultiOracleAndProtocolAdapters(address(1), feeds, registry) {} catch {}
+        try deployer.newMultiOracleAndProtocolAdapters(address(1), feeds, registry, _emptyPauseConfig()) {} catch {}
     }
 }
