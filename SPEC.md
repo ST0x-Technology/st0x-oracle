@@ -486,7 +486,8 @@ No separation of roles.
 | Bug in Morpho scaling | Upgrade MorphoAdapterBeacon implementation | Registry, all oracle adapters |
 | Add Aave support | Deploy PassthroughAdapter proxy pointing to existing registry | Everything else |
 | Pyth dies, switch to Chainlink | Deploy ChainlinkOracleAdapter, call `registry.setOracle(vault, chainlinkOracle)` | Protocol adapters automatically use new oracle |
-| Corporate action (AAPL split) | Pause PythOracleAdapter, execute split, unpause | Protocol adapters unaware |
+| Corporate action (AAPL split) | Auto-pause via `ICorporateActionsV1`, no admin action — see § 16 | Protocol adapters unaware |
+| Retune corporate-action pause window | Deploy a new oracle proxy with the new config, `registry.setOracle(vault, newOracle)` — pause-window fields are immutable post-init | Protocol adapters automatically use new oracle |
 | Bulk oracle update (10 vaults) | `registry.setOracleBulk(vaults, oracles)` | Single tx updates all |
 | Protocol adapter wants different registry | `adapter.setRegistry(alternativeRegistry)` | Other adapters unaffected |
 
@@ -497,7 +498,7 @@ No separation of roles.
 1. **Negative prices**: Pyth prices can theoretically be negative; handle appropriately (revert)
 2. **Confidence intervals**: Pyth provides confidence data; consider rejecting wide confidence
 3. **Overflow**: Ensure scaling math cannot overflow (checked arithmetic in 0.8.25)
-4. **Corporate actions**: Pause mechanism exists to prevent trading during splits/dividends
+4. **Corporate actions**: Auto-pause via `ICorporateActionsV1` blocks `latestAnswer` / `latestRoundData` inside a configurable window around any scheduled action; manual `setPaused` remains an independent escape hatch — see § 16
 5. **Zero vault supply**: Revert when vault has no shares minted (no valid price)
 6. **Vault ratio manipulation**: Vault totalAssets/totalSupply is trusted — vault must be a known st0x deployment
 7. **Oracle not registered**: Protocol adapters revert with `OracleNotFound` if vault not in registry
@@ -505,7 +506,114 @@ No separation of roles.
 
 ---
 
-## 16. References
+## 16. Corporate-Action-Aware Auto-Pause
+
+### 16.1 Why
+
+Manual `setPaused(true)` works but requires the admin to be awake, online, and on the right multisig at the right minute. A scheduled corporate action (today: stock splits) is on-chain data with a known `effectiveTime`. The oracle should read that data and pause itself around the action — keeping on-chain and off-chain in sync without an admin in the loop.
+
+The vault is rebasing, so we don't read or expose token multipliers. The existing `vaultSharePrice = pythPrice * totalAssets / totalSupply` formula is correct immediately after `effectiveTime` — `totalAssets` and `totalSupply` both reflect post-rebase values atomically. The pause window exists to cover the **operational window** in which the off-chain feed (Pyth) and on-chain state are not guaranteed to agree (Pyth split-adjustment latency, RPC propagation, integrator caches), not the on-chain math.
+
+### 16.2 Configuration
+
+Per-oracle, set at initialize, **immutable thereafter**:
+
+```solidity
+struct CorporateActionPauseConfig {
+    /// Address implementing ICorporateActionsV1. May be the same as `vault`
+    /// if the vault itself implements the interface, or a separate vault
+    /// (e.g. the underlying rebasing token under a wtStock wrapper). Zero
+    /// address disables auto-pause entirely (legacy/manual-only mode).
+    address corporateActionsVault;
+    /// Bitmap of action types that trigger an auto-pause. Use
+    /// `ACTION_TYPE_STOCK_SPLIT_V1` (`1 << 1`) for splits only, or
+    /// `type(uint256).max` to catch every future action type. Note that
+    /// `1 << 0` is reserved for `ACTION_TYPE_INIT_V1` (the per-vault
+    /// initialisation marker created once on first scheduling) and is
+    /// not a meaningful pause trigger.
+    uint256 actionTypeMask;
+    /// Seconds before a pending action's `effectiveTime` to start pausing.
+    uint64 pauseTimeBefore;
+    /// Seconds after a completed action's `effectiveTime` to keep pausing.
+    uint64 pauseTimeAfter;
+}
+```
+
+No setters. To change any of these (opt into a new action type, retune the window), deploy a new oracle proxy with the new config and switch over via `OracleRegistry.setOracle(vault, newOracle)`. This matches the existing pattern for `priceId` / `maxAge` on `PythOracleAdapter` and the § 14 migration flow ("Pyth dies, switch to Chainlink"). The manual `setPaused` flag remains the operational escape hatch for anything that genuinely can't wait for a redeploy.
+
+Defaults baked into deployment scripts (not the contract):
+
+| Field | Default | Reason |
+|---|---|---|
+| `corporateActionsVault` | underlying rebasing vault | wtStock wraps a StoxReceiptVault that implements `ICorporateActionsV1` |
+| `actionTypeMask` | `ACTION_TYPE_STOCK_SPLIT_V1` (`1 << 1`) | Only currently-schedulable action type; opt-in to future types per-deployment |
+| `pauseTimeBefore` | `3600` (1 hour) | Lets integrators wind down without an admin call |
+| `pauseTimeAfter` | `3600` (1 hour) | Covers Pyth split-adjustment latency + RPC propagation |
+
+`corporateActionsVault == address(0)` disables auto-pause — useful for the brief migration period when an oracle is redeployed against a vault that hasn't yet been upgraded to expose `ICorporateActionsV1`.
+
+### 16.3 Pause window definition
+
+Let `now = block.timestamp`. The oracle is auto-paused iff **either**:
+
+1. There is a **pending** action `A` with `actionType & mask != 0` and `effectiveTime - pauseTimeBefore ≤ now < effectiveTime`. The earliest pending action governs — if it doesn't trigger, no later one will (their effectiveTimes are strictly larger).
+
+2. There is a **completed** action `A` with `actionType & mask != 0` and `effectiveTime ≤ now ≤ effectiveTime + pauseTimeAfter`. The latest completed action governs — if it doesn't trigger, no earlier one will (their effectiveTimes are strictly smaller).
+
+This requires at most two `ICorporateActionsV1` calls per `latestAnswer` / `latestRoundData`:
+
+- `earliestActionOfType(mask, PENDING)` — finds the earliest pending action.
+- `latestActionOfType(mask, COMPLETED)` — finds the latest completed action.
+
+Cancelled actions are **unlinked** from the list (`LibCorporateAction.cancel` sets `prev = next = effectiveTime = 0`) and unreachable from `earliestActionOfType` / `latestActionOfType` traversal, so they neither trigger pauses nor require explicit filtering.
+
+### 16.4 Interaction with manual pause
+
+Independent. Either condition pauses the oracle:
+
+```solidity
+if (manualPaused) revert OraclePausedManual();
+if (inPauseWindow(...)) revert OraclePausedCorporateAction(effectiveTime);
+```
+
+Distinct errors so integrators can disambiguate via static-call introspection or simulation. The admin can still `setPaused(true)` independently and `setPaused(false)` independently — that flag is unchanged.
+
+### 16.5 Multiple pending actions
+
+Each pending action is evaluated against its own `effectiveTime`. The implementation only checks the **earliest** pending — that's the one closest to `now` — because a `pauseTimeBefore` window that doesn't reach the earliest pending can't reach any later pending either.
+
+If two pending actions are scheduled close enough in time that their windows overlap, the oracle stays paused continuously through both. This is correct behaviour and needs no special handling.
+
+### 16.6 Partial migration
+
+`effectiveTime <= now` makes the action complete and the rebase atomically visible in `totalAssets` / `totalSupply`. Per-account migrations happen lazily on first touch and don't affect the wrapper's view of the underlying balance (the wrapper holds aggregate underlying, not per-account positions). So the share-price formula is correct from `effectiveTime` onward.
+
+`pauseTimeAfter` exists to cover the gap between on-chain effectiveness and **off-chain catch-up** — Pyth split-adjusting their feed, RPC propagation, indexer reorg buffers — not partial migration.
+
+### 16.7 Action-type forward compatibility
+
+The bitmap mask design from `ICorporateActionsV1` propagates: new action types added later (e.g. dividends, mergers) are new bit positions. Existing deployments are unaffected — their mask only matches `1 << 1` (splits). To opt new oracles into a new type, deploy with the union mask (`(1 << 1) | (1 << N)`).
+
+Mask = 0 means "match nothing"; equivalent to disabling auto-pause but keeping `corporateActionsVault` non-zero. We don't recommend it (just leave `corporateActionsVault = address(0)` instead) but we don't reject it either.
+
+### 16.8 Errors
+
+```solidity
+error OraclePausedManual();
+error OraclePausedCorporateAction(uint64 effectiveTime);
+```
+
+`OraclePaused` (existing) is removed in favour of the disambiguated pair. This is a breaking interface change for any caller that handled `OraclePaused` by selector — flagged in the migration plan (RAI-323).
+
+`effectiveTime` on `OraclePausedCorporateAction` lets integrators surface "oracle paused for action at HH:MM:SS" in their UIs without a separate storage read.
+
+### 16.9 Gas
+
+Two view calls into the vault per `latestAnswer` / `latestRoundData`. Each call walks at most a handful of nodes — pending and completed action lists are small (single-digit entries per vault per year). No storage writes during pause checks. Acceptable for an oracle.
+
+---
+
+## 17. References
 
 - **rain.pyth**: https://github.com/rainlanguage/rain.pyth
 - **st0x.deploy**: https://github.com/S01-Issuer/st0x.deploy
