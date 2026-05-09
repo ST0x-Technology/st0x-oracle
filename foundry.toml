@@ -22,5 +22,6 @@ remappings = [
     # Transitive deps (forge doesn't use each lib's own remappings)
     "rain.math.float/=lib/rain.pyth/lib/rain.interpreter/lib/rain.interpreter.interface/lib/rain.math.float/src/",
     "rain.intorastring/=lib/rain.pyth/lib/rain.interpreter/lib/rain.interpreter.interface/lib/rain.intorastring/src/",
+    "rain.tofu.erc20-decimals/=lib/st0x.deploy/lib/rain.tofu.erc20-decimals/src/",
 ]
 
