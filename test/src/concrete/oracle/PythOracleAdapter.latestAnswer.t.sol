@@ -6,7 +6,7 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {ZeroVaultSupply} from "src/abstract/BasePythOracleAdapter.sol";
+import {ZeroVaultSupply, CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {
     PythOracleAdapterBeaconSetDeployer,
@@ -33,6 +33,12 @@ contract PythOracleAdapterLatestAnswerTest is Test {
         );
     }
 
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
+    }
+
     function setUp() external {
         vm.chainId(BASE_CHAIN_ID);
     }
@@ -51,7 +57,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -71,7 +81,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle2x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault2x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault2x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -80,7 +94,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -98,7 +116,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -113,7 +135,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -136,7 +162,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -151,7 +181,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracleDiv = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVaultDiv, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVaultDiv,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 
@@ -160,7 +194,11 @@ contract PythOracleAdapterLatestAnswerTest is Test {
 
         PythOracleAdapter oracle1x = I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
-                vault: mockVault1x, priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD, maxAge: 3600, admin: address(this)
+                vault: mockVault1x,
+                priceId: PRICE_FEED_ID_EQUITY_US_TSLA_USD,
+                maxAge: 3600,
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
             })
         );
 

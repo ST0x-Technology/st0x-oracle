@@ -3,6 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
+import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 import {OracleUnifiedDeployer} from "src/concrete/deploy/OracleUnifiedDeployer.sol";
 import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 import {PythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
@@ -28,6 +29,12 @@ contract OracleUnifiedDeployerTest is Test {
                 initialOwner: address(this), initialOracleRegistryImplementation: address(I_REGISTRY_IMPLEMENTATION)
             })
         );
+    }
+
+    function _emptyPauseConfig() internal pure returns (CorporateActionPauseConfig memory) {
+        return CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
     }
 
     function _createRegistry(address admin) internal returns (OracleRegistry) {
@@ -58,7 +65,13 @@ contract OracleUnifiedDeployerTest is Test {
             LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER,
             abi.encodeWithSelector(
                 PythOracleAdapterBeaconSetDeployer.newPythOracleAdapter.selector,
-                PythOracleAdapterConfig({vault: vault, priceId: priceId, maxAge: maxAge, admin: address(this)})
+                PythOracleAdapterConfig({
+                    vault: vault,
+                    priceId: priceId,
+                    maxAge: maxAge,
+                    admin: address(this),
+                    pauseConfig: _emptyPauseConfig()
+                })
             ),
             abi.encode(oracleAdapter)
         );

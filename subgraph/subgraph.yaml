@@ -197,7 +197,7 @@ templates:
         - name: PythOracleAdapter
           file: ../out/PythOracleAdapter.sol/PythOracleAdapter.json
       eventHandlers:
-        - event: PythOracleAdapterInitialized(indexed address,(address,bytes32,uint256,address))
+        - event: PythOracleAdapterInitialized(indexed address,(address,bytes32,uint256,address,(address,uint256,uint64,uint64)))
           handler: handlePythOracleAdapterInitialized
         - event: PauseSet(bool)
           handler: handlePauseSet
@@ -224,7 +224,7 @@ templates:
         - name: MultiPythOracleAdapter
           file: ../out/MultiPythOracleAdapter.sol/MultiPythOracleAdapter.json
       eventHandlers:
-        - event: MultiPythOracleAdapterInitialized(indexed address,(address,(bytes32,uint256)[],address))
+        - event: MultiPythOracleAdapterInitialized(indexed address,(address,(bytes32,uint256)[],address,(address,uint256,uint64,uint64)))
           handler: handleMultiPythOracleAdapterInitialized
         - event: FeedsSet((bytes32,uint256)[])
           handler: handleFeedsSet

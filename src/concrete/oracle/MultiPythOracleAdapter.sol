@@ -7,7 +7,12 @@ import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
-import {BasePythOracleAdapter, ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
+import {
+    BasePythOracleAdapter,
+    CorporateActionPauseConfig,
+    ZeroVault,
+    ZeroAdmin
+} from "src/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Error raised when all feeds are stale.
 error AllFeedsStale();
@@ -44,10 +49,14 @@ struct FeedConfig {
 /// @param vault The ERC-4626 vault address this oracle prices shares for.
 /// @param feeds Ordered list of feed configurations (tried in order).
 /// @param admin The admin address for governance.
+/// @param pauseConfig Corporate-action auto-pause config — see SPEC § 16.
+/// All-zero is the legacy/manual-only mode; `corporateActionsVault =
+/// address(0)` disables auto-pause for the life of the proxy.
 struct MultiPythOracleAdapterConfig {
     address vault;
     FeedConfig[] feeds;
     address admin;
+    CorporateActionPauseConfig pauseConfig;
 }
 
 /// @title MultiPythOracleAdapter
@@ -98,6 +107,7 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
         admin = config.admin;
 
         _setFeeds(config.feeds);
+        _setCorporateActionPauseConfig(config.pauseConfig);
 
         emit MultiPythOracleAdapterInitialized(msg.sender, config);
 
