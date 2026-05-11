@@ -3,6 +3,7 @@
 pragma solidity =0.8.25;
 
 import {IPyth} from "pyth-sdk/IPyth.sol";
+import {PythErrors} from "pyth-sdk/PythErrors.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
@@ -172,10 +173,19 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
         revert AllFeedsStale();
     }
 
-    /// @dev Attempts to get a price from Pyth, returning success flag.
-    /// Extracted to avoid slither's pyth-unchecked-confidence detector
-    /// crashing on try/catch with Pyth calls (slither bug).
-    /// Confidence IS checked downstream in _conservativePriceFloat.
+    /// @dev Attempts to get a price from Pyth.
+    /// Returns `success = true` when Pyth returns a price. Returns
+    /// `success = false` **only** for `PythErrors.StalePrice()` — the
+    /// signal to try the next session feed. All other reverts
+    /// (e.g. `PriceFeedNotFound` for a misconfigured priceId, OOG, governance
+    /// guards) propagate so configuration errors fail loudly instead of
+    /// being silently absorbed into the cascade. Confidence is checked
+    /// downstream in `_conservativePriceFloat`.
+    ///
+    /// Slither suppression notes:
+    /// - `pyth-unchecked-confidence`: confidence IS checked downstream.
+    /// - `calls-loop`: intentional cascading design — max 8 iterations,
+    ///   each calling the immutable Pyth contract. Not a reentrancy risk.
     // slither-disable-next-line pyth-unchecked-confidence,calls-loop
     function _tryGetPrice(IPyth pyth, bytes32 feedPriceId, uint256 feedMaxAge)
         internal
@@ -184,8 +194,16 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
     {
         try pyth.getPriceNoOlderThan(feedPriceId, feedMaxAge) returns (PythStructs.Price memory p) {
             return (true, p);
-        } catch {
-            return (false, price);
+        } catch (bytes memory reason) {
+            // Only StalePrice falls through to the next session feed.
+            // Anything else (PriceFeedNotFound, OOG, etc.) bubbles up.
+            if (reason.length == 4 && bytes4(reason) == PythErrors.StalePrice.selector) {
+                return (false, price);
+            }
+            // Re-raise the original revert preserving its selector + data.
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
+            }
         }
     }
 
