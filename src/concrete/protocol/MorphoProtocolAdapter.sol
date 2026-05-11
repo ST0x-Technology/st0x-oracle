@@ -25,6 +25,13 @@ error NonPositivePrice();
 /// @dev Error raised when no oracle is found for the vault in the registry.
 error OracleNotFound();
 
+/// @dev Error raised when the registered oracle reports decimals other than 8.
+/// The `* 1e28` scaling in `price()` assumes an 8-decimal upstream; any other
+/// value would silently mis-price collateral by orders of magnitude. Surfaces
+/// loudly to force a fix at registry-rebind time rather than letting
+/// Morpho borrow against a 10^N×-wrong price.
+error UnexpectedOracleDecimals(uint8 actual, uint8 expected);
+
 /// @dev Morpho Blue's IOracle interface.
 interface IOracle {
     function price() external view returns (uint256);
@@ -111,12 +118,25 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
         admin = newAdmin;
     }
 
+    /// @dev Expected upstream oracle decimals. Hard-coded because the `* 1e28`
+    /// scaling factor below is derived from `36 - 8`.
+    uint8 internal constant EXPECTED_ORACLE_DECIMALS = 8;
+
     /// @notice Returns the price scaled to 36 decimals as required by Morpho
     /// Blue.
     /// @return The price as uint256 scaled to 1e36.
+    /// @dev Verifies the upstream oracle reports exactly
+    /// `EXPECTED_ORACLE_DECIMALS` (= 8) before scaling. A registry swap to a
+    /// non-8-decimal feed would otherwise silently mis-price by `10^N` —
+    /// catch loudly with `UnexpectedOracleDecimals` instead.
     function price() external view override returns (uint256) {
         AggregatorV2V3Interface oracle = registry.getOracle(vault);
         if (address(oracle) == address(0)) revert OracleNotFound();
+
+        uint8 oracleDecimals = oracle.decimals();
+        if (oracleDecimals != EXPECTED_ORACLE_DECIMALS) {
+            revert UnexpectedOracleDecimals(oracleDecimals, EXPECTED_ORACLE_DECIMALS);
+        }
 
         int256 answer = oracle.latestAnswer();
         if (answer <= 0) revert NonPositivePrice();
