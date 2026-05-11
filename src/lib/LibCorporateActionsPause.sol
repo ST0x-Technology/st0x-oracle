@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {ICorporateActionsV1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
-import {CompletionFilter} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
+import {CompletionFilter, NODE_NONE} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
 
 /// @title LibCorporateActionsPause
 /// @notice Helper for oracle adapters that decide whether to auto-pause based
@@ -57,10 +57,13 @@ library LibCorporateActionsPause {
         ICorporateActionsV1 vault = ICorporateActionsV1(corporateActionsVault);
 
         (uint256 pendingCursor,, uint64 pendingEffective) = vault.earliestActionOfType(mask, CompletionFilter.PENDING);
-        if (pendingCursor != 0) {
+        // `NODE_NONE = type(uint256).max` is the documented no-match sentinel
+        // from `ICorporateActionsV1` — cursor `0` is a real bootstrap node and
+        // must NOT be treated as "no match".
+        if (pendingCursor != NODE_NONE) {
             // pendingEffective > now is guaranteed by the PENDING filter.
-            // Subtraction underflow is impossible because pendingEffective
-            // is uint64 and we explicitly compare via addition.
+            // We compare via addition on uint256-promoted operands so neither
+            // underflow nor overflow is possible for any realistic timestamp.
             if (block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)) {
                 return (true, pendingEffective);
             }
@@ -68,7 +71,7 @@ library LibCorporateActionsPause {
 
         (uint256 completedCursor,, uint64 completedEffective) =
             vault.latestActionOfType(mask, CompletionFilter.COMPLETED);
-        if (completedCursor != 0) {
+        if (completedCursor != NODE_NONE) {
             // completedEffective <= now is guaranteed by the COMPLETED filter.
             if (block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)) {
                 return (true, completedEffective);

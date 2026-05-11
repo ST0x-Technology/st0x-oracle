@@ -9,7 +9,7 @@ import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
 import {ICorporateActionsV1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
-import {CompletionFilter} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
+import {CompletionFilter, NODE_NONE} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
 import {
     CorporateActionPauseConfig,
     OraclePausedManual,
@@ -55,8 +55,8 @@ contract MockCorporateActions is ICorporateActionsV1 {
         returns (uint256, uint256, uint64)
     {
         if (filter != CompletionFilter.PENDING) revert("mock: only PENDING expected");
-        if (!_earliestPending.exists) return (0, 0, 0);
-        if (_earliestPending.actionType & mask == 0) return (0, 0, 0);
+        if (!_earliestPending.exists) return (NODE_NONE, 0, 0);
+        if (_earliestPending.actionType & mask == 0) return (NODE_NONE, 0, 0);
         return (1, _earliestPending.actionType, _earliestPending.effectiveTime);
     }
 
@@ -67,8 +67,8 @@ contract MockCorporateActions is ICorporateActionsV1 {
         returns (uint256, uint256, uint64)
     {
         if (filter != CompletionFilter.COMPLETED) revert("mock: only COMPLETED expected");
-        if (!_latestCompleted.exists) return (0, 0, 0);
-        if (_latestCompleted.actionType & mask == 0) return (0, 0, 0);
+        if (!_latestCompleted.exists) return (NODE_NONE, 0, 0);
+        if (_latestCompleted.actionType & mask == 0) return (NODE_NONE, 0, 0);
         return (1, _latestCompleted.actionType, _latestCompleted.effectiveTime);
     }
 
