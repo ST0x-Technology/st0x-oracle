@@ -21,6 +21,16 @@ error ZeroOracle();
 /// @dev Error raised when array lengths do not match in bulk operations.
 error ArrayLengthMismatch();
 
+/// @dev Error raised when a bulk operation's input arrays exceed
+/// `MAX_BULK_LENGTH`. Includes the offending length and the cap so a
+/// multisig signer reviewing the revert can confirm the bound at a glance.
+error BulkLengthExceeded(uint256 length, uint256 maxLength);
+
+/// @dev Maximum number of (vault, oracle) pairs accepted in a single
+/// `setOracleBulk` call. Sized to fit comfortably under any current EVM
+/// L1/L2 block gas limit while leaving margin for log and call overhead.
+uint256 constant MAX_BULK_LENGTH = 256;
+
 /// @title OracleRegistryConfig
 /// @notice Single-field config struct kept to mirror the BeaconSetDeployer
 /// pattern used by sibling adapters; future fields can be added without an
@@ -120,6 +130,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @param oracles The oracle adapter addresses.
     function setOracleBulk(address[] calldata vaults, AggregatorV2V3Interface[] calldata oracles) external onlyAdmin {
         if (vaults.length != oracles.length) revert ArrayLengthMismatch();
+        if (vaults.length > MAX_BULK_LENGTH) revert BulkLengthExceeded(vaults.length, MAX_BULK_LENGTH);
 
         for (uint256 i = 0; i < vaults.length; i++) {
             if (vaults[i] == address(0)) revert ZeroVault();

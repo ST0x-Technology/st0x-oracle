@@ -36,8 +36,13 @@ struct OracleRegistryBeaconSetDeployerConfig {
 /// post-construction authority over the beacon. Follows the st0x.deploy
 /// BeaconSetDeployer pattern.
 contract OracleRegistryBeaconSetDeployer {
-    /// Emitted when a new OracleRegistry is deployed.
-    event Deployment(address sender, address oracleRegistry);
+    /// @notice Emitted when a new OracleRegistry is deployed.
+    /// @param caller The direct on-chain caller of `newOracleRegistry`. Also
+    /// becomes the registry admin per SPEC §13. Indexed so monitoring can
+    /// filter by deployer.
+    /// @param oracleRegistry The address of the new proxy. Indexed so
+    /// monitoring can filter by registry.
+    event Deployment(address indexed caller, address indexed oracleRegistry);
 
     /// The beacon for the OracleRegistry implementation contracts.
     IBeacon public immutable I_ORACLE_REGISTRY_BEACON;

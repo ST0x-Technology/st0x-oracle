@@ -36,8 +36,14 @@ struct PythOracleAdapterBeaconSetDeployerConfig {
 /// retains no authority over the beacon after construction. Follows the
 /// st0x.deploy BeaconSetDeployer pattern.
 contract PythOracleAdapterBeaconSetDeployer {
-    /// Emitted when a new PythOracleAdapter is deployed.
-    event Deployment(address sender, address pythOracleAdapter);
+    /// @notice Emitted when a new PythOracleAdapter is deployed.
+    /// @param caller The direct on-chain caller of `newPythOracleAdapter`. For
+    /// adapters created via `OracleUnifiedDeployer` /
+    /// `MultiOracleUnifiedDeployer` this is the unified-deployer contract, not
+    /// the originating EOA. Indexed so monitoring can filter by deployer.
+    /// @param pythOracleAdapter The address of the new proxy. Indexed so
+    /// monitoring can filter by adapter.
+    event Deployment(address indexed caller, address indexed pythOracleAdapter);
 
     /// The beacon for the PythOracleAdapter implementation contracts.
     IBeacon public immutable I_PYTH_ORACLE_ADAPTER_BEACON;

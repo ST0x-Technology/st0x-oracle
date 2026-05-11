@@ -19,7 +19,7 @@ dataSources:
         - name: OracleRegistryBeaconSetDeployer
           file: ../out/OracleRegistryBeaconSetDeployer.sol/OracleRegistryBeaconSetDeployer.json
       eventHandlers:
-        - event: Deployment(address,address)
+        - event: Deployment(indexed address,indexed address)
           handler: handleRegistryDeployment
       file: ./src/deployer.ts
 
@@ -40,7 +40,7 @@ dataSources:
         - name: PythOracleAdapterBeaconSetDeployer
           file: ../out/PythOracleAdapterBeaconSetDeployer.sol/PythOracleAdapterBeaconSetDeployer.json
       eventHandlers:
-        - event: Deployment(address,address)
+        - event: Deployment(indexed address,indexed address)
           handler: handlePythAdapterDeployment
       file: ./src/deployer.ts
 
@@ -61,7 +61,7 @@ dataSources:
         - name: MultiPythOracleAdapterBeaconSetDeployer
           file: ../out/MultiPythOracleAdapterBeaconSetDeployer.sol/MultiPythOracleAdapterBeaconSetDeployer.json
       eventHandlers:
-        - event: Deployment(address,address)
+        - event: Deployment(indexed address,indexed address)
           handler: handleMultiPythAdapterDeployment
       file: ./src/deployer.ts
 
@@ -82,7 +82,7 @@ dataSources:
         - name: MorphoProtocolAdapterBeaconSetDeployer
           file: ../out/MorphoProtocolAdapterBeaconSetDeployer.sol/MorphoProtocolAdapterBeaconSetDeployer.json
       eventHandlers:
-        - event: Deployment(address,address)
+        - event: Deployment(indexed address,indexed address)
           handler: handleMorphoAdapterDeployment
       file: ./src/deployer.ts
 
@@ -103,7 +103,7 @@ dataSources:
         - name: PassthroughProtocolAdapterBeaconSetDeployer
           file: ../out/PassthroughProtocolAdapterBeaconSetDeployer.sol/PassthroughProtocolAdapterBeaconSetDeployer.json
       eventHandlers:
-        - event: Deployment(address,address)
+        - event: Deployment(indexed address,indexed address)
           handler: handlePassthroughAdapterDeployment
       file: ./src/deployer.ts
 
@@ -125,7 +125,7 @@ dataSources:
         - name: OracleUnifiedDeployer
           file: ../out/OracleUnifiedDeployer.sol/OracleUnifiedDeployer.json
       eventHandlers:
-        - event: Deployment(address,address,address,address)
+        - event: Deployment(indexed address,indexed address,indexed address,address)
           handler: handleSingleDeployment
       file: ./src/deployer.ts
 
@@ -147,7 +147,7 @@ dataSources:
         - name: MultiOracleUnifiedDeployer
           file: ../out/MultiOracleUnifiedDeployer.sol/MultiOracleUnifiedDeployer.json
       eventHandlers:
-        - event: Deployment(address,address,address,address)
+        - event: Deployment(indexed address,indexed address,indexed address,address)
           handler: handleMultiDeployment
       file: ./src/deployer.ts
 
