@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 
 /// @dev Error raised when the caller is not the admin.
@@ -35,11 +35,11 @@ struct PassthroughProtocolAdapterConfig {
 
 /// @title PassthroughProtocolAdapter
 /// @notice Protocol adapter for Aave V3, Compound V3, and any future
-/// Chainlink-compatible protocol. Passes through all AggregatorV3Interface
+/// Chainlink-compatible protocol. Passes through all AggregatorV2V3Interface
 /// calls to the underlying oracle adapter. The registry reference is updatable
 /// by the admin, allowing oracle swaps without protocol governance.
 /// Deploy multiple proxy instances from the same beacon for different protocols.
-contract PassthroughProtocolAdapter is AggregatorV3Interface, ICloneableV2, Initializable {
+contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, Initializable {
     /// @dev The oracle registry for looking up the oracle adapter.
     OracleRegistry public registry;
     /// @dev The vault address this adapter serves.
@@ -104,33 +104,33 @@ contract PassthroughProtocolAdapter is AggregatorV3Interface, ICloneableV2, Init
     }
 
     /// @dev Internal helper to get the oracle from registry and revert if not found.
-    function _getOracle() internal view returns (AggregatorV3Interface) {
-        AggregatorV3Interface oracle = registry.getOracle(vault);
+    function _getOracle() internal view returns (AggregatorV2V3Interface) {
+        AggregatorV2V3Interface oracle = registry.getOracle(vault);
         if (address(oracle) == address(0)) revert OracleNotFound();
         return oracle;
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function decimals() external view override returns (uint8) {
         return _getOracle().decimals();
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function description() external view override returns (string memory) {
         return _getOracle().description();
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function version() external view override returns (uint256) {
         return _getOracle().version();
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function latestAnswer() external view override returns (int256) {
         return _getOracle().latestAnswer();
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     // slither-disable-next-line unused-return
     function latestRoundData()
         external
@@ -139,5 +139,16 @@ contract PassthroughProtocolAdapter is AggregatorV3Interface, ICloneableV2, Init
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
         return _getOracle().latestRoundData();
+    }
+
+    /// @inheritdoc AggregatorV2V3Interface
+    // slither-disable-next-line unused-return
+    function getRoundData(uint80 _roundId)
+        external
+        view
+        override
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+    {
+        return _getOracle().getRoundData(_roundId);
     }
 }

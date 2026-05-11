@@ -5,7 +5,7 @@ pragma solidity =0.8.25;
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
 
 /// @dev Error raised when the manual admin pause is active.
@@ -40,6 +40,12 @@ error ZeroVaultSharePrice();
 /// @dev Error raised when the vault share price overflows int256.
 error VaultSharePriceOverflow(uint256 price8);
 
+/// @dev Error raised when a caller requests historical round data. Pyth-backed
+/// adapters do not expose per-round history through this interface — see
+/// `getRoundData`. Callers needing historical data must read from a different
+/// source (Pyth's own getPriceAtPublishTime, an indexer, etc.).
+error HistoricalRoundDataUnsupported(uint80 roundId);
+
 /// @title CorporateActionPauseConfig
 /// @notice Configuration for the corporate-action-aware auto-pause feature.
 /// All fields are immutable after initialize — see SPEC § 16.2.
@@ -64,7 +70,7 @@ struct CorporateActionPauseConfig {
 /// @title BasePythOracleAdapter
 /// @notice Abstract base for Pyth oracle adapters that price ERC-4626 vault
 /// shares. Provides shared logic for conservative pricing, vault share price
-/// computation, admin/pause governance, and AggregatorV3Interface metadata.
+/// computation, admin/pause governance, and AggregatorV2V3Interface metadata.
 /// Subclasses implement `_getPriceData()` to fetch price from Pyth (single
 /// feed or multi-feed cascading).
 ///
@@ -83,7 +89,7 @@ struct CorporateActionPauseConfig {
 /// Distinct errors let integrators disambiguate via static-call introspection
 /// or simulation. Auto-pause configuration is set once at initialize and is
 /// immutable thereafter; manual pause stays as the operational escape hatch.
-abstract contract BasePythOracleAdapter is AggregatorV3Interface {
+abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// @dev The ERC-4626 vault this oracle prices shares for.
     address public vault;
     /// @dev Manual emergency pause flag. Independent of the corporate-action
@@ -121,22 +127,22 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         _;
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function description() external pure override returns (string memory) {
         return "";
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function decimals() external pure override returns (uint8) {
         return 8;
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     function version() external pure override returns (uint256) {
         return 1;
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     // slither-disable-next-line pyth-unchecked-confidence
     function latestAnswer() external view override returns (int256) {
         _validateNotPaused();
@@ -145,7 +151,7 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         return _vaultSharePrice(priceData);
     }
 
-    /// @inheritdoc AggregatorV3Interface
+    /// @inheritdoc AggregatorV2V3Interface
     // slither-disable-next-line pyth-unchecked-confidence
     function latestRoundData()
         external
@@ -159,6 +165,15 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
         int256 scaledPrice = _vaultSharePrice(priceData);
 
         return (1, scaledPrice, uint256(uint64(priceData.publishTime)), uint256(uint64(priceData.publishTime)), 1);
+    }
+
+    /// @inheritdoc AggregatorV2V3Interface
+    /// @dev Pyth does not expose historical rounds via this interface — every
+    /// call reverts with `HistoricalRoundDataUnsupported(_roundId)`. Callers
+    /// needing point-in-time data should use Pyth's `getPriceAtPublishTime`
+    /// directly or query an indexer.
+    function getRoundData(uint80 _roundId) external pure override returns (uint80, int256, uint256, uint256, uint80) {
+        revert HistoricalRoundDataUnsupported(_roundId);
     }
 
     /// @notice Pause or unpause the oracle's manual flag. Admin only.
