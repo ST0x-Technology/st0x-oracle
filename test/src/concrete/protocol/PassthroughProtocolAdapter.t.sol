@@ -253,6 +253,13 @@ contract PassthroughProtocolAdapterTest is Test {
     }
 
     /// Test passthrough of latestAnswer.
+    ///
+    /// `mockPrice` is intentionally unbounded — the Passthrough adapter is a
+    /// literal forwarder by contract (no `NonPositivePrice` guard like
+    /// MorphoProtocolAdapter). Asserting verbatim equality over the full
+    /// int256 range pins that intent: if the contract were ever changed to
+    /// reject non-positive inputs, this fuzz would catch the regression on
+    /// the first negative/zero sample. See audit #68.
     function testPassthroughLatestAnswer(address admin, int256 mockPrice) external {
         vm.assume(admin != address(0));
 
@@ -270,7 +277,44 @@ contract PassthroughProtocolAdapterTest is Test {
 
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
 
-        assertEq(adapter.latestAnswer(), mockPrice);
+        assertEq(adapter.latestAnswer(), mockPrice, "Passthrough must forward verbatim");
+    }
+
+    /// Passthrough must forward the underlying oracle's revert verbatim for
+    /// every `AggregatorV2V3Interface` accessor. The
+    /// `OracleNotFound` path (registry miss) is already tested; this covers
+    /// the registry-hit-but-oracle-reverts path. Closes audit #68.
+    function testPassthroughForwardsUnderlyingRevert(address admin) external {
+        vm.assume(admin != address(0));
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        bytes memory revertData = bytes("stale");
+        vm.mockCallRevert(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), revertData);
+        vm.mockCallRevert(
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestRoundData.selector), revertData
+        );
+        vm.mockCallRevert(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.decimals.selector), revertData);
+        vm.mockCallRevert(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.description.selector), revertData);
+        vm.mockCallRevert(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.version.selector), revertData);
+
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(revertData);
+        adapter.latestAnswer();
+        vm.expectRevert(revertData);
+        adapter.latestRoundData();
+        vm.expectRevert(revertData);
+        adapter.decimals();
+        vm.expectRevert(revertData);
+        adapter.description();
+        vm.expectRevert(revertData);
+        adapter.version();
     }
 
     /// Test passthrough of latestRoundData.

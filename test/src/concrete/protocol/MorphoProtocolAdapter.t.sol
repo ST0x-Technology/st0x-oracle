@@ -252,6 +252,31 @@ contract MorphoProtocolAdapterTest is Test {
         adapter.price();
     }
 
+    /// `price()` must forward the underlying oracle's revert verbatim (selector
+    /// + payload) when `latestAnswer()` reverts. A registry whose oracle
+    /// is paused or stale should surface that revert to Morpho, not be
+    /// swallowed/wrapped. Closes audit #66.
+    function testPriceForwardsUnderlyingRevert(address admin) external {
+        vm.assume(admin != address(0));
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        _mockDecimals(mockOracle, 8);
+        vm.mockCallRevert(
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), "underlying-revert"
+        );
+
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(bytes("underlying-revert"));
+        adapter.price();
+    }
+
     /// Test price() reverts on negative price.
     function testPriceRevertsOnNegative(address admin, int256 negativePrice) external {
         vm.assume(admin != address(0));
