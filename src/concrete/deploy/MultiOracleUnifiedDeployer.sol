@@ -26,6 +26,14 @@ error MultiPythBeaconSetDeployerNotSet();
 /// @notice Atomically deploys a MultiPythOracleAdapter and all protocol
 /// adapters (Morpho, Passthrough for Aave/Compound) for a new vault. Mirrors
 /// OracleUnifiedDeployer but uses multi-feed oracle for near-24/7 coverage.
+/// @dev The sub-deployer addresses
+/// (`LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER`,
+/// `LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER`,
+/// `LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER`) are
+/// inlined into this contract's runtime bytecode at compile time.
+/// Redeploying any sub-deployer requires redeploying this contract too —
+/// otherwise calls route to the old sub-deployer until this bytecode is
+/// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract MultiOracleUnifiedDeployer {
     /// Emitted when a new multi-feed oracle and protocol adapter set is deployed.
     event Deployment(

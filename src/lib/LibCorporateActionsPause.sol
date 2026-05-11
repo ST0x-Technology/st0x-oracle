@@ -45,6 +45,18 @@ library LibCorporateActionsPause {
     /// and a completed action's window contain `now` (e.g. a back-to-back
     /// schedule), the pending action's `effectiveTime` is returned —
     /// integrators see the next event coming, not the last one done.
+    /// @dev The upper-bound predicates on each branch — `pendingEffective >
+    /// block.timestamp` in the pre-window and `completedEffective <=
+    /// block.timestamp` in the post-window — are **enforced by the
+    /// consumed `ICorporateActionsV1` filter (`CompletionFilter.PENDING` /
+    /// `CompletionFilter.COMPLETED`), not locally**. This library trusts
+    /// the upstream's invariants and only checks the configurable side of
+    /// each window. A future vault regression that returned a PENDING
+    /// action with `effectiveTime <= now`, or a COMPLETED action with
+    /// `effectiveTime > now`, would surface here as a fail-open (the
+    /// oracle would not pause when it should). Mitigation is an upstream
+    /// conformance test on `ICorporateActionsV1` itself — tracked at
+    /// #216 (H11-style).
     function inPauseWindow(address corporateActionsVault, uint256 mask, uint64 pauseTimeBefore, uint64 pauseTimeAfter)
         internal
         view
