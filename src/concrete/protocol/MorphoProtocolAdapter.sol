@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 
 /// @dev Error raised when the caller is not the admin.
@@ -43,7 +43,7 @@ struct MorphoProtocolAdapterConfig {
 
 /// @title MorphoProtocolAdapter
 /// @notice Protocol adapter for Morpho Blue. Implements Morpho's IOracle
-/// interface by reading from an underlying AggregatorV3Interface oracle and
+/// interface by reading from an underlying AggregatorV2V3Interface oracle and
 /// scaling from 8 decimals to 36 decimals.
 /// The registry reference is updatable by the admin, allowing oracle swaps
 /// without Morpho governance (oracle addresses are immutable in Morpho markets).
@@ -115,7 +115,7 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
     /// Blue.
     /// @return The price as uint256 scaled to 1e36.
     function price() external view override returns (uint256) {
-        AggregatorV3Interface oracle = registry.getOracle(vault);
+        AggregatorV2V3Interface oracle = registry.getOracle(vault);
         if (address(oracle) == address(0)) revert OracleNotFound();
 
         int256 answer = oracle.latestAnswer();

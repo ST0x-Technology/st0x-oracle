@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {MultiPythOracleAdapter} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
@@ -297,7 +297,7 @@ contract ProdForkTest is Test {
         if (_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
-        AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
+        AggregatorV2V3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
         assertEq(address(oracle), LibProdOracles.WTCOIN_ORACLE, "Registry should map wtCOIN vault to oracle");
     }
 
@@ -313,7 +313,7 @@ contract ProdForkTest is Test {
         address dummyOracle = address(0x2222222222222222222222222222222222222222);
 
         vm.prank(registryAdmin);
-        registry.setOracle(dummyVault, AggregatorV3Interface(dummyOracle));
+        registry.setOracle(dummyVault, AggregatorV2V3Interface(dummyOracle));
 
         assertEq(address(registry.getOracle(dummyVault)), dummyOracle, "Oracle should be set");
     }
@@ -330,10 +330,10 @@ contract ProdForkTest is Test {
         vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
         vaults[2] = address(0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC);
 
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](3);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
-        oracles[1] = AggregatorV3Interface(address(0x2222222222222222222222222222222222222222));
-        oracles[2] = AggregatorV3Interface(address(0x3333333333333333333333333333333333333333));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](3);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
+        oracles[1] = AggregatorV2V3Interface(address(0x2222222222222222222222222222222222222222));
+        oracles[2] = AggregatorV2V3Interface(address(0x3333333333333333333333333333333333333333));
 
         vm.prank(registryAdmin);
         registry.setOracleBulk(vaults, oracles);
@@ -353,7 +353,7 @@ contract ProdForkTest is Test {
         vm.expectRevert();
         registry.setOracle(
             address(0x1111111111111111111111111111111111111111),
-            AggregatorV3Interface(address(0x2222222222222222222222222222222222222222))
+            AggregatorV2V3Interface(address(0x2222222222222222222222222222222222222222))
         );
     }
 
@@ -365,8 +365,8 @@ contract ProdForkTest is Test {
 
         address[] memory vaults = new address[](1);
         vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](1);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(address(0xdead));
         vm.expectRevert();
@@ -383,8 +383,8 @@ contract ProdForkTest is Test {
         address[] memory vaults = new address[](2);
         vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
         vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](1);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(registryAdmin);
         vm.expectRevert();
@@ -400,7 +400,7 @@ contract ProdForkTest is Test {
 
         vm.prank(registryAdmin);
         vm.expectRevert();
-        registry.setOracle(address(0), AggregatorV3Interface(address(0x1111111111111111111111111111111111111111)));
+        registry.setOracle(address(0), AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111)));
     }
 
     /// @notice Setting zero oracle reverts.
@@ -412,7 +412,7 @@ contract ProdForkTest is Test {
 
         vm.prank(registryAdmin);
         vm.expectRevert();
-        registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV3Interface(address(0)));
+        registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV2V3Interface(address(0)));
     }
 
     /// @notice Admin can transfer admin role.
@@ -431,7 +431,7 @@ contract ProdForkTest is Test {
         vm.prank(newAdmin);
         registry.setOracle(
             address(0x5555555555555555555555555555555555555555),
-            AggregatorV3Interface(address(0x6666666666666666666666666666666666666666))
+            AggregatorV2V3Interface(address(0x6666666666666666666666666666666666666666))
         );
 
         // Old admin cannot
@@ -439,7 +439,7 @@ contract ProdForkTest is Test {
         vm.expectRevert();
         registry.setOracle(
             address(0x7777777777777777777777777777777777777777),
-            AggregatorV3Interface(address(0x8888888888888888888888888888888888888888))
+            AggregatorV2V3Interface(address(0x8888888888888888888888888888888888888888))
         );
     }
 
@@ -462,7 +462,7 @@ contract ProdForkTest is Test {
         address dummyOracle = address(0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF);
 
         vm.prank(registryAdmin);
-        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(dummyOracle));
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV2V3Interface(dummyOracle));
 
         // Adapters now point to dummy — calls should revert
         vm.expectRevert();
@@ -473,7 +473,7 @@ contract ProdForkTest is Test {
 
         // Restore original oracle
         vm.prank(registryAdmin);
-        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(LibProdOracles.WTCOIN_ORACLE));
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV2V3Interface(LibProdOracles.WTCOIN_ORACLE));
 
         // Should work again
         uint256 morphoPriceAfter = morpho.price();
@@ -640,7 +640,7 @@ contract ProdForkTest is Test {
         if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
-        AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
+        AggregatorV2V3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
         // After multi-feed deployment, registry should point to the multi oracle.
         assertEq(address(oracle), LibProdOracles.WTCOIN_MULTI_ORACLE, "Registry should map to multi oracle");
     }
