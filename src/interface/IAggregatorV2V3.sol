@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
+// SYNC NOTE: This interface is a hand-typed copy of Chainlink's canonical
+// `AggregatorV2V3Interface` from
+// `smartcontractkit/chainlink:contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol`,
+// last synced 2026-05-11 (pin TBD — track in #212). Re-sync on any
+// Chainlink interface version bump. No drift-detection test exists yet —
+// tracked at #212.
+
 /// @title AggregatorV2V3Interface
 /// @notice Hybrid of Chainlink's `AggregatorInterface` (v2 — `latestAnswer`)
 /// and `AggregatorV3Interface` (v3 — `latestRoundData`, `getRoundData`).

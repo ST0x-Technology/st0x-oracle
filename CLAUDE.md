@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Solidity oracle adapter system that prices ERC-4626 vault shares by combining Pyth Network price feeds with vault share ratios, for DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Three-layer architecture: oracle adapters (price source), oracle registry (centralized vault→oracle mapping), and protocol adapters (protocol-specific interface). The oracle computes `vaultSharePrice = pythPrice * totalAssets / totalSupply`.
+Solidity oracle adapter system that prices ERC-4626 vault shares by combining Pyth Network price feeds with vault share ratios, for DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Three-layer architecture: oracle adapters (price source), oracle registry (centralized vault→oracle mapping), and protocol adapters (protocol-specific interface). The oracle computes `vaultSharePrice = pythPrice * totalAssets / totalSupply`. Single-feed (`PythOracleAdapter`) and multi-feed cascading (`MultiPythOracleAdapter`) variants share an abstract `BasePythOracleAdapter`. Both expose an auto-pause mechanism keyed off the vault's `ICorporateActionsV1` schedule, reverting with `OraclePausedCorporateAction(uint64 effectiveTime)` when a scheduled action sits inside its pre- or post-window; the manual admin flag remains as the independent `OraclePausedManual()` escape hatch.
 
 ## Environment Setup
 
@@ -28,8 +28,11 @@ forge fmt --check    # Check formatting without modifying
 
 ## Architecture (Three Layers)
 
-**Oracle Layer** — canonical price source per vault, implements `AggregatorV3Interface` (8 decimals):
-- `PythOracleAdapter` — fetches from Pyth, multiplies by vault share ratio (totalAssets/totalSupply), scales to 8 decimals, has governance (pause)
+**Oracle Layer** — canonical price source per vault, implements `AggregatorV2V3Interface` (8 decimals):
+- `BasePythOracleAdapter` (abstract) — shared logic for conservative pricing (price - confidence), vault-share-ratio scaling via `LibDecimalFloat`, admin/manual-pause governance, and `ICorporateActionsV1` auto-pause via `LibCorporateActionsPause`. Subclasses only implement `_getPriceData()`.
+- `PythOracleAdapter` — single-feed concrete. Fully immutable post-init; only governance is `setPaused` / `setAdmin`.
+- `MultiPythOracleAdapter` — cascading multi-feed variant. Tries up to 8 feeds in order, returns the first non-stale price. Admin can `setFeeds` and `setMaxAge` (per-feed). Used for equities with separate session feeds (regular / pre-market / post-market / overnight).
+- Both adapters revert via two distinct selectors: `OraclePausedManual()` (admin set the manual flag) and `OraclePausedCorporateAction(uint64 effectiveTime)` (a matching `ICorporateActionsV1` action's pre- or post-window is open). The auto-pause logic lives in `src/lib/LibCorporateActionsPause.sol` and is driven by `corporateActionsVault` / `actionTypeMask` / `pauseTimeBefore` / `pauseTimeAfter`, all immutable after initialize.
 
 **Registry Layer** — centralized vault→oracle mapping:
 - `OracleRegistry` — maintains `vault → oracle adapter` mapping, allows admin to update oracles for all protocol adapters at once via single `setOracle()` call
@@ -40,7 +43,8 @@ forge fmt --check    # Check formatting without modifying
 
 **Deployers** — beacon proxy pattern per `st0x.deploy`:
 - Each contract type has a `BeaconSetDeployer` that owns a beacon and deploys proxies
-- `OracleUnifiedDeployer` orchestrates deploying oracle + all protocol adapters for a new vault
+- `OracleUnifiedDeployer` orchestrates deploying a single-feed oracle + all protocol adapters for a new vault
+- `MultiOracleUnifiedDeployer` is the same flow for multi-feed oracles (uses `MultiPythOracleAdapterBeaconSetDeployer`)
 
 ## Key Design Decisions
 
@@ -58,21 +62,29 @@ forge fmt --check    # Check formatting without modifying
 
 ```
 src/
+├── abstract/
+│   └── BasePythOracleAdapter.sol           # shared base for both oracle adapters
 ├── concrete/
 │   ├── oracle/
-│   │   └── PythOracleAdapter.sol          # Vault-aware oracle, AggregatorV3Interface
+│   │   ├── PythOracleAdapter.sol           # Single-feed concrete, AggregatorV2V3Interface
+│   │   └── MultiPythOracleAdapter.sol      # Multi-feed cascading variant
 │   ├── registry/
-│   │   └── OracleRegistry.sol             # Centralized vault→oracle mapping
+│   │   └── OracleRegistry.sol              # Centralized vault→oracle mapping
 │   ├── protocol/
-│   │   ├── MorphoProtocolAdapter.sol      # IOracle, scales 8→36, uses registry
-│   │   └── PassthroughProtocolAdapter.sol # AggregatorV3Interface passthrough, uses registry
+│   │   ├── MorphoProtocolAdapter.sol       # IOracle, scales 8→36, uses registry
+│   │   └── PassthroughProtocolAdapter.sol  # AggregatorV2V3Interface passthrough, uses registry
 │   └── deploy/
 │       ├── PythOracleAdapterBeaconSetDeployer.sol
+│       ├── MultiPythOracleAdapterBeaconSetDeployer.sol
 │       ├── OracleRegistryBeaconSetDeployer.sol
 │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
 │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
-│       └── OracleUnifiedDeployer.sol
+│       ├── OracleUnifiedDeployer.sol
+│       └── MultiOracleUnifiedDeployer.sol
+├── interface/
+│   └── IAggregatorV2V3.sol                 # Hand-typed Chainlink-compatible interface
 └── lib/
+    ├── LibCorporateActionsPause.sol        # Auto-pause reader (consults ICorporateActionsV1)
     └── LibProdDeploy.sol
 ```
 
@@ -80,6 +92,7 @@ src/
 
 - `rain.pyth` — `LibPyth.getPriceFeedContract()` and price feed ID constants
 - `pyth-sdk-solidity` — `IPyth`, `PythStructs`
+- `st0x.deploy` — `BeaconSetDeployer` pattern, `ICloneableV2`, `ICorporateActionsV1` (consumed by `LibCorporateActionsPause`)
 - `openzeppelin-contracts` — `UpgradeableBeacon`, `BeaconProxy`, `Initializable`, `IERC4626`
 
 ## Security Rules
