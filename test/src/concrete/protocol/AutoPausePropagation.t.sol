@@ -3,13 +3,13 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
+import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {ICorporateActionsV1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
-import {CompletionFilter, NODE_NONE} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
 import {
     CorporateActionPauseConfig,
     OraclePausedCorporateAction,
@@ -44,73 +44,6 @@ uint256 constant BASE_CHAIN_ID = 8453;
 
 /// @dev Arbitrary mock Pyth feed ID — responses are vm.mockCall'd.
 bytes32 constant MOCK_PRICE_ID = bytes32(uint256(0xd00dface));
-
-/// @dev Same shape as the auto-pause test; one place to maintain so the two
-/// fixtures stay coherent.
-contract MockCorporateActions is ICorporateActionsV1 {
-    uint64 internal pendingEffectiveTime;
-    uint256 internal pendingActionType;
-    uint64 internal completedEffectiveTime;
-    uint256 internal completedActionType;
-
-    function setEarliestPending(uint256 actionType, uint64 effectiveTime) external {
-        pendingActionType = actionType;
-        pendingEffectiveTime = effectiveTime;
-    }
-
-    function setLatestCompleted(uint256 actionType, uint64 effectiveTime) external {
-        completedActionType = actionType;
-        completedEffectiveTime = effectiveTime;
-    }
-
-    function earliestActionOfType(uint256 mask, CompletionFilter filter)
-        external
-        view
-        override
-        returns (uint256, uint256, uint64)
-    {
-        if (filter != CompletionFilter.PENDING) revert("mock: only PENDING expected");
-        if (pendingEffectiveTime == 0) return (NODE_NONE, 0, 0);
-        if (pendingActionType & mask == 0) return (NODE_NONE, 0, 0);
-        return (1, pendingActionType, pendingEffectiveTime);
-    }
-
-    function latestActionOfType(uint256 mask, CompletionFilter filter)
-        external
-        view
-        override
-        returns (uint256, uint256, uint64)
-    {
-        if (filter != CompletionFilter.COMPLETED) revert("mock: only COMPLETED expected");
-        if (completedEffectiveTime == 0) return (NODE_NONE, 0, 0);
-        if (completedActionType & mask == 0) return (NODE_NONE, 0, 0);
-        return (1, completedActionType, completedEffectiveTime);
-    }
-
-    function scheduleCorporateAction(bytes32, uint64, bytes calldata) external pure override returns (uint256) {
-        revert("mock: not implemented");
-    }
-
-    function cancelCorporateAction(uint256) external pure override {
-        revert("mock: not implemented");
-    }
-
-    function completedActionCount() external pure override returns (uint256) {
-        revert("mock: not implemented");
-    }
-
-    function nextOfType(uint256, uint256, CompletionFilter) external pure override returns (uint256, uint256, uint64) {
-        revert("mock: not implemented");
-    }
-
-    function prevOfType(uint256, uint256, CompletionFilter) external pure override returns (uint256, uint256, uint64) {
-        revert("mock: not implemented");
-    }
-
-    function getActionParameters(uint256) external pure override returns (bytes memory) {
-        revert("mock: not implemented");
-    }
-}
 
 /// @title AutoPausePropagationTest
 /// @notice End-to-end check that an auto-pause revert from the oracle layer
@@ -211,7 +144,7 @@ contract AutoPausePropagationTest is Test {
     /// selector unchanged.
     function testPassthroughPropagatesAutoPauseRevert() external {
         uint64 effectiveTime = uint64(block.timestamp + PAUSE_BEFORE / 2);
-        corporateActions.setEarliestPending(ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        corporateActions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
         passthroughAdapter.latestAnswer();
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
@@ -222,7 +155,7 @@ contract AutoPausePropagationTest is Test {
     /// distinct selector still propagates.
     function testMorphoPropagatesAutoPauseRevert() external {
         uint64 effectiveTime = uint64(block.timestamp + PAUSE_BEFORE / 2);
-        corporateActions.setEarliestPending(ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        corporateActions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
         morphoAdapter.price();
     }
@@ -230,7 +163,7 @@ contract AutoPausePropagationTest is Test {
     /// @notice Manual pause precedence is preserved through the protocol
     /// adapter chain — even with an auto-pause condition also armed.
     function testManualPausePropagatesThroughChain() external {
-        corporateActions.setEarliestPending(ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + PAUSE_BEFORE / 2));
+        corporateActions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + PAUSE_BEFORE / 2));
         oracle.setPaused(true);
         vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
         passthroughAdapter.latestAnswer();
