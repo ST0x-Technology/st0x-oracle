@@ -88,6 +88,23 @@ Deployments happen via GitHub Actions (`manual-sol-artifacts.yaml`), not locally
 3. PR the addresses into `src/lib/LibProdDeploy.sol` (for deployer addresses) or `test/src/concrete/ProdFork.t.sol` `LibProdOracles` (for oracle/adapter addresses)
 4. Use `cast send` with `--interactive` for any onchain calls that need a private key
 
+> **Pipeline drift risk.** The current pipeline is **GitHub Action → operator
+> parses logs → operator opens PR with addresses pasted into
+> `src/lib/LibProdDeploy.sol` and `test/src/concrete/ProdFork.t.sol`
+> (`LibProdOracles`)**. The drift risks are:
+>
+> - Typo'd address copied from log to source.
+> - Paste into the wrong constant slot (right address, wrong name).
+> - PR opened late / merged out of order, leaving the constants pointing at
+>   a stale deployment while the new one is already live on-chain.
+> - `subgraph/networks.json` duplicates every deployer address from
+>   `LibProdDeploy.sol` and is currently maintained by hand on the same PR
+>   (see `subgraph/README.md`, issue #220).
+>
+> Tracked at **#210**. Future work: emit a JSON artifact from the workflow
+> that the PR is auto-generated from (and that drives `networks.json`),
+> removing the human-in-the-loop copy step entirely.
+
 ### Deployment Suites
 
 - `pyth-oracle-adapter-beacon-set` — PythOracleAdapter beacon + impl

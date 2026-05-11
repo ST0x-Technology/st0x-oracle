@@ -44,7 +44,7 @@ The underlying price source is **Pyth Network**, which provides NBBO pricing for
 | Interface | Returns `Float` (Rain format) | Returns `int256` (8 decimals) |
 | Lookup | Runtime symbol lookup | Per-token deployed proxy |
 | Pattern | Direct deployment | BeaconSetDeployer pattern |
-| Governance | None (stateless) | Admin controls (pause, setPriceId) |
+| Governance | None (stateless) | Admin controls (pause; multi-feed adapter also `setFeeds` / `setMaxAge`) |
 
 **What we reuse from rain.pyth:**
 
@@ -90,16 +90,40 @@ PROTOCOL ADAPTERS
           ▼                          ▼
 ┌─────────────────────┐    ┌─────────────────────┐
 │ PythOracleAdapter   │    │ ChainlinkOracle     │
-│                     │    │ Adapter (future)    │
+│ (single-feed)       │    │ Adapter (future)    │
 │ Governance:         │    │                     │
-│  - set priceId      │    │                     │
-│  - set maxAge       │    │                     │
 │  - pause/unpause    │    │                     │
+│  - setAdmin         │    │                     │
+│  (priceId/maxAge    │    │                     │
+│   immutable)        │    │                     │
 └─────────────────────┘    └─────────────────────┘
+         ▲
+         │ also implemented by
+┌─────────────────────┐
+│ MultiPythOracleAd.. │
+│ (cascading feeds)   │
+│ Governance:         │
+│  - pause/unpause    │
+│  - setAdmin         │
+│  - setFeeds         │
+│  - setMaxAge        │
+└─────────────────────┘
 
 ORACLE ADAPTERS
 (canonical oracle per asset, all governance here)
 ```
+
+`BasePythOracleAdapter` (abstract, in `src/abstract/`) factors the common
+behaviour out of both oracle implementations: vault-share-ratio scaling,
+conservative pricing, admin / manual-pause governance, and the
+corporate-action auto-pause that consults `LibCorporateActionsPause`.
+`PythOracleAdapter` and `MultiPythOracleAdapter` are thin concrete subclasses
+that only differ in `_getPriceData()` — see §§ 6 and 6A. Both are reached via
+`AggregatorV2V3Interface` (the project-local `src/interface/IAggregatorV2V3.sol`,
+hand-typed to avoid pulling Chainlink as a dependency — see § 11).
+`PythOracleAdapter` is fully immutable post-init; `MultiPythOracleAdapter`
+exposes admin-only `setFeeds` / `setMaxAge`. Manual `setPaused` / `setAdmin`
+exist on both.
 
 **Why a registry layer:**
 
@@ -188,15 +212,25 @@ Deploy multiple proxy *instances* from the same beacon for different protocols.
 
 ## 6. PythOracleAdapter Implementation
 
-**Storage:**
+**Single-feed concrete subclass of `BasePythOracleAdapter`.** All shared
+storage and behaviour (vault, paused, admin, the four
+`CorporateActionPauseConfig` fields, `_validateNotPaused`, `_vaultSharePrice`,
+`_conservativePriceFloat`) live on the base — see § 6B. This contract only
+adds the two single-feed fields and an override of `_getPriceData()`.
+
+**Storage (in addition to base):**
 
 ```solidity
-address public vault;            // ERC-4626 vault, set once, no setter
 bytes32 public priceId;          // Pyth feed ID for underlying asset
 uint256 public maxAge;           // Max acceptable price age
-bool public paused;              // Emergency pause
-address public admin;            // Admin for governance
 ```
+
+`priceId` and `maxAge` are set once at `initialize` and have **no setters** —
+to change either, deploy a new oracle proxy and switch over via
+`OracleRegistry.setOracle(vault, newOracle)`. The same is true of the
+corporate-action pause config — see § 16.2. The only governance surface is
+`setPaused` and `setAdmin`, both inherited from the base. See § 6A for the
+multi-feed variant which adds admin-controlled `setFeeds` / `setMaxAge`.
 
 Note: No `pyth` address storage - derived from `LibPyth.getPriceFeedContract(block.chainid)` at runtime.
 
@@ -235,6 +269,98 @@ function _vaultSharePrice(PythStructs.Price memory priceData) internal view retu
     return int256(uint256(price8) * totalAssets / totalSupply);
 }
 ```
+
+---
+
+## 6A. MultiPythOracleAdapter Implementation
+
+Cascading version of § 6 for equities that publish through multiple Pyth
+feeds — e.g. regular session, pre-market, post-market, overnight. Tries
+feeds in configured order, returns the first non-stale price, reverts with
+`AllFeedsStale()` if none answer. Same external surface as
+`PythOracleAdapter` (`AggregatorV2V3Interface`).
+
+**Differences vs § 6:**
+
+- **Storage**: replaces `priceId` / `maxAge` with `feedCount` (`uint256`) and
+  `mapping(uint256 => FeedConfig) internal _feeds`, where
+  `FeedConfig { bytes32 priceId; uint256 maxAge; }`. Up to `MAX_FEEDS = 8`
+  feeds per oracle. Each feed has its own `maxAge` because update frequency
+  varies by session.
+- **Governance surface**: in addition to inherited `setPaused` / `setAdmin`,
+  exposes:
+  - `setFeeds(FeedConfig[] calldata feeds)` — admin only, replaces the whole
+    feed list (validates `0 < length <= MAX_FEEDS` and non-zero
+    `priceId` / `maxAge` per entry).
+  - `setMaxAge(uint256 index, uint256 newMaxAge)` — admin only, updates a
+    single feed's `maxAge` in place. Both emit events
+    (`FeedsSet` / `FeedMaxAgeSet`). The corporate-action pause config remains
+    immutable post-init exactly as in § 6 / § 16.2.
+- **`_getPriceData()`**: iterates `_feeds[0..feedCount)`. For each, calls
+  `pyth.getPriceNoOlderThan(priceId, maxAge)` inside a `try/catch`; the first
+  successful return wins. Bounded by `MAX_FEEDS = 8` so the loop is gas-safe.
+- **Errors added**: `AllFeedsStale`, `ZeroFeeds`, `TooManyFeeds`,
+  `FeedIndexOutOfBounds(uint256, uint256)`, `ZeroPriceId(uint256)`,
+  `ZeroMaxAge(uint256)`. All other errors are shared with § 6 via the base.
+- **Auto-pause**: identical to § 6 — same `CorporateActionPauseConfig`,
+  same two-error revert pair, same `LibCorporateActionsPause` call site on
+  the base.
+
+Deployed via `MultiPythOracleAdapterBeaconSetDeployer` and orchestrated by
+`MultiOracleUnifiedDeployer` (see §§ 9, 10).
+
+---
+
+## 6B. BasePythOracleAdapter (abstract)
+
+Abstract base in `src/abstract/BasePythOracleAdapter.sol`. Defines the shared
+surface for both oracle adapters; subclasses only implement `_getPriceData()`.
+
+**Storage on the base:**
+
+```solidity
+address public vault;                 // ERC-4626 vault
+bool    public paused;                // manual emergency pause
+address public admin;                 // governance
+// Corporate-action auto-pause config, immutable after _setCorporateActionPauseConfig:
+address public corporateActionsVault;
+uint256 public actionTypeMask;
+uint64  public pauseTimeBefore;
+uint64  public pauseTimeAfter;
+```
+
+**External / public surface on the base:**
+
+- `decimals()`, `description()`, `version()`, `latestAnswer()`,
+  `latestRoundData()` — `AggregatorV2V3Interface`. Eight decimals, fixed.
+- `getRoundData(uint80)` — always reverts with
+  `HistoricalRoundDataUnsupported(_roundId)`. Pyth does not expose
+  per-round history through this interface; callers needing point-in-time
+  data must use Pyth's `getPriceAtPublishTime` directly.
+- `setPaused(bool)` — admin only, toggles the manual flag.
+- `setAdmin(address)` — admin only, rejects zero.
+
+**Internal hooks:**
+
+- `_getPriceData()` — abstract, implemented by subclasses (§ 6, § 6A).
+- `_validateNotPaused()` — checks manual flag, then calls
+  `LibCorporateActionsPause.inPauseWindow` and reverts with
+  `OraclePausedCorporateAction(effectiveTime)` if the window is open.
+  Manual check runs first so an admin-set pause surfaces the
+  `OraclePausedManual()` selector even when a corporate action also
+  qualifies.
+- `_conservativePriceFloat(PythStructs.Price memory)` — price minus
+  confidence, returned as a Rain `Float`. Reverts `NonPositivePrice` if the
+  conservative price is `<= 0`.
+- `_vaultSharePrice(PythStructs.Price memory)` — multiplies the conservative
+  price by `vault.totalAssets() / vault.totalSupply()` entirely in float
+  space (no integer overflow) and returns 8-decimal fixed point. Reverts
+  `ZeroVaultSupply`, `ZeroVaultSharePrice`, or `VaultSharePriceOverflow` on
+  edge cases.
+- `_setCorporateActionPauseConfig(CorporateActionPauseConfig memory)` —
+  called once by each subclass `initialize`. There is no setter on either
+  concrete subclass; changing any of the four fields requires a redeploy
+  and `OracleRegistry.setOracle` switchover (§ 16.2).
 
 ---
 
@@ -331,10 +457,16 @@ Following `st0x.deploy` patterns:
 contract OracleRegistryBeaconSetDeployer {
     IBeacon public immutable I_ORACLE_REGISTRY_BEACON;
 
-    function newOracleRegistry(OracleRegistryConfig memory config)
-        external returns (OracleRegistry);
+    /// admin is hardcoded to msg.sender — no config struct.
+    function newOracleRegistry() external returns (OracleRegistry);
 }
 ```
+
+`newOracleRegistry()` takes no arguments. Hardcoding `msg.sender = admin`
+mirrors the BeaconSet pattern used by every other deployer in this repo and
+eliminates an attacker-controlled admin slot in a permissionless factory — a
+caller cannot deploy a registry on someone else's behalf and assign them
+admin without their consent.
 
 **Oracle Adapter Layer:**
 
@@ -344,6 +476,13 @@ contract PythOracleAdapterBeaconSetDeployer {
 
     function newPythOracleAdapter(PythOracleAdapterConfig memory config)
         external returns (PythOracleAdapter);
+}
+
+contract MultiPythOracleAdapterBeaconSetDeployer {
+    IBeacon public immutable I_MULTI_PYTH_ORACLE_ADAPTER_BEACON;
+
+    function newMultiPythOracleAdapter(MultiPythOracleAdapterConfig memory config)
+        external returns (MultiPythOracleAdapter);
 }
 ```
 
@@ -379,14 +518,18 @@ contract MorphoProtocolAdapterBeaconSetDeployer {
 
 1. Deploy OracleRegistryV1 implementation
 2. Deploy OracleRegistryBeaconSetDeployer (creates beacon internally)
-3. Deploy the canonical OracleRegistry proxy
+3. Deploy the canonical OracleRegistry proxy via `newOracleRegistry()` —
+   takes no arguments; the caller becomes registry admin
 4. Deploy PythOracleAdapterV1 implementation
 5. Deploy PythOracleAdapterBeaconSetDeployer
-6. Deploy MorphoProtocolAdapterV1 implementation
-7. Deploy MorphoProtocolAdapterBeaconSetDeployer
-8. Deploy PassthroughProtocolAdapterV1 implementation
-9. Deploy PassthroughProtocolAdapterBeaconSetDeployer
-10. Deploy OracleUnifiedDeployer
+6. Deploy MultiPythOracleAdapterV1 implementation
+7. Deploy MultiPythOracleAdapterBeaconSetDeployer
+8. Deploy MorphoProtocolAdapterV1 implementation
+9. Deploy MorphoProtocolAdapterBeaconSetDeployer
+10. Deploy PassthroughProtocolAdapterV1 implementation
+11. Deploy PassthroughProtocolAdapterBeaconSetDeployer
+12. Deploy OracleUnifiedDeployer (orchestrates single-feed adapters)
+13. Deploy MultiOracleUnifiedDeployer (orchestrates multi-feed adapters)
 
 **For a new vault (e.g., wrapped AAPL):**
 
@@ -404,6 +547,14 @@ OracleUnifiedDeployer.newOracleAndProtocolAdapters(
 registry.setOracle(vault, oracleAdapter);
 ```
 
+**Multi-feed variant:** for equities that need near-24/7 session coverage,
+use `MultiOracleUnifiedDeployer.newMultiOracleAndProtocolAdapters(vault,
+feeds, registry, pauseConfig)` instead. Identical orchestration —
+oracle + Morpho adapter + Passthrough adapter — but the oracle is a
+`MultiPythOracleAdapter` configured with an ordered `FeedConfig[]` (up to
+8 entries; each carries its own `priceId` and `maxAge`). The two-step
+registry handshake is unchanged.
+
 **Why two-step deployment:**
 
 - `OracleUnifiedDeployer` can be called by anyone to deploy adapters
@@ -418,11 +569,15 @@ registry.setOracle(vault, oracleAdapter);
 st0x.oracle/
 ├── lib/
 │   ├── rain.pyth/                              # For LibPyth
-│   └── pyth-sdk-solidity/                      # Pyth structs
+│   ├── pyth-sdk-solidity/                      # Pyth structs
+│   └── st0x.deploy/                            # ICloneableV2, ICorporateActionsV1
 ├── src/
+│   ├── abstract/
+│   │   └── BasePythOracleAdapter.sol           # Shared base (vault/pause/admin + auto-pause)
 │   ├── concrete/
 │   │   ├── oracle/
-│   │   │   └── PythOracleAdapter.sol
+│   │   │   ├── PythOracleAdapter.sol           # Single-feed concrete
+│   │   │   └── MultiPythOracleAdapter.sol      # Cascading multi-feed concrete
 │   │   ├── registry/
 │   │   │   └── OracleRegistry.sol              # Centralized vault→oracle mapping
 │   │   ├── protocol/
@@ -431,10 +586,15 @@ st0x.oracle/
 │   │   └── deploy/
 │   │       ├── OracleRegistryBeaconSetDeployer.sol
 │   │       ├── PythOracleAdapterBeaconSetDeployer.sol
+│   │       ├── MultiPythOracleAdapterBeaconSetDeployer.sol
 │   │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
 │   │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
-│   │       └── OracleUnifiedDeployer.sol
+│   │       ├── OracleUnifiedDeployer.sol
+│   │       └── MultiOracleUnifiedDeployer.sol
+│   ├── interface/
+│   │   └── IAggregatorV2V3.sol                 # Hand-typed Chainlink-compatible interface
 │   └── lib/
+│       ├── LibCorporateActionsPause.sol        # Auto-pause reader (ICorporateActionsV1)
 │       └── LibProdDeploy.sol
 └── test/
 ```
@@ -470,9 +630,19 @@ IPyth constant PRICE_FEED_CONTRACT_BASE = IPyth(0x8250f4aF4B972684F7b336503E2D6d
 All admin roles held by founder multisig:
 
 - **Beacon Owner**: Can upgrade implementation
-- **Registry Admin**: Can register/update vault→oracle mappings
-- **Oracle Admin**: Can update priceId, maxAge, pause/unpause
-- **Protocol Adapter Admin**: Can update registry reference (opt-out mechanism)
+- **Registry Admin**: Can register/update vault→oracle mappings (`setOracle`,
+  `setOracleBulk`). Set to `msg.sender` at `newOracleRegistry()` time;
+  `setAdmin` rotates it thereafter.
+- **Oracle Admin (`PythOracleAdapter`, single-feed)**: Can `setPaused` and
+  `setAdmin`. `priceId`, `maxAge`, and the corporate-action pause config are
+  **immutable post-init** — to change any of them, deploy a new oracle and
+  switch over via `OracleRegistry.setOracle`.
+- **Oracle Admin (`MultiPythOracleAdapter`, multi-feed)**: Same as above
+  plus `setFeeds` (replace the entire feed list) and `setMaxAge` (update a
+  single feed's `maxAge`). The corporate-action pause config remains
+  immutable post-init for both adapters.
+- **Protocol Adapter Admin**: Can update registry reference (`setRegistry`)
+  as an opt-out mechanism.
 
 No separation of roles.
 
