@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
+import {PythErrors} from "pyth-sdk/PythErrors.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {
     ZeroVaultSupply,
@@ -73,10 +74,15 @@ contract MultiPythOracleAdapterFuzzTest is Test {
         );
     }
 
-    /// @dev Mock Pyth to revert (stale) for the given feed.
+    /// @dev Mock Pyth to revert with the canonical `StalePrice()` custom
+    /// error for the given feed — matches what the real Pyth contract
+    /// emits when a price is older than `maxAge`. The cascade catches
+    /// this selector specifically and falls through to the next feed.
     function _mockStaleFeed(bytes32 feedId, uint256 maxAge) internal {
         vm.mockCallRevert(
-            PYTH_BASE, abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, feedId, maxAge), "stale"
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, feedId, maxAge),
+            abi.encodeWithSelector(PythErrors.StalePrice.selector)
         );
     }
 
@@ -178,5 +184,39 @@ contract MultiPythOracleAdapterFuzzTest is Test {
             int256 answer = adapter.latestAnswer();
             assertEq(answer, firstFreshExpectedPrice, "Should use first non-stale feed");
         }
+    }
+
+    /// @notice A non-stale Pyth revert (e.g. `PriceFeedNotFound` for a
+    /// misconfigured priceId) must propagate, not be absorbed into the
+    /// `AllFeedsStale` cascade. Pre-fix the bare `catch` swallowed all
+    /// reverts identically; misconfig was indistinguishable from "all
+    /// session feeds stale" once you reached the end of the cascade.
+    function testFirstFeedPriceFeedNotFoundPropagates() external {
+        address mockVault = address(uint160(uint256(keccak256("v.notfound"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        bytes32 feedId = keccak256("feed.0");
+        FeedConfig[] memory feeds = new FeedConfig[](2);
+        feeds[0] = FeedConfig({priceId: feedId, maxAge: 300});
+        feeds[1] = FeedConfig({priceId: keccak256("feed.1"), maxAge: 300});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        // First feed reverts with PriceFeedNotFound — must propagate, not
+        // fall through to the second feed.
+        vm.mockCallRevert(
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, feedId, 300),
+            abi.encodeWithSelector(PythErrors.PriceFeedNotFound.selector)
+        );
+        // Second feed would succeed if reached — must NOT be reached.
+        _mockFreshFeed(keccak256("feed.1"), 300, 999e8, 1);
+
+        vm.expectRevert(abi.encodeWithSelector(PythErrors.PriceFeedNotFound.selector));
+        adapter.latestAnswer();
     }
 }
