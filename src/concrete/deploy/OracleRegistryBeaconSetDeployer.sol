@@ -12,7 +12,8 @@ import {OracleRegistry, OracleRegistryConfig} from "src/concrete/registry/Oracle
 error ZeroImplementation();
 
 /// @dev Error raised when a zero address is provided for the initial beacon
-/// owner.
+/// owner. Only constrains construction-time ownership; subsequent owner
+/// rotations are the beacon's concern.
 error ZeroBeaconOwner();
 
 /// @dev Error raised when initialization of the oracle registry fails.
@@ -28,8 +29,12 @@ struct OracleRegistryBeaconSetDeployerConfig {
 }
 
 /// @title OracleRegistryBeaconSetDeployer
-/// @notice Deploys and manages a beacon set for OracleRegistry contracts.
-/// Follows the st0x.deploy BeaconSetDeployer pattern.
+/// @notice Deploys a beacon (constructed once at deploy-time) and the
+/// proxies that share it for OracleRegistry contracts. Beacon authority
+/// — including upgrade and ownership transfer — lives entirely with the
+/// `initialOwner` supplied at construction; this contract retains no
+/// post-construction authority over the beacon. Follows the st0x.deploy
+/// BeaconSetDeployer pattern.
 contract OracleRegistryBeaconSetDeployer {
     /// Emitted when a new OracleRegistry is deployed.
     event Deployment(address sender, address oracleRegistry);
@@ -50,8 +55,10 @@ contract OracleRegistryBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new OracleRegistry proxy.
-    /// The caller (msg.sender) becomes the registry admin, consistent with
-    /// OracleUnifiedDeployer which sets msg.sender as admin for all adapters.
+    /// @dev `msg.sender` becomes the registry admin. SPEC §13 states the
+    /// registry admin is the founder multisig, so this function MUST be
+    /// called from that multisig (or, after deployment, transfer admin to
+    /// the multisig via `OracleRegistry.setAdmin`).
     /// @return registry The deployed OracleRegistry proxy.
     // slither-disable-next-line reentrancy-events
     function newOracleRegistry() external returns (OracleRegistry) {

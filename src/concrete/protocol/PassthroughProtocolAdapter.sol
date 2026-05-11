@@ -19,7 +19,10 @@ error ZeroRegistry();
 /// @dev Error raised when a zero address is provided for the vault.
 error ZeroVault();
 
-/// @dev Error raised when no oracle is found for the vault in the registry.
+/// @dev Error raised when the currently-pointed registry has no entry for
+/// `vault`. This includes both the canonical-registry-never-registered case
+/// AND the `setRegistry`-pointed-elsewhere case (where the admin swapped
+/// the registry to one that doesn't know about this vault).
 error OracleNotFound();
 
 /// @title PassthroughProtocolAdapterConfig
@@ -38,6 +41,13 @@ struct PassthroughProtocolAdapterConfig {
 /// Chainlink-compatible protocol. Passes through all AggregatorV2V3Interface
 /// calls to the underlying oracle adapter. The registry reference is updatable
 /// by the admin, allowing oracle swaps without protocol governance.
+///
+/// PRECONDITION: All oracles registered for vaults consumed by this adapter
+/// MUST report `decimals() == 8`. Aave V3 and Compound V3 cache `decimals()`
+/// at registration time and hard-code the 8-decimal expectation; pointing
+/// the registry to an oracle with a different precision will silently scale
+/// prices wrong (e.g. an 18-decimal oracle yields 1e10× prices on Aave).
+/// SPEC §15's registry-admin-trust assumption applies.
 /// Deploy multiple proxy instances from the same beacon for different protocols.
 contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, Initializable {
     /// @dev The oracle registry for looking up the oracle adapter.
@@ -47,20 +57,29 @@ contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, In
     /// @dev Admin address for governance actions.
     address public admin;
 
-    /// @dev Emitted when the adapter is initialized.
+    /// @notice Emitted when the adapter is initialized.
+    /// @param sender The caller that initialized the proxy.
+    /// @param config The initialization configuration.
     event PassthroughProtocolAdapterInitialized(address indexed sender, PassthroughProtocolAdapterConfig config);
-    /// @dev Emitted when the registry reference is updated.
+    /// @notice Emitted when the registry reference is updated.
+    /// @param oldRegistry The previous registry address.
+    /// @param newRegistry The new registry address.
     event RegistrySet(address indexed oldRegistry, address indexed newRegistry);
-    /// @dev Emitted when the admin is changed.
+    /// @notice Emitted when the admin is changed.
+    /// @param oldAdmin The previous admin address.
+    /// @param newAdmin The new admin address.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
     }
 
-    /// As per ICloneableV2, this overload MUST always revert. Documents the
-    /// signature of the initialize function.
-    /// @param config The initialization configuration.
+    /// @notice Documents the typed signature of the initialize function. Per
+    /// ICloneableV2 this overload MUST always revert; callers should use the
+    /// `bytes calldata` overload instead.
+    /// @dev Always reverts with `InitializeSignatureFn`.
+    /// @param config The initialization configuration. Ignored.
+    /// @return Never returns; included only for the function signature.
     function initialize(PassthroughProtocolAdapterConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();
@@ -89,6 +108,7 @@ contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, In
     }
 
     /// @notice Update the registry reference. Admin only.
+    /// @param newRegistry The new oracle registry address.
     function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
         if (address(newRegistry) == address(0)) revert ZeroRegistry();
         emit RegistrySet(address(registry), address(newRegistry));
@@ -96,6 +116,12 @@ contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, In
     }
 
     /// @notice Update the admin address. Admin only.
+    /// @dev One-step transfer — the new admin takes effect immediately. A
+    /// wrong `newAdmin` will lock the adapter's governance permanently:
+    /// `setRegistry` will become uncallable. The only recovery is
+    /// `OracleRegistry.setOracle(vault, newOracle)` to redirect downstream
+    /// protocols to a different `PassthroughProtocolAdapter` proxy. Use a
+    /// multisig that cannot be misaddressed.
     /// @param newAdmin The new admin address.
     function setAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAdmin();
@@ -131,6 +157,12 @@ contract PassthroughProtocolAdapter is AggregatorV2V3Interface, ICloneableV2, In
     }
 
     /// @inheritdoc AggregatorV2V3Interface
+    /// @dev `roundId` and `answeredInRound` are forwarded verbatim from the
+    /// registered upstream oracle. They are NOT normalized across
+    /// `OracleRegistry.setOracle` swaps; integrators that rely on Chainlink's
+    /// monotonically-increasing-roundId guarantee should not register this
+    /// adapter unless the registry's oracle is locked or the integrator's
+    /// staleness check tolerates discontinuities.
     // slither-disable-next-line unused-return
     function latestRoundData()
         external

@@ -12,7 +12,8 @@ import {MultiPythOracleAdapter, MultiPythOracleAdapterConfig} from "src/concrete
 error MultiZeroImplementation();
 
 /// @dev Error raised when a zero address is provided for the initial beacon
-/// owner.
+/// owner. Only constrains construction-time ownership; subsequent owner
+/// rotations are the beacon's concern.
 error MultiZeroBeaconOwner();
 
 /// @dev Error raised when initialization of the oracle adapter fails.
@@ -29,7 +30,10 @@ struct MultiPythOracleAdapterBeaconSetDeployerConfig {
 }
 
 /// @title MultiPythOracleAdapterBeaconSetDeployer
-/// @notice Deploys and manages a beacon set for MultiPythOracleAdapter contracts.
+/// @notice Deploys a beacon and the proxies that share it for
+/// MultiPythOracleAdapter contracts. Beacon management (upgrades,
+/// ownership transfer) is performed externally by the beacon owner; this
+/// contract retains no authority over the beacon after construction.
 /// Follows the st0x.deploy BeaconSetDeployer pattern.
 contract MultiPythOracleAdapterBeaconSetDeployer {
     /// Emitted when a new MultiPythOracleAdapter is deployed.

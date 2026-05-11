@@ -25,7 +25,9 @@ error MultiPythBeaconSetDeployerNotSet();
 /// @title MultiOracleUnifiedDeployer
 /// @notice Atomically deploys a MultiPythOracleAdapter and all protocol
 /// adapters (Morpho, Passthrough for Aave/Compound) for a new vault. Mirrors
-/// OracleUnifiedDeployer but uses multi-feed oracle for near-24/7 coverage.
+/// OracleUnifiedDeployer (with an added pre-flight check that the multi-Pyth
+/// beacon-set deployer constant in LibProdDeploy is non-zero) but uses
+/// multi-feed oracle for near-24/7 coverage.
 /// @dev The sub-deployer addresses
 /// (`LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER`,
 /// `LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER`,
@@ -35,7 +37,11 @@ error MultiPythBeaconSetDeployerNotSet();
 /// otherwise calls route to the old sub-deployer until this bytecode is
 /// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract MultiOracleUnifiedDeployer {
-    /// Emitted when a new multi-feed oracle and protocol adapter set is deployed.
+    /// @notice Emitted when a new multi-feed oracle and protocol adapter set is deployed.
+    /// @param sender The caller that triggered the deployment.
+    /// @param multiPythOracleAdapter The address of the new MultiPythOracleAdapter proxy.
+    /// @param morphoProtocolAdapter The address of the new MorphoProtocolAdapter proxy.
+    /// @param passthroughProtocolAdapter The address of the new PassthroughProtocolAdapter proxy.
     event Deployment(
         address sender,
         address multiPythOracleAdapter,
@@ -48,8 +54,10 @@ contract MultiOracleUnifiedDeployer {
     /// @param feeds Ordered list of Pyth feed configurations (tried in order).
     /// @param registry The oracle registry. Admin must call registry.setOracle() separately.
     /// @param pauseConfig Corporate-action auto-pause configuration — see
-    /// SPEC § 16. Pass an all-zero struct to disable auto-pause (legacy /
-    /// manual-only mode).
+    /// SPEC § 16. To disable auto-pause entirely, set
+    /// `pauseConfig.corporateActionsVault = address(0)` (other fields ignored).
+    /// Setting only `actionTypeMask = 0` while keeping a non-zero
+    /// corporateActionsVault costs gas on every read but never pauses.
     // slither-disable-next-line reentrancy-events
     function newMultiOracleAndProtocolAdapters(
         address vault,

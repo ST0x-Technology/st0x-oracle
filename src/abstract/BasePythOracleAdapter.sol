@@ -18,9 +18,10 @@ error OraclePausedManual();
 /// integrators see the next event coming, not the last one done.
 error OraclePausedCorporateAction(uint64 effectiveTime);
 
-/// @dev Error raised when the conservative price (price - confidence) is not
-/// positive.
-error NonPositivePrice(int256 price);
+/// @dev Error raised when the conservative price (raw Pyth price minus
+/// confidence interval) is not positive. The carried value is that
+/// conservative price, not the raw Pyth price.
+error NonPositivePrice(int256 conservativePrice);
 
 /// @dev Error raised when a zero address is provided for the vault.
 error ZeroVault();
@@ -112,9 +113,12 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// pausing. Immutable.
     uint64 public pauseTimeAfter;
 
-    /// @dev Emitted when the manual pause state changes.
+    /// @notice Emitted when the manual pause state changes.
+    /// @param isPaused The new pause state.
     event PauseSet(bool isPaused);
-    /// @dev Emitted when the admin is changed.
+    /// @notice Emitted when the admin is changed.
+    /// @param oldAdmin The previous admin address.
+    /// @param newAdmin The new admin address.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     modifier onlyAdmin() {
@@ -174,12 +178,19 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// @notice Pause or unpause the oracle's manual flag. Admin only.
     /// @dev Independent of the corporate-action auto-pause; either condition
     /// causes price reads to revert.
+    /// @param isPaused True to pause, false to unpause.
     function setPaused(bool isPaused) external onlyAdmin {
         paused = isPaused;
         emit PauseSet(isPaused);
     }
 
     /// @notice Update the admin address. Admin only.
+    /// @dev One-step transfer — the new admin takes effect immediately. A
+    /// wrong `newAdmin` will lock the adapter's governance permanently:
+    /// `setPaused` will become uncallable. The only recovery is to redeploy
+    /// the oracle and `OracleRegistry.setOracle(vault, newOracle)` to
+    /// redirect downstream protocols. Use a multisig that cannot be
+    /// misaddressed.
     /// @param newAdmin The new admin address.
     function setAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAdmin();
