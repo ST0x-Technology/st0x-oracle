@@ -21,7 +21,7 @@ import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
 } from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 
 contract PassthroughProtocolAdapterTest is Test {
     PassthroughProtocolAdapter internal immutable I_IMPLEMENTATION;
@@ -243,9 +243,9 @@ contract PassthroughProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
-        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV3Interface.decimals.selector), abi.encode(uint8(8)));
+        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.decimals.selector), abi.encode(uint8(8)));
 
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
 
@@ -262,10 +262,10 @@ contract PassthroughProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         vm.mockCall(
-            mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(mockPrice)
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
 
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
@@ -283,11 +283,11 @@ contract PassthroughProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         vm.mockCall(
             mockOracle,
-            abi.encodeWithSelector(AggregatorV3Interface.latestRoundData.selector),
+            abi.encodeWithSelector(AggregatorV2V3Interface.latestRoundData.selector),
             abi.encode(uint80(1), int256(10000e8), uint256(1000), uint256(1000), uint80(1))
         );
 
@@ -313,9 +313,9 @@ contract PassthroughProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
-        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV3Interface.description.selector), abi.encode(""));
+        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.description.selector), abi.encode(""));
 
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
 
@@ -332,12 +332,70 @@ contract PassthroughProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
-        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV3Interface.version.selector), abi.encode(uint256(1)));
+        vm.mockCall(
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.version.selector), abi.encode(uint256(1))
+        );
 
         PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
 
         assertEq(adapter.version(), 1);
+    }
+
+    /// `getRoundData` is forwarded to the underlying oracle unchanged. A
+    /// Chainlink-backed oracle would return historical round data here.
+    function testPassthroughGetRoundData(address admin, uint80 requestedRound, int256 answer, uint256 ts) external {
+        vm.assume(admin != address(0));
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        vm.mockCall(
+            mockOracle,
+            abi.encodeWithSelector(AggregatorV2V3Interface.getRoundData.selector, requestedRound),
+            abi.encode(uint80(7), answer, ts, ts, uint80(7))
+        );
+
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        (uint80 roundId, int256 a, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
+            adapter.getRoundData(requestedRound);
+        assertEq(roundId, 7);
+        assertEq(a, answer);
+        assertEq(startedAt, ts);
+        assertEq(updatedAt, ts);
+        assertEq(answeredInRound, 7);
+    }
+
+    /// When the underlying oracle is a Pyth-backed adapter, `getRoundData`
+    /// reverts with `HistoricalRoundDataUnsupported(roundId)`. The Passthrough
+    /// surfaces the revert (selector + payload) unchanged — integrators can
+    /// disambiguate on the wire.
+    function testPassthroughGetRoundDataRevertSelectorPropagates(address admin, uint80 requestedRound) external {
+        vm.assume(admin != address(0));
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        bytes memory revertData = abi.encodeWithSignature("HistoricalRoundDataUnsupported(uint80)", requestedRound);
+        vm.mockCallRevert(
+            mockOracle,
+            abi.encodeWithSelector(AggregatorV2V3Interface.getRoundData.selector, requestedRound),
+            revertData
+        );
+
+        PassthroughProtocolAdapter adapter = I_DEPLOYER.newPassthroughProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(revertData);
+        adapter.getRoundData(requestedRound);
     }
 }

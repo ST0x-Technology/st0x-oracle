@@ -13,7 +13,8 @@ import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateAc
 import {
     CorporateActionPauseConfig,
     OraclePausedManual,
-    OraclePausedCorporateAction
+    OraclePausedCorporateAction,
+    HistoricalRoundDataUnsupported
 } from "src/abstract/BasePythOracleAdapter.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
 
@@ -144,5 +145,18 @@ contract PythOracleAdapterAutoPauseTest is PythOracleAdapterTest {
         oracle.setPaused(false);
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
         oracle.latestAnswer();
+    }
+
+    /// `getRoundData` always reverts on Pyth-backed adapters — Pyth has no
+    /// historical round storage exposed via this interface. Integrators
+    /// needing point-in-time data must read Pyth directly or via an indexer.
+    function testGetRoundDataAlwaysReverts(uint80 requestedRound) external {
+        PythOracleAdapter oracle = _config(
+            CorporateActionPauseConfig({
+                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+            })
+        );
+        vm.expectRevert(abi.encodeWithSelector(HistoricalRoundDataUnsupported.selector, requestedRound));
+        oracle.getRoundData(requestedRound);
     }
 }

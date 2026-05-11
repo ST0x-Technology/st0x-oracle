@@ -65,7 +65,7 @@ struct MultiPythOracleAdapterConfig {
 /// near 24/7 coverage for equities with separate feeds for regular, pre-market,
 /// post-market, and overnight sessions.
 ///
-/// Same external interface as PythOracleAdapter (AggregatorV3Interface).
+/// Same external interface as PythOracleAdapter (AggregatorV2V3Interface).
 /// Each feed has its own maxAge since update frequency varies by session.
 ///
 /// Price formula: vaultSharePrice = pythPrice * totalAssets / totalSupply

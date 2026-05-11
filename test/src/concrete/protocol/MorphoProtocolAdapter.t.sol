@@ -22,7 +22,7 @@ import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
 } from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 
 contract MorphoProtocolAdapterTest is Test {
     MorphoProtocolAdapter internal immutable I_IMPLEMENTATION;
@@ -181,12 +181,12 @@ contract MorphoProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         // Mock a price of 100.00000000 (100 USD at 8 decimals)
         int256 mockPrice = 100e8;
         vm.mockCall(
-            mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(mockPrice)
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
@@ -208,10 +208,10 @@ contract MorphoProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         vm.mockCall(
-            mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(mockPrice)
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
@@ -230,10 +230,10 @@ contract MorphoProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         vm.mockCall(
-            mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(int256(0))
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(int256(0))
         );
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
@@ -253,10 +253,10 @@ contract MorphoProtocolAdapterTest is Test {
         // Create registry and register oracle
         OracleRegistry registry = _createRegistry(admin);
         vm.prank(admin);
-        registry.setOracle(vault, AggregatorV3Interface(mockOracle));
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
         vm.mockCall(
-            mockOracle, abi.encodeWithSelector(AggregatorV3Interface.latestAnswer.selector), abi.encode(negativePrice)
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(negativePrice)
         );
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);

@@ -41,7 +41,7 @@ struct PythOracleAdapterConfig {
 /// @notice Oracle adapter that prices ERC-4626 vault shares by fetching the
 /// underlying asset price from Pyth Network and multiplying by the vault's
 /// assets-per-share ratio. Exposes prices via Chainlink's
-/// AggregatorV3Interface. This is the canonical oracle per vault.
+/// AggregatorV2V3Interface. This is the canonical oracle per vault.
 /// Configuration (priceId, maxAge, pauseConfig) is set once at initialization
 /// and is immutable thereafter — deploy a new proxy to change config and
 /// update protocol adapters via setOracle. Only governance is pause/unpause.

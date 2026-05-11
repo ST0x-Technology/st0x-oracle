@@ -8,7 +8,7 @@ import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
 import {
     CorporateActionPauseConfig,
@@ -128,7 +128,7 @@ contract AutoPausePropagationTest is Test {
         passthroughAdapter = passthroughDeployer.newPassthroughProtocolAdapter(registry, mockVault, address(this));
         morphoAdapter = morphoDeployer.newMorphoProtocolAdapter(registry, mockVault, address(this));
 
-        registry.setOracle(mockVault, AggregatorV3Interface(address(oracle)));
+        registry.setOracle(mockVault, AggregatorV2V3Interface(address(oracle)));
     }
 
     /// @notice Sanity: with no scheduled action the chain returns a price.
