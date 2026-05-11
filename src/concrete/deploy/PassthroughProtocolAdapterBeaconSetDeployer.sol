@@ -9,8 +9,8 @@ import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
 import {
     PassthroughProtocolAdapter,
     PassthroughProtocolAdapterConfig
-} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error ZeroImplementation();

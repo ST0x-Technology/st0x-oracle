@@ -2,17 +2,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {PythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
+import {PythOracleAdapterBeaconSetDeployer} from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
 import {
     PassthroughProtocolAdapterBeaconSetDeployer
-} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
-import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
-import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
-import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
+} from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {
+    MorphoProtocolAdapterBeaconSetDeployer
+} from "st0x.oracle/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {PythOracleAdapter, PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {PassthroughProtocolAdapter} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
+import {MorphoProtocolAdapter} from "st0x.oracle/concrete/protocol/MorphoProtocolAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
+import {LibProdDeploy} from "st0x.oracle/lib/LibProdDeploy.sol";
 
 /// @dev Error raised when the `PythOracleAdapterBeaconSetDeployer` address in
 /// `LibProdDeploy` is unset (zero) on the current chain.

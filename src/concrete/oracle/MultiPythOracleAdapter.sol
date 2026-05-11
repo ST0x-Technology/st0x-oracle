@@ -13,7 +13,7 @@ import {
     CorporateActionPauseConfig,
     ZeroVault,
     ZeroAdmin
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Error raised when all feeds are stale.
 error AllFeedsStale();
@@ -206,8 +206,8 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
         view
         returns (bool success, PythStructs.Price memory price)
     {
-        try pyth.getPriceNoOlderThan(feedPriceId, feedMaxAge) returns (PythStructs.Price memory p) {
-            return (true, p);
+        try pyth.getPriceNoOlderThan(feedPriceId, feedMaxAge) returns (PythStructs.Price memory fetchedPrice) {
+            return (true, fetchedPrice);
         } catch (bytes memory reason) {
             // Only StalePrice falls through to the next session feed.
             // Anything else (PriceFeedNotFound, OOG, etc.) bubbles up.

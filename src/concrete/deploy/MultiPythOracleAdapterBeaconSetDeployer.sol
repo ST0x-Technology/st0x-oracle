@@ -6,18 +6,21 @@ import {IBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/IBeacon.sol
 import {UpgradeableBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {BeaconProxy} from "openzeppelin-contracts/contracts/proxy/beacon/BeaconProxy.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
-import {MultiPythOracleAdapter, MultiPythOracleAdapterConfig} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+import {
+    MultiPythOracleAdapter,
+    MultiPythOracleAdapterConfig
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
-error MultiZeroImplementation();
+error ZeroImplementation();
 
 /// @dev Error raised when a zero address is provided for the initial beacon
 /// owner. Only constrains construction-time ownership; subsequent owner
 /// rotations are the beacon's concern.
-error MultiZeroBeaconOwner();
+error ZeroBeaconOwner();
 
 /// @dev Error raised when initialization of the oracle adapter fails.
-error InitializeMultiOracleFailed();
+error InitializeAdapterFailed();
 
 /// @title MultiPythOracleAdapterBeaconSetDeployerConfig
 /// @notice Configuration for the MultiPythOracleAdapterBeaconSetDeployer
@@ -50,10 +53,10 @@ contract MultiPythOracleAdapterBeaconSetDeployer {
 
     constructor(MultiPythOracleAdapterBeaconSetDeployerConfig memory config) {
         if (config.initialMultiPythOracleAdapterImplementation == address(0)) {
-            revert MultiZeroImplementation();
+            revert ZeroImplementation();
         }
         if (config.initialOwner == address(0)) {
-            revert MultiZeroBeaconOwner();
+            revert ZeroBeaconOwner();
         }
 
         I_MULTI_PYTH_ORACLE_ADAPTER_BEACON =
@@ -72,7 +75,7 @@ contract MultiPythOracleAdapterBeaconSetDeployer {
             MultiPythOracleAdapter(address(new BeaconProxy(address(I_MULTI_PYTH_ORACLE_ADAPTER_BEACON), "")));
 
         if (adapter.initialize(abi.encode(config)) != ICLONEABLE_V2_SUCCESS) {
-            revert InitializeMultiOracleFailed();
+            revert InitializeAdapterFailed();
         }
 
         emit Deployment(msg.sender, address(adapter));

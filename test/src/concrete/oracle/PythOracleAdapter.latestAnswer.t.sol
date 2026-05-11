@@ -13,12 +13,12 @@ import {
     ZeroVaultSupply,
     VaultSharePriceOverflow,
     CorporateActionPauseConfig
-} from "src/abstract/BasePythOracleAdapter.sol";
-import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {PythOracleAdapter, PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
 import {
     PythOracleAdapterBeaconSetDeployer,
     PythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
 
 /// @dev TSLA/USD Pyth price feed ID.
 bytes32 constant PRICE_FEED_ID_EQUITY_US_TSLA_USD = 0x16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1;

@@ -8,7 +8,7 @@ import {
     BasePythOracleAdapter,
     CorporateActionPauseConfig,
     CorporateActionConfigAlreadyInitialized
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Minimal harness exposing `_setCorporateActionPauseConfig` for direct
 /// invocation. The base adapter's helper is `internal`; we override the

@@ -4,16 +4,8 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-
-/// @dev Error raised when the caller is not the admin.
-error OnlyAdmin();
-
-/// @dev Error raised when a zero address is provided for the admin.
-error ZeroAdmin();
-
-/// @dev Error raised when a zero address is provided for the vault.
-error ZeroVault();
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {OnlyAdmin, ZeroAdmin, ZeroVault} from "st0x.oracle/lib/LibOracleErrors.sol";
 
 /// @dev Error raised when a zero address is provided for the oracle.
 error ZeroOracle();
@@ -116,13 +108,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @param vault The vault address.
     /// @param oracle The oracle adapter address.
     function setOracle(address vault, AggregatorV2V3Interface oracle) external onlyAdmin {
-        if (vault == address(0)) revert ZeroVault();
-        if (address(oracle) == address(0)) revert ZeroOracle();
-
-        address oldOracle = address(_oracles[vault]);
-        _oracles[vault] = oracle;
-
-        emit OracleSet(vault, oldOracle, address(oracle));
+        _setOracle(vault, oracle);
     }
 
     /// @notice Bulk set or update oracles for multiple vaults. Admin only.
@@ -133,14 +119,24 @@ contract OracleRegistry is ICloneableV2, Initializable {
         if (vaults.length > MAX_BULK_LENGTH) revert BulkLengthExceeded(vaults.length, MAX_BULK_LENGTH);
 
         for (uint256 i = 0; i < vaults.length; i++) {
-            if (vaults[i] == address(0)) revert ZeroVault();
-            if (address(oracles[i]) == address(0)) revert ZeroOracle();
-
-            address oldOracle = address(_oracles[vaults[i]]);
-            _oracles[vaults[i]] = oracles[i];
-
-            emit OracleSet(vaults[i], oldOracle, address(oracles[i]));
+            _setOracle(vaults[i], oracles[i]);
         }
+    }
+
+    /// @dev Shared implementation for `setOracle` and the body of the
+    /// `setOracleBulk` loop. Validates inputs, performs the storage write,
+    /// and emits `OracleSet` exactly once per (vault, oracle) pair so the
+    /// single-set and bulk-set paths produce identical event histories.
+    /// @param vault The vault address. Must be non-zero.
+    /// @param oracle The oracle adapter address. Must be non-zero.
+    function _setOracle(address vault, AggregatorV2V3Interface oracle) internal {
+        if (vault == address(0)) revert ZeroVault();
+        if (address(oracle) == address(0)) revert ZeroOracle();
+
+        address oldOracle = address(_oracles[vault]);
+        _oracles[vault] = oracle;
+
+        emit OracleSet(vault, oldOracle, address(oracle));
     }
 
     /// @notice Get the oracle for a vault.

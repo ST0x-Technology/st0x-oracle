@@ -4,29 +4,15 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
+import {OnlyAdmin, ZeroAdmin, ZeroVault, ZeroRegistry, OracleNotFound} from "st0x.oracle/lib/LibOracleErrors.sol";
 
-/// @dev Error raised when the caller is not the admin.
-error OnlyAdmin();
-
-/// @dev Error raised when a zero address is provided for the admin.
-error ZeroAdmin();
-
-/// @dev Error raised when a zero address is provided for the registry.
-error ZeroRegistry();
-
-/// @dev Error raised when a zero address is provided for the vault.
-error ZeroVault();
-
-/// @dev Error raised when the price is not positive.
-error NonPositivePrice();
-
-/// @dev Error raised when the currently-pointed registry has no entry for
-/// `vault`. This includes both the canonical-registry-never-registered case
-/// AND the `setRegistry`-pointed-elsewhere case (where the admin swapped
-/// the registry to one that doesn't know about this vault).
-error OracleNotFound();
+/// @dev Error raised when the price is not positive. Carries the offending
+/// signed answer (`oracle.latestAnswer()`) so an off-chain observer can see
+/// exactly which value tripped the guard without having to re-call the
+/// upstream oracle. Shape mirrors `BasePythOracleAdapter.NonPositivePrice`.
+error NonPositivePrice(int256 price);
 
 /// @dev Error raised when the registered oracle reports decimals other than 8.
 /// The `* 1e28` scaling in `price()` assumes an 8-decimal upstream; any other
@@ -140,9 +126,19 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
         admin = newAdmin;
     }
 
-    /// @dev Expected upstream oracle decimals. Hard-coded because the `* 1e28`
-    /// scaling factor below is derived from `36 - 8`.
+    /// @dev Expected upstream oracle decimals. Hard-coded because the scaling
+    /// factor below is derived from `MORPHO_PRICE_SCALE / 10**EXPECTED_ORACLE_DECIMALS`.
     uint8 internal constant EXPECTED_ORACLE_DECIMALS = 8;
+
+    /// @dev The fixed-point scale Morpho Blue's `IOracle.price()` is required
+    /// to return — see Morpho documentation. Encoded as a named constant so
+    /// the scaling derivation below is auditable without a calculator.
+    uint256 internal constant MORPHO_PRICE_SCALE = 1e36;
+
+    /// @dev Multiplier applied to the upstream 8-decimal answer to reach
+    /// `MORPHO_PRICE_SCALE` (1e36). Derived from
+    /// `MORPHO_PRICE_SCALE / 10**EXPECTED_ORACLE_DECIMALS` (= 1e28).
+    uint256 internal constant SCALE_MULTIPLIER = MORPHO_PRICE_SCALE / 10 ** uint256(EXPECTED_ORACLE_DECIMALS);
 
     /// @notice Returns the price scaled to 36 decimals as required by Morpho
     /// Blue.
@@ -161,9 +157,9 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
         }
 
         int256 answer = oracle.latestAnswer();
-        if (answer <= 0) revert NonPositivePrice();
+        if (answer <= 0) revert NonPositivePrice(answer);
 
-        // Scale from 8 decimals to 36 decimals
-        return uint256(answer) * 1e28;
+        // Scale from EXPECTED_ORACLE_DECIMALS to MORPHO_PRICE_SCALE.
+        return uint256(answer) * SCALE_MULTIPLIER;
     }
 }

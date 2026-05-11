@@ -3,13 +3,13 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig,
     ZeroImplementation,
     ZeroBeaconOwner
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
 contract OracleRegistryBeaconSetDeployerConstructTest is Test {
     /// Test that zero implementation address reverts.

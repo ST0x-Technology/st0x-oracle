@@ -4,26 +4,9 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
-
-/// @dev Error raised when the caller is not the admin.
-error OnlyAdmin();
-
-/// @dev Error raised when a zero address is provided for the admin.
-error ZeroAdmin();
-
-/// @dev Error raised when a zero address is provided for the registry.
-error ZeroRegistry();
-
-/// @dev Error raised when a zero address is provided for the vault.
-error ZeroVault();
-
-/// @dev Error raised when the currently-pointed registry has no entry for
-/// `vault`. This includes both the canonical-registry-never-registered case
-/// AND the `setRegistry`-pointed-elsewhere case (where the admin swapped
-/// the registry to one that doesn't know about this vault).
-error OracleNotFound();
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
+import {OnlyAdmin, ZeroAdmin, ZeroVault, ZeroRegistry, OracleNotFound} from "st0x.oracle/lib/LibOracleErrors.sol";
 
 /// @title PassthroughProtocolAdapterConfig
 /// @notice Configuration for PassthroughProtocolAdapter initialization.

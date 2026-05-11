@@ -8,13 +8,13 @@ import {
     PassthroughProtocolAdapterBeaconSetDeployerConfig,
     ZeroImplementation,
     ZeroBeaconOwner
-} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
-import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {PassthroughProtocolAdapter} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
 contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
     function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {

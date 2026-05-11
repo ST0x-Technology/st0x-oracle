@@ -6,20 +6,24 @@ import {Test} from "forge-std/Test.sol";
 import {
     MultiOracleUnifiedDeployer,
     MultiPythBeaconSetDeployerNotSet
-} from "src/concrete/deploy/MultiOracleUnifiedDeployer.sol";
-import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
-import {MultiPythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiOracleUnifiedDeployer.sol";
+import {LibProdDeploy} from "st0x.oracle/lib/LibProdDeploy.sol";
+import {
+    MultiPythOracleAdapterBeaconSetDeployer
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 import {
     PassthroughProtocolAdapterBeaconSetDeployer
-} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
-import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {FeedConfig} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {
+    MorphoProtocolAdapterBeaconSetDeployer
+} from "st0x.oracle/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {FeedConfig} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 /// @title MultiOracleUnifiedDeployerTest
 /// @notice Mirrors `OracleUnifiedDeployerTest` — etches the three sub-deployers

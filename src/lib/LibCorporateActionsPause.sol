@@ -66,25 +66,44 @@ library LibCorporateActionsPause {
             return (false, 0);
         }
 
-        ICorporateActionsV1 vault = ICorporateActionsV1(corporateActionsVault);
+        // Local binding for the `ICorporateActionsV1` lookups below. Named
+        // `corporateActions` (not `vault`) to avoid shadowing the
+        // priced-vault meaning used by callers — the address pointed to here
+        // is the corporate-actions registry, which may or may not coincide
+        // with the priced ERC-4626 vault address.
+        ICorporateActionsV1 corporateActions = ICorporateActionsV1(corporateActionsVault);
 
-        (uint256 pendingCursor,, uint64 pendingEffective) = vault.earliestActionOfType(mask, CompletionFilter.PENDING);
+        // The unused middle return is the action's `actionType` — already
+        // filtered by `mask`, so the call-site has nothing to do with it.
+        (uint256 pendingCursor,, uint64 pendingEffective) =
+            corporateActions.earliestActionOfType(mask, CompletionFilter.PENDING);
         // `NODE_NONE = type(uint256).max` is the documented no-match sentinel
         // from `ICorporateActionsV1` — cursor `0` is a real bootstrap node and
         // must NOT be treated as "no match".
-        if (pendingCursor != NODE_NONE) {
+        if (pendingCursor != NODE_NONE && pendingEffective != 0) {
             // pendingEffective > now is guaranteed by the PENDING filter.
             // We compare via addition on uint256-promoted operands so neither
             // underflow nor overflow is possible for any realistic timestamp.
+            // The explicit `pendingEffective != 0` guard is belt-and-suspenders
+            // on top of the `NODE_NONE` cursor check: a regression that
+            // surfaced a real cursor with a zero `effectiveTime` would
+            // otherwise silently open a pause window starting at the unix
+            // epoch — defence-in-depth, no behaviour change for callers
+            // because the `NODE_NONE` check already handles every documented
+            // no-match case.
             if (block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)) {
                 return (true, pendingEffective);
             }
         }
 
+        // The unused middle return is the action's `actionType` — already
+        // filtered by `mask`, so the call-site has nothing to do with it.
         (uint256 completedCursor,, uint64 completedEffective) =
-            vault.latestActionOfType(mask, CompletionFilter.COMPLETED);
-        if (completedCursor != NODE_NONE) {
+            corporateActions.latestActionOfType(mask, CompletionFilter.COMPLETED);
+        if (completedCursor != NODE_NONE && completedEffective != 0) {
             // completedEffective <= now is guaranteed by the COMPLETED filter.
+            // The explicit `completedEffective != 0` guard mirrors the
+            // pre-window branch above — see comment there for rationale.
             if (block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)) {
                 return (true, completedEffective);
             }
