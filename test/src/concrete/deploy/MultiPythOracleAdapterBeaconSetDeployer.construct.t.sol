@@ -6,19 +6,19 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig,
-    MultiZeroImplementation,
-    MultiZeroBeaconOwner,
-    InitializeMultiOracleFailed
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+    ZeroImplementation,
+    ZeroBeaconOwner,
+    InitializeAdapterFailed
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Malicious implementation whose `initialize` returns a non-success
-/// sentinel, exercising the `InitializeMultiOracleFailed` branch in
+/// sentinel, exercising the `InitializeAdapterFailed` branch in
 /// `newMultiPythOracleAdapter`.
 contract BadMultiImpl {
     function initialize(bytes calldata) external pure returns (bytes32) {
@@ -37,11 +37,11 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         });
     }
 
-    /// Constructor must revert `MultiZeroImplementation` when the
+    /// Constructor must revert `ZeroImplementation` when the
     /// implementation address is zero.
     function testMultiPythOracleAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroImplementation.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
         new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialMultiPythOracleAdapterImplementation: address(0)
@@ -49,13 +49,13 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         );
     }
 
-    /// Constructor must revert `MultiZeroBeaconOwner` when the initial owner
+    /// Constructor must revert `ZeroBeaconOwner` when the initial owner
     /// is zero (checked after implementation validation).
     function testMultiPythOracleAdapterBeaconSetDeployerConstructZeroBeaconOwner(address initialMultiPythOracleAdapterImplementation)
         external
     {
         vm.assume(initialMultiPythOracleAdapterImplementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(MultiZeroBeaconOwner.selector));
+        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
         new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: address(0),
@@ -76,7 +76,7 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         assertEq(address(deployer.I_MULTI_PYTH_ORACLE_ADAPTER_BEACON().implementation()), address(implementation));
     }
 
-    /// `newMultiPythOracleAdapter` must revert `InitializeMultiOracleFailed`
+    /// `newMultiPythOracleAdapter` must revert `InitializeAdapterFailed`
     /// when the cloned proxy's `initialize` returns the wrong sentinel.
     function testNewMultiPythOracleAdapterRevertsInitFailure() external {
         BadMultiImpl bad = new BadMultiImpl();
@@ -89,7 +89,7 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         FeedConfig[] memory feeds = new FeedConfig[](1);
         feeds[0] = FeedConfig({priceId: bytes32(uint256(1)), maxAge: 300});
 
-        vm.expectRevert(abi.encodeWithSelector(InitializeMultiOracleFailed.selector));
+        vm.expectRevert(abi.encodeWithSelector(InitializeAdapterFailed.selector));
         deployer.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: address(0xBEEF), feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()

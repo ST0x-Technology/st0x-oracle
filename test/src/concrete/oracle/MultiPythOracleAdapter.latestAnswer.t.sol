@@ -15,17 +15,17 @@ import {
     NonPositivePrice,
     OraclePausedManual,
     CorporateActionPauseConfig
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
     AllFeedsStale
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 
 /// @dev COIN/USD regular hours Pyth feed ID.
 bytes32 constant FEED_COIN_REGULAR = 0xfee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245;

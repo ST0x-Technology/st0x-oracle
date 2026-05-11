@@ -19,6 +19,7 @@ remappings = [
     "rain.factory/=lib/st0x.deploy/lib/rain.vats/lib/rain.factory/src/",
     "st0x.deploy/=lib/st0x.deploy/",
     "src/=src/",
+    "st0x.oracle/=src/",
     # Transitive deps (forge doesn't use each lib's own remappings)
     "rain.math.float/=lib/rain.pyth/lib/rain.interpreter/lib/rain.interpreter.interface/lib/rain.math.float/src/",
     "rain.intorastring/=lib/rain.pyth/lib/rain.interpreter/lib/rain.interpreter.interface/lib/rain.intorastring/src/",

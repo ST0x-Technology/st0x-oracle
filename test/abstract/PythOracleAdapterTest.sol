@@ -3,12 +3,12 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
-import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {PythOracleAdapter, PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
 import {
     PythOracleAdapterBeaconSetDeployer,
     PythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
 
 contract PythOracleAdapterTest is Test {
     PythOracleAdapter internal immutable I_IMPLEMENTATION;

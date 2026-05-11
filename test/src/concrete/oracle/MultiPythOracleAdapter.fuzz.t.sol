@@ -13,17 +13,17 @@ import {
     ZeroVaultSharePrice,
     NonPositivePrice,
     CorporateActionPauseConfig
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
     AllFeedsStale
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 
 /// @dev Pyth contract address on Base (from LibPyth).
 address constant PYTH_BASE = 0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a;

@@ -11,17 +11,17 @@ import {
     ZeroRegistry,
     ZeroVault,
     OracleNotFound
-} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
+} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {
     PassthroughProtocolAdapterBeaconSetDeployer,
     PassthroughProtocolAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
 
 contract PassthroughProtocolAdapterTest is Test {
     PassthroughProtocolAdapter internal immutable I_IMPLEMENTATION;

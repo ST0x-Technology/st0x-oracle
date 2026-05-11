@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {LibFork} from "test/lib/LibFork.sol";
-import {ZeroVault, ZeroAdmin, CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
+import {ZeroVault, ZeroAdmin, CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -14,11 +14,11 @@ import {
     ZeroFeeds,
     TooManyFeeds,
     MAX_FEEDS
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 
 uint256 constant BASE_CHAIN_ID = 8453;
 

@@ -12,7 +12,7 @@ import {
     CorporateActionPauseConfig,
     ZeroVault,
     ZeroAdmin
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Error raised when a zero price ID is provided.
 error ZeroPriceId();

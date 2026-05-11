@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -13,11 +13,11 @@ import {
     ZeroFeeds,
     TooManyFeeds,
     MAX_FEEDS
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 
 bytes32 constant FEED_A = bytes32(uint256(0x1111));
 bytes32 constant FEED_B = bytes32(uint256(0x2222));

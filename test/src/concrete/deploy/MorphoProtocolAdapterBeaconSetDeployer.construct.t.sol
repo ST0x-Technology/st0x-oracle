@@ -9,13 +9,13 @@ import {
     ZeroImplementation,
     ZeroBeaconOwner,
     InitializeAdapterFailed
-} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {MorphoProtocolAdapter} from "st0x.oracle/concrete/protocol/MorphoProtocolAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
 /// @dev Malicious adapter implementation whose `initialize` returns a non-
 /// success sentinel, exercising the `InitializeAdapterFailed` branch in

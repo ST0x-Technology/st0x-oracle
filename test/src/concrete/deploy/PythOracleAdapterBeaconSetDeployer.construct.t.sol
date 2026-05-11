@@ -8,9 +8,9 @@ import {
     PythOracleAdapterBeaconSetDeployerConfig,
     ZeroImplementation,
     ZeroBeaconOwner
-} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
-import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
+import {PythOracleAdapter, PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
 contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
     function testPythOracleAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {

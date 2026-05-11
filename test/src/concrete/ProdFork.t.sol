@@ -3,13 +3,13 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std/Test.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {MultiPythOracleAdapter} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
-import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
-import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
-import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {PythOracleAdapter} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
+import {MultiPythOracleAdapter} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
+import {MorphoProtocolAdapter} from "st0x.oracle/concrete/protocol/MorphoProtocolAdapter.sol";
+import {PassthroughProtocolAdapter} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
+import {LibProdDeploy} from "st0x.oracle/lib/LibProdDeploy.sol";
 
 /// @title LibProdOracles
 /// @notice Hardcoded production oracle addresses deployed via

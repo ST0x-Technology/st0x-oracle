@@ -13,17 +13,17 @@ import {
     OracleNotFound,
     NonPositivePrice,
     UnexpectedOracleDecimals
-} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
+} from "st0x.oracle/concrete/protocol/MorphoProtocolAdapter.sol";
 import {
     MorphoProtocolAdapterBeaconSetDeployer,
     MorphoProtocolAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
 
 contract MorphoProtocolAdapterTest is Test {
     MorphoProtocolAdapter internal immutable I_IMPLEMENTATION;
@@ -248,7 +248,7 @@ contract MorphoProtocolAdapterTest is Test {
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
-        vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
+        vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector, int256(0)));
         adapter.price();
     }
 
@@ -297,7 +297,7 @@ contract MorphoProtocolAdapterTest is Test {
 
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
-        vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
+        vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector, negativePrice));
         adapter.price();
     }
 

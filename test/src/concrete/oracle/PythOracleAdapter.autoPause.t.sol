@@ -16,8 +16,8 @@ import {
     OraclePausedManual,
     OraclePausedCorporateAction,
     HistoricalRoundDataUnsupported
-} from "src/abstract/BasePythOracleAdapter.sol";
-import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {PythOracleAdapter} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
 
 /// @dev Base chain ID.
 uint256 constant BASE_CHAIN_ID = 8453;

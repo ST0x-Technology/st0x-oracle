@@ -13,9 +13,9 @@ import {
     ArrayLengthMismatch,
     BulkLengthExceeded,
     MAX_BULK_LENGTH
-} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
 import {Vm} from "forge-std/Test.sol";
 
 contract OracleRegistryInitializeTest is OracleRegistryTest {

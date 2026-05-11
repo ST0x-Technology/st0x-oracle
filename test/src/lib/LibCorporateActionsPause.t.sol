@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {NODE_NONE} from "st0x.deploy/src/lib/LibCorporateActionNode.sol";
-import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
+import {LibCorporateActionsPause} from "st0x.oracle/lib/LibCorporateActionsPause.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 

@@ -5,8 +5,9 @@ pragma solidity =0.8.25;
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {LibDecimalFloat, Float} from "rain.math.float/lib/LibDecimalFloat.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
+import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {LibCorporateActionsPause} from "st0x.oracle/lib/LibCorporateActionsPause.sol";
+import {OnlyAdmin, ZeroAdmin, ZeroVault} from "st0x.oracle/lib/LibOracleErrors.sol";
 
 /// @dev Error raised when the manual admin pause is active.
 error OraclePausedManual();
@@ -22,15 +23,6 @@ error OraclePausedCorporateAction(uint64 effectiveTime);
 /// confidence interval) is not positive. The carried value is that
 /// conservative price, not the raw Pyth price.
 error NonPositivePrice(int256 conservativePrice);
-
-/// @dev Error raised when a zero address is provided for the vault.
-error ZeroVault();
-
-/// @dev Error raised when the caller is not the admin.
-error OnlyAdmin();
-
-/// @dev Error raised when a zero address is provided for the admin.
-error ZeroAdmin();
 
 /// @dev Error raised when the vault has zero total supply (no shares minted).
 error ZeroVaultSupply();
@@ -97,6 +89,11 @@ struct CorporateActionPauseConfig {
 /// or simulation. Auto-pause configuration is set once at initialize and is
 /// immutable thereafter; manual pause stays as the operational escape hatch.
 abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
+    // --------------------------------------------------------------------- //
+    // Mutable governance state.                                             //
+    // Slots 0–1. Updated by `setPaused` / `setAdmin` after initialize.       //
+    // --------------------------------------------------------------------- //
+
     /// @dev The ERC-4626 vault this oracle prices shares for.
     address public vault;
     /// @dev Manual emergency pause flag. Independent of the corporate-action
@@ -104,6 +101,13 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     bool public paused;
     /// @dev Admin address for governance actions.
     address public admin;
+
+    // --------------------------------------------------------------------- //
+    // Immutable-after-init corporate-action auto-pause config.              //
+    // Slots 2–4. Set exactly once by `_setCorporateActionPauseConfig`; any  //
+    // second call reverts with `CorporateActionConfigAlreadyInitialized`.   //
+    // SPEC §16.2.                                                            //
+    // --------------------------------------------------------------------- //
 
     /// @dev Address implementing `ICorporateActionsV1` consulted on every price
     /// read for auto-pause. Zero address disables auto-pause. Immutable after
@@ -126,6 +130,18 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// `pauseTimeBefore` and `pauseTimeAfter` in the same storage slot
     /// (8 + 8 + 1 bytes ≪ 32), so the new invariant costs no extra slot.
     bool internal _corporateActionConfigInitialized;
+
+    // --------------------------------------------------------------------- //
+    // Reserved slots.                                                        //
+    // 50-slot gap so future base-class additions do not shift subclass slot //
+    // positions. New state added BEFORE the gap; subclasses keep their      //
+    // post-gap offsets stable across upgrades.                              //
+    // --------------------------------------------------------------------- //
+
+    /// @dev Reserved storage to avoid shifting subclass slot positions when
+    /// new base-class state is introduced in future versions. Decrement
+    /// `__gap.length` by 1 for each `uint256`-equivalent slot added above.
+    uint256[50] private __gap;
 
     /// @notice Emitted when the manual pause state changes.
     /// @param isPaused The new pause state.
@@ -322,6 +338,9 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
         if (price8 == 0) revert ZeroVaultSharePrice();
         if (price8 > uint256(type(int256).max)) revert VaultSharePriceOverflow(price8);
 
+        // The preceding `VaultSharePriceOverflow` guard rejects any `price8`
+        // exceeding `type(int256).max`, so this cast cannot truncate.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return int256(price8);
     }
 }

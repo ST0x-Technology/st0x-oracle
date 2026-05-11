@@ -12,7 +12,7 @@ import {
     ZeroAdmin,
     BasePythOracleAdapter,
     CorporateActionPauseConfig
-} from "src/abstract/BasePythOracleAdapter.sol";
+} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
@@ -23,11 +23,11 @@ import {
     TooManyFeeds,
     FeedIndexOutOfBounds,
     MAX_FEEDS
-} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
+} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
-} from "src/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
 
 bytes32 constant FEED_TSLA = 0x16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1;
 bytes32 constant FEED_COIN = 0xfee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245;

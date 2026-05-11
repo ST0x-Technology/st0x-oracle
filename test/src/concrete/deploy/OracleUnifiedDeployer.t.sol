@@ -3,20 +3,22 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
-import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
-import {OracleUnifiedDeployer} from "src/concrete/deploy/OracleUnifiedDeployer.sol";
-import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
-import {PythOracleAdapterBeaconSetDeployer} from "src/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
+import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {OracleUnifiedDeployer} from "st0x.oracle/concrete/deploy/OracleUnifiedDeployer.sol";
+import {LibProdDeploy} from "st0x.oracle/lib/LibProdDeploy.sol";
+import {PythOracleAdapterBeaconSetDeployer} from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
 import {
     PassthroughProtocolAdapterBeaconSetDeployer
-} from "src/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
-import {MorphoProtocolAdapterBeaconSetDeployer} from "src/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
-import {PythOracleAdapterConfig} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
+} from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
+import {
+    MorphoProtocolAdapterBeaconSetDeployer
+} from "st0x.oracle/concrete/deploy/MorphoProtocolAdapterBeaconSetDeployer.sol";
+import {PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
+import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig
-} from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+} from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
 contract OracleUnifiedDeployerTest is Test {
     OracleRegistry internal immutable I_REGISTRY_IMPLEMENTATION;
