@@ -8,14 +8,24 @@ import {
     OracleRegistryBeaconSetDeployer,
     OracleRegistryBeaconSetDeployerConfig,
     ZeroImplementation,
-    ZeroBeaconOwner
+    ZeroBeaconOwner,
+    InitializeRegistryFailed
 } from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
+
+/// @dev Malicious implementation whose `initialize` returns a non-success
+/// sentinel, exercising the `InitializeRegistryFailed` branch in
+/// `newOracleRegistry`.
+contract BadRegistryImpl {
+    function initialize(bytes calldata) external pure returns (bytes32) {
+        return bytes32(uint256(0xdead));
+    }
+}
 
 contract OracleRegistryBeaconSetDeployerConstructTest is Test {
     /// Test that zero implementation address reverts.
     function testConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
+        vm.expectRevert(ZeroImplementation.selector);
         new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialOracleRegistryImplementation: address(0)
@@ -26,7 +36,7 @@ contract OracleRegistryBeaconSetDeployerConstructTest is Test {
     /// Test that zero beacon owner address reverts.
     function testConstructZeroBeaconOwner(address implementation) external {
         vm.assume(implementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
+        vm.expectRevert(ZeroBeaconOwner.selector);
         new OracleRegistryBeaconSetDeployer(
             OracleRegistryBeaconSetDeployerConfig({
                 initialOwner: address(0), initialOracleRegistryImplementation: implementation
@@ -47,6 +57,20 @@ contract OracleRegistryBeaconSetDeployerConstructTest is Test {
         );
 
         assertTrue(address(deployer.I_ORACLE_REGISTRY_BEACON()) != address(0));
+    }
+
+    /// `newOracleRegistry` must revert `InitializeRegistryFailed` when the
+    /// cloned proxy's `initialize` returns the wrong sentinel. Mirrors the
+    /// sibling Morpho/MultiPyth pattern; closes audit #56.
+    function testNewOracleRegistryRevertsInitFailure() external {
+        BadRegistryImpl bad = new BadRegistryImpl();
+        OracleRegistryBeaconSetDeployer deployer = new OracleRegistryBeaconSetDeployer(
+            OracleRegistryBeaconSetDeployerConfig({
+                initialOwner: address(this), initialOracleRegistryImplementation: address(bad)
+            })
+        );
+        vm.expectRevert(InitializeRegistryFailed.selector);
+        deployer.newOracleRegistry();
     }
 
     /// `Deployment` must carry both `caller` and `oracleRegistry` as indexed

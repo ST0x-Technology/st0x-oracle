@@ -7,7 +7,8 @@ import {
     PassthroughProtocolAdapterBeaconSetDeployer,
     PassthroughProtocolAdapterBeaconSetDeployerConfig,
     ZeroImplementation,
-    ZeroBeaconOwner
+    ZeroBeaconOwner,
+    InitializeAdapterFailed
 } from "st0x.oracle/concrete/deploy/PassthroughProtocolAdapterBeaconSetDeployer.sol";
 import {PassthroughProtocolAdapter} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
@@ -16,10 +17,19 @@ import {
     OracleRegistryBeaconSetDeployerConfig
 } from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 
+/// @dev Malicious adapter implementation whose `initialize` returns a non-
+/// success sentinel, exercising the `InitializeAdapterFailed` branch in
+/// `newPassthroughProtocolAdapter`.
+contract BadPassthroughImpl {
+    function initialize(bytes calldata) external pure returns (bytes32) {
+        return bytes32(uint256(0xdead));
+    }
+}
+
 contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
     function testPassthroughProtocolAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
+        vm.expectRevert(ZeroImplementation.selector);
         new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialPassthroughProtocolAdapterImplementation: address(0)
@@ -31,7 +41,7 @@ contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
         external
     {
         vm.assume(initialPassthroughProtocolAdapterImplementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
+        vm.expectRevert(ZeroBeaconOwner.selector);
         new PassthroughProtocolAdapterBeaconSetDeployer(
             PassthroughProtocolAdapterBeaconSetDeployerConfig({
                 initialOwner: address(0),
@@ -51,6 +61,21 @@ contract PassthroughProtocolAdapterBeaconSetDeployerConstructTest is Test {
         );
 
         assertEq(address(deployer.I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON().implementation()), address(implementation));
+    }
+
+    /// `newPassthroughProtocolAdapter` must revert `InitializeAdapterFailed`
+    /// when the cloned proxy's `initialize` returns the wrong sentinel.
+    /// Mirrors the sibling Morpho/MultiPyth pattern; closes audit #58.
+    function testNewPassthroughProtocolAdapterRevertsInitFailure() external {
+        BadPassthroughImpl bad = new BadPassthroughImpl();
+        PassthroughProtocolAdapterBeaconSetDeployer deployer = new PassthroughProtocolAdapterBeaconSetDeployer(
+            PassthroughProtocolAdapterBeaconSetDeployerConfig({
+                initialOwner: address(this), initialPassthroughProtocolAdapterImplementation: address(bad)
+            })
+        );
+
+        vm.expectRevert(InitializeAdapterFailed.selector);
+        deployer.newPassthroughProtocolAdapter(OracleRegistry(address(0xCAFE)), address(0xBEEF), address(this));
     }
 
     /// `Deployment` must carry both `caller` and `passthroughProtocolAdapter`

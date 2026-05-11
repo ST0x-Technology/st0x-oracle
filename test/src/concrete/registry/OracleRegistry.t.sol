@@ -14,7 +14,8 @@ import {
     BulkLengthExceeded,
     MAX_BULK_LENGTH
 } from "st0x.oracle/concrete/registry/OracleRegistry.sol";
-import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
+import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
+import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
 import {Vm} from "forge-std/Test.sol";
 
@@ -60,6 +61,29 @@ contract OracleRegistryInitializeTest is OracleRegistryTest {
         assertTrue(eventFound, "OracleRegistryInitialized event not found");
         assertTrue(address(registry) != address(0));
     }
+
+    /// Per `ICloneableV2`, the typed `initialize(<Config>)` overload MUST
+    /// always revert with `InitializeSignatureFn`. Closes audit #61.
+    function testInitializeSignatureOverloadAlwaysReverts(address admin) external {
+        OracleRegistry impl = new OracleRegistry();
+        OracleRegistryConfig memory cfg = OracleRegistryConfig({admin: admin});
+
+        vm.expectRevert(abi.encodeWithSelector(ICloneableV2.InitializeSignatureFn.selector));
+        impl.initialize(cfg);
+    }
+
+    /// OZ `Initializable.initializer` modifier MUST reject a second
+    /// `initialize(bytes)` call on an already-initialized proxy with
+    /// `InvalidInitialization()`. Closes audit #62.
+    function testCannotDoubleInitialize(address admin) external {
+        vm.assume(admin != address(0));
+        OracleRegistry registry = createRegistry(admin);
+
+        bytes memory data = abi.encode(OracleRegistryConfig({admin: admin}));
+
+        vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
+        registry.initialize(data);
+    }
 }
 
 contract OracleRegistrySetOracleTest is OracleRegistryTest {
@@ -73,7 +97,7 @@ contract OracleRegistrySetOracleTest is OracleRegistryTest {
         OracleRegistry registry = createRegistry(admin);
 
         vm.prank(notAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracle(vault, AggregatorV2V3Interface(oracle));
     }
 
@@ -85,7 +109,7 @@ contract OracleRegistrySetOracleTest is OracleRegistryTest {
         OracleRegistry registry = createRegistry(admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        vm.expectRevert(ZeroVault.selector);
         registry.setOracle(address(0), AggregatorV2V3Interface(oracle));
     }
 
@@ -97,7 +121,7 @@ contract OracleRegistrySetOracleTest is OracleRegistryTest {
         OracleRegistry registry = createRegistry(admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroOracle.selector));
+        vm.expectRevert(ZeroOracle.selector);
         registry.setOracle(vault, AggregatorV2V3Interface(address(0)));
     }
 
@@ -111,7 +135,7 @@ contract OracleRegistrySetOracleTest is OracleRegistryTest {
 
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
-        emit OracleSet(vault, address(0), oracle);
+        emit OracleRegistry.OracleSet(vault, address(0), oracle);
         registry.setOracle(vault, AggregatorV2V3Interface(oracle));
 
         assertEq(address(registry.getOracle(vault)), oracle);
@@ -132,13 +156,11 @@ contract OracleRegistrySetOracleTest is OracleRegistryTest {
 
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
-        emit OracleSet(vault, oracle1, oracle2);
+        emit OracleRegistry.OracleSet(vault, oracle1, oracle2);
         registry.setOracle(vault, AggregatorV2V3Interface(oracle2));
 
         assertEq(address(registry.getOracle(vault)), oracle2);
     }
-
-    event OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle);
 }
 
 contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
@@ -155,7 +177,7 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         oracles[0] = AggregatorV2V3Interface(address(2));
 
         vm.prank(notAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -172,7 +194,7 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         oracles[0] = AggregatorV2V3Interface(address(3));
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ArrayLengthMismatch.selector));
+        vm.expectRevert(ArrayLengthMismatch.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -190,7 +212,7 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         oracles[1] = AggregatorV2V3Interface(address(3));
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        vm.expectRevert(ZeroVault.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -208,7 +230,7 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         oracles[1] = AggregatorV2V3Interface(address(0));
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroOracle.selector));
+        vm.expectRevert(ZeroOracle.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -274,11 +296,11 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
 
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
-        emit OracleSet(vaults[0], address(0), address(oracles[0]));
+        emit OracleRegistry.OracleSet(vaults[0], address(0), address(oracles[0]));
         vm.expectEmit(true, true, true, true);
-        emit OracleSet(vaults[1], address(0), address(oracles[1]));
+        emit OracleRegistry.OracleSet(vaults[1], address(0), address(oracles[1]));
         vm.expectEmit(true, true, true, true);
-        emit OracleSet(vaults[2], address(0), address(oracles[2]));
+        emit OracleRegistry.OracleSet(vaults[2], address(0), address(oracles[2]));
         registry.setOracleBulk(vaults, oracles);
 
         assertEq(address(registry.getOracle(vaults[0])), address(oracles[0]));
@@ -286,7 +308,24 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         assertEq(address(registry.getOracle(vaults[2])), address(oracles[2]));
     }
 
-    event OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle);
+    /// `setOracleBulk` with empty input arrays is a no-op success — the loop
+    /// body never executes and no `OracleSet` events fire. Pin the documented
+    /// behaviour so a future guard that turned the empty case into a revert
+    /// (or, conversely, that silently emitted phantom events) surfaces here.
+    /// Closes audit #70.
+    function testSetOracleBulkEmptyArrays(address admin) external {
+        vm.assume(admin != address(0));
+        OracleRegistry registry = createRegistry(admin);
+
+        address[] memory emptyVaults = new address[](0);
+        AggregatorV2V3Interface[] memory emptyOracles = new AggregatorV2V3Interface[](0);
+
+        vm.prank(admin);
+        vm.recordLogs();
+        registry.setOracleBulk(emptyVaults, emptyOracles);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0, "No events on empty bulk set");
+    }
 }
 
 contract OracleRegistryGetOracleTest is OracleRegistryTest {
@@ -316,8 +355,6 @@ contract OracleRegistryGetOracleTest is OracleRegistryTest {
 }
 
 contract OracleRegistrySetAdminTest is OracleRegistryTest {
-    event AdminSet(address indexed oldAdmin, address indexed newAdmin);
-
     /// Test that only admin can call setAdmin.
     function testSetAdminOnlyAdmin(address admin, address notAdmin, address newAdmin) external {
         vm.assume(admin != address(0));
@@ -327,7 +364,7 @@ contract OracleRegistrySetAdminTest is OracleRegistryTest {
         OracleRegistry registry = createRegistry(admin);
 
         vm.prank(notAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setAdmin(newAdmin);
     }
 
@@ -338,7 +375,7 @@ contract OracleRegistrySetAdminTest is OracleRegistryTest {
         OracleRegistry registry = createRegistry(admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         registry.setAdmin(address(0));
     }
 
@@ -351,7 +388,7 @@ contract OracleRegistrySetAdminTest is OracleRegistryTest {
 
         vm.prank(admin);
         vm.expectEmit(true, true, true, true);
-        emit AdminSet(admin, newAdmin);
+        emit OracleRegistry.AdminSet(admin, newAdmin);
         registry.setAdmin(newAdmin);
 
         assertEq(registry.admin(), newAdmin);
@@ -372,7 +409,7 @@ contract OracleRegistrySetAdminTest is OracleRegistryTest {
 
         // Old admin should no longer be able to act
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracle(vault, AggregatorV2V3Interface(oracle));
 
         // New admin should be able to act

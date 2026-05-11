@@ -8,8 +8,10 @@ import {PythOracleAdapter} from "st0x.oracle/concrete/oracle/PythOracleAdapter.s
 import {MultiPythOracleAdapter} from "st0x.oracle/concrete/oracle/MultiPythOracleAdapter.sol";
 import {MorphoProtocolAdapter} from "st0x.oracle/concrete/protocol/MorphoProtocolAdapter.sol";
 import {PassthroughProtocolAdapter} from "st0x.oracle/concrete/protocol/PassthroughProtocolAdapter.sol";
-import {OracleRegistry} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
+import {OracleRegistry, ZeroOracle, ArrayLengthMismatch} from "st0x.oracle/concrete/registry/OracleRegistry.sol";
 import {LibProdDeploy} from "st0x.oracle/lib/LibProdDeploy.sol";
+import {OraclePausedManual} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
+import {OnlyAdmin, ZeroVault} from "st0x.oracle/lib/LibOracleErrors.sol";
 
 /// @title LibProdOracles
 /// @notice Hardcoded production oracle addresses deployed via
@@ -179,8 +181,24 @@ contract ProdForkTest is Test {
         vm.prank(oracleAdmin);
         oracle.setPaused(true);
 
-        vm.expectRevert();
-        oracle.latestAnswer();
+        // Accept either the legacy `OraclePaused()` selector (deployed mainnet
+        // bytecode pre-corp-actions upgrade) or the post-rename
+        // `OraclePausedManual()` (post-upgrade). Once the corp-actions stack
+        // is deployed and mainnet bytecode reflects the rename, this can
+        // tighten to the new selector only. Tracked via the mainnet redeploy
+        // tasks (RAI-327 / RAI-328).
+        (bool ok, bytes memory data) = address(oracle).staticcall(abi.encodeWithSelector(oracle.latestAnswer.selector));
+        assertFalse(ok, "latestAnswer must revert while paused");
+        require(data.length >= 4, "paused oracle must revert with a selector");
+        bytes4 selector;
+        assembly {
+            selector := mload(add(data, 0x20))
+        }
+        bytes4 legacy = bytes4(keccak256("OraclePaused()"));
+        assertTrue(
+            selector == OraclePausedManual.selector || selector == legacy,
+            "expected OraclePausedManual (new) or OraclePaused (legacy)"
+        );
 
         // Unpause and verify it works again
         vm.prank(oracleAdmin);
@@ -197,7 +215,7 @@ contract ProdForkTest is Test {
         PythOracleAdapter oracle = PythOracleAdapter(LibProdOracles.WTCOIN_ORACLE);
 
         vm.prank(address(0xdead));
-        vm.expectRevert();
+        vm.expectRevert(OnlyAdmin.selector);
         oracle.setPaused(true);
     }
 
@@ -357,7 +375,7 @@ contract ProdForkTest is Test {
         OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
 
         vm.prank(address(0xdead));
-        vm.expectRevert();
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracle(
             address(0x1111111111111111111111111111111111111111),
             AggregatorV2V3Interface(address(0x2222222222222222222222222222222222222222))
@@ -376,7 +394,7 @@ contract ProdForkTest is Test {
         oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(address(0xdead));
-        vm.expectRevert();
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -394,7 +412,7 @@ contract ProdForkTest is Test {
         oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(registryAdmin);
-        vm.expectRevert();
+        vm.expectRevert(ArrayLengthMismatch.selector);
         registry.setOracleBulk(vaults, oracles);
     }
 
@@ -406,7 +424,7 @@ contract ProdForkTest is Test {
         address registryAdmin = registry.admin();
 
         vm.prank(registryAdmin);
-        vm.expectRevert();
+        vm.expectRevert(ZeroVault.selector);
         registry.setOracle(address(0), AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111)));
     }
 
@@ -418,7 +436,7 @@ contract ProdForkTest is Test {
         address registryAdmin = registry.admin();
 
         vm.prank(registryAdmin);
-        vm.expectRevert();
+        vm.expectRevert(ZeroOracle.selector);
         registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV2V3Interface(address(0)));
     }
 
@@ -443,7 +461,7 @@ contract ProdForkTest is Test {
 
         // Old admin cannot
         vm.prank(registryAdmin);
-        vm.expectRevert();
+        vm.expectRevert(OnlyAdmin.selector);
         registry.setOracle(
             address(0x7777777777777777777777777777777777777777),
             AggregatorV2V3Interface(address(0x8888888888888888888888888888888888888888))
@@ -471,12 +489,22 @@ contract ProdForkTest is Test {
         vm.prank(registryAdmin);
         registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV2V3Interface(dummyOracle));
 
-        // Adapters now point to dummy — calls should revert
-        vm.expectRevert();
-        morpho.price();
+        // Adapters now point to dummy — dummy address has no code, so any
+        // downstream view call into it reverts (either via Solidity's
+        // abi.decode panic on empty return data, or via an
+        // `UnexpectedOracleDecimals`-style guard if the adapter checks
+        // first). We don't pin the exact revert payload — only that the
+        // call fails — because the framing call (`oracle.decimals()`,
+        // `oracle.latestAnswer()`, etc.) differs across adapter types
+        // and across the optional decimal/staleness checks. Use raw
+        // staticcall rather than `vm.expectRevert(bytes(""))` because
+        // foundry-nightly panics decoding empty revert data under -vvv
+        // verbosity (alloy-dyn-abi-1.5.2).
+        (bool morphoOk,) = address(morpho).staticcall(abi.encodeWithSelector(morpho.price.selector));
+        assertFalse(morphoOk, "Morpho price must revert when oracle has no code");
 
-        vm.expectRevert();
-        passthrough.latestAnswer();
+        (bool passOk,) = address(passthrough).staticcall(abi.encodeWithSelector(passthrough.latestAnswer.selector));
+        assertFalse(passOk, "Passthrough latestAnswer must revert when oracle has no code");
 
         // Restore original oracle
         vm.prank(registryAdmin);
@@ -505,7 +533,7 @@ contract ProdForkTest is Test {
 
         // Only admin can set registry
         vm.prank(address(0xdead));
-        vm.expectRevert();
+        vm.expectRevert(OnlyAdmin.selector);
         passthrough.setRegistry(currentRegistry);
 
         // Admin can set registry (set to same one, just testing the call works)
@@ -602,7 +630,7 @@ contract ProdForkTest is Test {
         vm.prank(oracleAdmin);
         oracle.setPaused(true);
 
-        vm.expectRevert();
+        vm.expectRevert(OraclePausedManual.selector);
         oracle.latestAnswer();
 
         vm.prank(oracleAdmin);

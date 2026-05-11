@@ -7,15 +7,25 @@ import {
     PythOracleAdapterBeaconSetDeployer,
     PythOracleAdapterBeaconSetDeployerConfig,
     ZeroImplementation,
-    ZeroBeaconOwner
+    ZeroBeaconOwner,
+    InitializeOracleFailed
 } from "st0x.oracle/concrete/deploy/PythOracleAdapterBeaconSetDeployer.sol";
 import {PythOracleAdapter, PythOracleAdapterConfig} from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
 import {CorporateActionPauseConfig} from "st0x.oracle/abstract/BasePythOracleAdapter.sol";
 
+/// @dev Malicious implementation whose `initialize` returns a non-success
+/// sentinel, exercising the `InitializeOracleFailed` branch in
+/// `newPythOracleAdapter`.
+contract BadPythImpl {
+    function initialize(bytes calldata) external pure returns (bytes32) {
+        return bytes32(uint256(0xdead));
+    }
+}
+
 contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
     function testPythOracleAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
+        vm.expectRevert(ZeroImplementation.selector);
         new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialPythOracleAdapterImplementation: address(0)
@@ -27,7 +37,7 @@ contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
         external
     {
         vm.assume(initialPythOracleAdapterImplementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
+        vm.expectRevert(ZeroBeaconOwner.selector);
         new PythOracleAdapterBeaconSetDeployer(
             PythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: address(0), initialPythOracleAdapterImplementation: initialPythOracleAdapterImplementation
@@ -46,6 +56,33 @@ contract PythOracleAdapterBeaconSetDeployerConstructTest is Test {
         );
 
         assertEq(address(deployer.I_PYTH_ORACLE_ADAPTER_BEACON().implementation()), address(implementation));
+    }
+
+    /// `newPythOracleAdapter` must revert `InitializeOracleFailed` when the
+    /// cloned proxy's `initialize` returns the wrong sentinel. Mirrors the
+    /// sibling Morpho/MultiPyth pattern; closes audit #59.
+    function testNewPythOracleAdapterRevertsInitFailure() external {
+        BadPythImpl bad = new BadPythImpl();
+        PythOracleAdapterBeaconSetDeployer deployer = new PythOracleAdapterBeaconSetDeployer(
+            PythOracleAdapterBeaconSetDeployerConfig({
+                initialOwner: address(this), initialPythOracleAdapterImplementation: address(bad)
+            })
+        );
+
+        CorporateActionPauseConfig memory empty = CorporateActionPauseConfig({
+            corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+        });
+
+        vm.expectRevert(InitializeOracleFailed.selector);
+        deployer.newPythOracleAdapter(
+            PythOracleAdapterConfig({
+                vault: address(0xBEEF),
+                priceId: bytes32(uint256(1)),
+                maxAge: 300,
+                admin: address(this),
+                pauseConfig: empty
+            })
+        );
     }
 
     /// `Deployment` must carry both `caller` and `pythOracleAdapter` as

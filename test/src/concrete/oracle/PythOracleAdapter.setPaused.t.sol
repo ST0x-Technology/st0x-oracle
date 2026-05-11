@@ -46,7 +46,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
         PythOracleAdapter oracle = createOracle(vault, priceId, maxAge, admin);
 
         vm.prank(nonAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         oracle.setPaused(true);
     }
 
@@ -62,7 +62,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
         vm.prank(admin);
         oracle.setPaused(true);
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         oracle.latestAnswer();
     }
 
@@ -78,7 +78,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
         vm.prank(admin);
         oracle.setPaused(true);
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         oracle.latestRoundData();
     }
 
@@ -130,7 +130,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
 
         // Old admin can no longer act.
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         oracle.setPaused(true);
 
         // New admin can.
@@ -150,7 +150,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
         PythOracleAdapter oracle = createOracle(vault, priceId, maxAge, admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         oracle.setAdmin(address(0));
     }
 
@@ -168,7 +168,7 @@ contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
         PythOracleAdapter oracle = createOracle(vault, priceId, maxAge, admin);
 
         vm.prank(nonAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         oracle.setAdmin(address(1));
     }
 }

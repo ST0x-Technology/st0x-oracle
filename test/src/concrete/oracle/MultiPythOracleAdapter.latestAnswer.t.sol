@@ -145,7 +145,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(AllFeedsStale.selector));
+        vm.expectRevert(AllFeedsStale.selector);
         adapter.latestAnswer();
     }
 
@@ -188,7 +188,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ZeroVaultSupply.selector));
+        vm.expectRevert(ZeroVaultSupply.selector);
         adapter.latestAnswer();
     }
 
@@ -236,7 +236,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
 
         adapter.setPaused(true);
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         adapter.latestAnswer();
     }
 
@@ -256,7 +256,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
 
         adapter.setPaused(true);
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         adapter.latestRoundData();
     }
 
@@ -305,7 +305,7 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ZeroVaultSharePrice.selector));
+        vm.expectRevert(ZeroVaultSharePrice.selector);
         adapter.latestAnswer();
     }
 }

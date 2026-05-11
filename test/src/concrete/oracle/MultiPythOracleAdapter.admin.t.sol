@@ -84,7 +84,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         adapter.setPaused(true);
         assertTrue(adapter.paused());
 
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         adapter.latestAnswer();
 
         adapter.setPaused(false);
@@ -99,7 +99,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setPaused(true);
     }
 
@@ -112,7 +112,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         assertEq(adapter.admin(), newAdmin);
 
         // Old admin can no longer call admin functions.
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setPaused(true);
 
         // New admin can.
@@ -138,7 +138,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setAdmin(address(0xBEEF));
     }
 
@@ -146,7 +146,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
     function testSetAdminRevertsZero() external {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         adapter.setAdmin(address(0));
     }
 
@@ -294,7 +294,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setFeeds(feeds);
     }
 
@@ -303,7 +303,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         FeedConfig[] memory empty = new FeedConfig[](0);
-        vm.expectRevert(abi.encodeWithSelector(ZeroFeeds.selector));
+        vm.expectRevert(ZeroFeeds.selector);
         adapter.setFeeds(empty);
     }
 
@@ -315,7 +315,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         for (uint256 i = 0; i < feeds.length; i++) {
             feeds[i] = FeedConfig({priceId: bytes32(uint256(i + 1)), maxAge: 300});
         }
-        vm.expectRevert(abi.encodeWithSelector(TooManyFeeds.selector));
+        vm.expectRevert(TooManyFeeds.selector);
         adapter.setFeeds(feeds);
     }
 
@@ -349,7 +349,7 @@ contract MultiPythOracleAdapterAdminTest is Test {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.prank(address(0xdead));
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setMaxAge(0, 600);
     }
 

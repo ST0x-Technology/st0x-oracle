@@ -36,7 +36,7 @@ contract BadMorphoImpl {
 contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
     function testMorphoProtocolAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
+        vm.expectRevert(ZeroImplementation.selector);
         new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialMorphoProtocolAdapterImplementation: address(0)
@@ -48,7 +48,7 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
         external
     {
         vm.assume(initialMorphoProtocolAdapterImplementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
+        vm.expectRevert(ZeroBeaconOwner.selector);
         new MorphoProtocolAdapterBeaconSetDeployer(
             MorphoProtocolAdapterBeaconSetDeployerConfig({
                 initialOwner: address(0),
@@ -81,7 +81,7 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(InitializeAdapterFailed.selector));
+        vm.expectRevert(InitializeAdapterFailed.selector);
         deployer.newMorphoProtocolAdapter(OracleRegistry(address(0xCAFE)), address(0xBEEF), address(this));
     }
 
