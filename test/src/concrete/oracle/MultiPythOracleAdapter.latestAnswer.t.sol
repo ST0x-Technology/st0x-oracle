@@ -209,8 +209,11 @@ contract MultiPythOracleAdapterLatestAnswerTest is Test {
         (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
             adapter.latestRoundData();
 
-        assertEq(roundId, 1);
-        assertEq(answeredInRound, 1);
+        // Per audit #43: roundId / answeredInRound encode `uint80(uint64(publishTime))`
+        // so an integrator sees a monotonically-increasing identifier rather
+        // than the constant `1`.
+        assertEq(roundId, answeredInRound, "roundId must equal answeredInRound");
+        assertEq(uint256(roundId), startedAt, "roundId must equal publishTime-derived startedAt");
         assertTrue(answer > 0, "Price should be positive");
         assertTrue(startedAt > 0, "startedAt should be nonzero");
         assertEq(startedAt, updatedAt);

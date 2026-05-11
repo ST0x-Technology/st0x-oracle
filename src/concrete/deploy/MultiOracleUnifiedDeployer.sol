@@ -22,6 +22,14 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 /// set in LibProdDeploy.
 error MultiPythBeaconSetDeployerNotSet();
 
+/// @dev Error raised when the `MorphoProtocolAdapterBeaconSetDeployer` address
+/// in `LibProdDeploy` is unset (zero) on the current chain.
+error MorphoBeaconSetDeployerNotSet();
+
+/// @dev Error raised when the `PassthroughProtocolAdapterBeaconSetDeployer`
+/// address in `LibProdDeploy` is unset (zero) on the current chain.
+error PassthroughBeaconSetDeployerNotSet();
+
 /// @title MultiOracleUnifiedDeployer
 /// @notice Atomically deploys a MultiPythOracleAdapter and all protocol
 /// adapters (Morpho, Passthrough for Aave/Compound) for a new vault. Mirrors
@@ -38,14 +46,18 @@ error MultiPythBeaconSetDeployerNotSet();
 /// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract MultiOracleUnifiedDeployer {
     /// @notice Emitted when a new multi-feed oracle and protocol adapter set is deployed.
-    /// @param sender The caller that triggered the deployment.
+    /// @param caller The direct on-chain caller of
+    /// `newMultiOracleAndProtocolAdapters` — typically the originating EOA,
+    /// but if this contract is itself wrapped behind another deployer it will
+    /// be that intermediate contract, not the EOA. Indexed so monitoring can
+    /// filter by deployer.
     /// @param multiPythOracleAdapter The address of the new MultiPythOracleAdapter proxy.
     /// @param morphoProtocolAdapter The address of the new MorphoProtocolAdapter proxy.
     /// @param passthroughProtocolAdapter The address of the new PassthroughProtocolAdapter proxy.
     event Deployment(
-        address sender,
-        address multiPythOracleAdapter,
-        address morphoProtocolAdapter,
+        address indexed caller,
+        address indexed multiPythOracleAdapter,
+        address indexed morphoProtocolAdapter,
         address passthroughProtocolAdapter
     );
 
@@ -67,6 +79,12 @@ contract MultiOracleUnifiedDeployer {
     ) external {
         if (LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
             revert MultiPythBeaconSetDeployerNotSet();
+        }
+        if (LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
+            revert MorphoBeaconSetDeployerNotSet();
+        }
+        if (LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
+            revert PassthroughBeaconSetDeployerNotSet();
         }
 
         // 1. Deploy multi-feed oracle adapter

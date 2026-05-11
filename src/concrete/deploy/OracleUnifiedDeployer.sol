@@ -14,6 +14,18 @@ import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 
+/// @dev Error raised when the `PythOracleAdapterBeaconSetDeployer` address in
+/// `LibProdDeploy` is unset (zero) on the current chain.
+error PythBeaconSetDeployerNotSet();
+
+/// @dev Error raised when the `MorphoProtocolAdapterBeaconSetDeployer` address
+/// in `LibProdDeploy` is unset (zero) on the current chain.
+error MorphoBeaconSetDeployerNotSet();
+
+/// @dev Error raised when the `PassthroughProtocolAdapterBeaconSetDeployer`
+/// address in `LibProdDeploy` is unset (zero) on the current chain.
+error PassthroughBeaconSetDeployerNotSet();
+
 /// @title OracleUnifiedDeployer
 /// @notice Atomically deploys a PythOracleAdapter and all protocol adapters
 /// (Morpho, Passthrough for Aave/Compound) for a new vault. The beacon set
@@ -28,12 +40,18 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 /// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract OracleUnifiedDeployer {
     /// @notice Emitted when a new oracle and protocol adapter set is deployed.
-    /// @param sender The caller that triggered the deployment.
+    /// @param caller The direct on-chain caller of `newOracleAndProtocolAdapters`
+    /// — typically the originating EOA, but if this contract is itself wrapped
+    /// behind another deployer it will be that intermediate contract, not the
+    /// EOA. Indexed so monitoring can filter by deployer.
     /// @param pythOracleAdapter The address of the new PythOracleAdapter proxy.
     /// @param morphoProtocolAdapter The address of the new MorphoProtocolAdapter proxy.
     /// @param passthroughProtocolAdapter The address of the new PassthroughProtocolAdapter proxy.
     event Deployment(
-        address sender, address pythOracleAdapter, address morphoProtocolAdapter, address passthroughProtocolAdapter
+        address indexed caller,
+        address indexed pythOracleAdapter,
+        address indexed morphoProtocolAdapter,
+        address passthroughProtocolAdapter
     );
 
     /// @notice Deploy oracle + all protocol adapters for a new vault.
@@ -54,6 +72,20 @@ contract OracleUnifiedDeployer {
         OracleRegistry registry,
         CorporateActionPauseConfig calldata pauseConfig
     ) external {
+        // Pre-flight: every LibProdDeploy sub-deployer address must be set on
+        // the current chain. Surface a typed error so a partial deployment or
+        // wrong-chain invocation fails loudly rather than reverting deep
+        // inside an ABI decode of an empty extcall return.
+        if (LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
+            revert PythBeaconSetDeployerNotSet();
+        }
+        if (LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
+            revert MorphoBeaconSetDeployerNotSet();
+        }
+        if (LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER == address(0)) {
+            revert PassthroughBeaconSetDeployerNotSet();
+        }
+
         // 1. Deploy oracle adapter
         PythOracleAdapter oracleAdapter = PythOracleAdapterBeaconSetDeployer(
                 LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER

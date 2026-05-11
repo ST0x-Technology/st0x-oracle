@@ -119,8 +119,6 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
 
         if (config.vault == address(0)) revert ZeroVault();
         if (config.admin == address(0)) revert ZeroAdmin();
-        if (config.feeds.length == 0) revert ZeroFeeds();
-        if (config.feeds.length > MAX_FEEDS) revert TooManyFeeds();
 
         vault = config.vault;
         admin = config.admin;
@@ -136,8 +134,6 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
     /// @notice Update the entire feed list. Admin only.
     /// @param feeds The new ordered feed configurations.
     function setFeeds(FeedConfig[] calldata feeds) external onlyAdmin {
-        if (feeds.length == 0) revert ZeroFeeds();
-        if (feeds.length > MAX_FEEDS) revert TooManyFeeds();
         _setFeeds(feeds);
         emit FeedsSet(feeds);
     }
@@ -225,18 +221,37 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
         }
     }
 
-    /// @dev Internal feed setter. Validates and stores feeds.
+    /// @dev Internal feed setter. Validates every entry and the length bounds
+    /// up front, then mutates storage. The validate-then-mutate ordering means
+    /// a bad input never partially clobbers existing feeds — important even
+    /// though Solidity reverts roll back state today, because it keeps the
+    /// helper composable into future delegatecall / multi-call contexts where
+    /// partial reverts would otherwise leak. Length checks are folded in so
+    /// `initialize` and `setFeeds` become thin wrappers and any future internal
+    /// caller is also bound by `MAX_FEEDS` / non-empty.
     function _setFeeds(FeedConfig[] memory feeds) internal {
+        // Validate length bounds first.
+        if (feeds.length == 0) revert ZeroFeeds();
+        if (feeds.length > MAX_FEEDS) revert TooManyFeeds();
+
+        // Validate each entry before any storage write.
+        for (uint256 i = 0; i < feeds.length; i++) {
+            if (feeds[i].priceId == bytes32(0)) revert ZeroPriceId(i);
+            if (feeds[i].maxAge == 0) revert ZeroMaxAge(i);
+        }
+
+        // Mutate: clear tail of old entries that no longer fit, then write new
+        // entries, then update `feedCount` last so an external reader can
+        // never observe a length without its slot also populated.
         uint256 oldCount = feedCount;
         for (uint256 i = feeds.length; i < oldCount; i++) {
             delete _feeds[i];
         }
 
-        feedCount = feeds.length;
         for (uint256 i = 0; i < feeds.length; i++) {
-            if (feeds[i].priceId == bytes32(0)) revert ZeroPriceId(i);
-            if (feeds[i].maxAge == 0) revert ZeroMaxAge(i);
             _feeds[i] = feeds[i];
         }
+
+        feedCount = feeds.length;
     }
 }

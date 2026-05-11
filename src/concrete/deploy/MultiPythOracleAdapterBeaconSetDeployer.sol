@@ -36,8 +36,14 @@ struct MultiPythOracleAdapterBeaconSetDeployerConfig {
 /// contract retains no authority over the beacon after construction.
 /// Follows the st0x.deploy BeaconSetDeployer pattern.
 contract MultiPythOracleAdapterBeaconSetDeployer {
-    /// Emitted when a new MultiPythOracleAdapter is deployed.
-    event Deployment(address sender, address multiPythOracleAdapter);
+    /// @notice Emitted when a new MultiPythOracleAdapter is deployed.
+    /// @param caller The direct on-chain caller of `newMultiPythOracleAdapter`.
+    /// For adapters created via `MultiOracleUnifiedDeployer` this is the
+    /// unified-deployer contract, not the originating EOA. Indexed so
+    /// monitoring can filter by deployer.
+    /// @param multiPythOracleAdapter The address of the new proxy. Indexed so
+    /// monitoring can filter by adapter.
+    event Deployment(address indexed caller, address indexed multiPythOracleAdapter);
 
     /// The beacon for the MultiPythOracleAdapter implementation contracts.
     IBeacon public immutable I_MULTI_PYTH_ORACLE_ADAPTER_BEACON;
