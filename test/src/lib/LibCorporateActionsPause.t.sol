@@ -8,6 +8,26 @@ import {LibCorporateActionsPause} from "st0x.oracle/lib/LibCorporateActionsPause
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 
+/// @dev A vault that reverts on any call. Exercises the "vault implements
+/// `ICorporateActionsV1` but throws" path so consumers see the underlying
+/// revert verbatim rather than a swallowed failure.
+contract RevertingCorporateActions {
+    fallback() external payable {
+        revert("vault-reverts");
+    }
+}
+
+/// @dev Wrapper that calls `inPauseWindow` through an external function so
+/// `vm.expectRevert` is the cheatcode immediately before a real (non-inlined)
+/// external call — its depth bookkeeping treats library-internal subcalls as
+/// "current depth" otherwise. Mirrors the pattern used by tests for other
+/// `internal` library functions in this repo.
+contract InPauseWindowCaller {
+    function call(address vault, uint256 mask, uint64 before, uint64 afterT) external view returns (bool, uint64) {
+        return LibCorporateActionsPause.inPauseWindow(vault, mask, before, afterT);
+    }
+}
+
 contract LibCorporateActionsPauseTest is Test {
     MockCorporateActions internal mock;
     uint64 internal constant BEFORE = 3600;
@@ -241,6 +261,28 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(paused, true);
         assertEq(ts, uint64(block.timestamp));
     }
+
+    /// A non-zero vault address whose external call reverts MUST propagate
+    /// the underlying revert verbatim — the lib trusts the vault as an
+    /// immutable post-init field and does not `try/catch`. A future refactor
+    /// that swallowed reverts (silently `(false, 0)`) would be a security
+    /// regression; pin the propagation here. Closes audit #74.
+    function testRevertingVaultPropagates() external {
+        RevertingCorporateActions reverting = new RevertingCorporateActions();
+        InPauseWindowCaller caller = new InPauseWindowCaller();
+        vm.expectRevert(bytes("vault-reverts"));
+        caller.call(address(reverting), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+    }
+
+    // Note: a `testEoaVaultPropagatesNoCodeBehaviour` covering "vault is
+    // an EOA with no code → abi.decode failure propagates as empty revert"
+    // was originally proposed for #74. It's been omitted because
+    // foundry-nightly panics decoding the empty revert payload under -vvv
+    // trace verbosity (alloy-dyn-abi-1.5.2 `decode_error` bug); the
+    // `testRevertingVaultPropagates` test above is sufficient coverage
+    // for the propagation contract that #74 asked for, and the EOA path
+    // is foundry-runtime-specific rather than a Solidity invariant worth
+    // pinning. Restore once foundry upgrades alloy-dyn-abi.
 
     /// SPEC §16.3: `effectiveTime` is zero iff `paused` is false. Fuzz the
     /// presence and timing of pending and completed actions and assert the

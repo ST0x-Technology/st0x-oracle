@@ -41,7 +41,7 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
     /// implementation address is zero.
     function testMultiPythOracleAdapterBeaconSetDeployerConstructZeroImplementation(address initialOwner) external {
         vm.assume(initialOwner != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroImplementation.selector));
+        vm.expectRevert(ZeroImplementation.selector);
         new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: initialOwner, initialMultiPythOracleAdapterImplementation: address(0)
@@ -55,7 +55,7 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         external
     {
         vm.assume(initialMultiPythOracleAdapterImplementation != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroBeaconOwner.selector));
+        vm.expectRevert(ZeroBeaconOwner.selector);
         new MultiPythOracleAdapterBeaconSetDeployer(
             MultiPythOracleAdapterBeaconSetDeployerConfig({
                 initialOwner: address(0),
@@ -89,7 +89,7 @@ contract MultiPythOracleAdapterBeaconSetDeployerConstructTest is Test {
         FeedConfig[] memory feeds = new FeedConfig[](1);
         feeds[0] = FeedConfig({priceId: bytes32(uint256(1)), maxAge: 300});
 
-        vm.expectRevert(abi.encodeWithSelector(InitializeAdapterFailed.selector));
+        vm.expectRevert(InitializeAdapterFailed.selector);
         deployer.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: address(0xBEEF), feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()

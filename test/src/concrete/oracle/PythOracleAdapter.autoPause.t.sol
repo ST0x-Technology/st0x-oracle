@@ -132,7 +132,7 @@ contract PythOracleAdapterAutoPauseTest is PythOracleAdapterTest {
         mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
         PythOracleAdapter oracle = _config(_stockSplitConfig());
         oracle.setPaused(true);
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         oracle.latestAnswer();
     }
 

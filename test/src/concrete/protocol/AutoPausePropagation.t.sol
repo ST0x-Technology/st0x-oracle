@@ -165,9 +165,9 @@ contract AutoPausePropagationTest is Test {
     function testManualPausePropagatesThroughChain() external {
         corporateActions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + PAUSE_BEFORE / 2));
         oracle.setPaused(true);
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         passthroughAdapter.latestAnswer();
-        vm.expectRevert(abi.encodeWithSelector(OraclePausedManual.selector));
+        vm.expectRevert(OraclePausedManual.selector);
         morphoAdapter.price();
     }
 }

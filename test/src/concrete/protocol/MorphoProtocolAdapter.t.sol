@@ -24,6 +24,8 @@ import {
     OracleRegistryBeaconSetDeployerConfig
 } from "st0x.oracle/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 import {AggregatorV2V3Interface} from "st0x.oracle/interface/IAggregatorV2V3.sol";
+import {ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
+import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 
 contract MorphoProtocolAdapterTest is Test {
     MorphoProtocolAdapter internal immutable I_IMPLEMENTATION;
@@ -54,7 +56,7 @@ contract MorphoProtocolAdapterTest is Test {
     /// Test that initialization with zero registry reverts.
     function testInitializeZeroRegistry(address vault, address admin) external {
         vm.assume(vault != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroRegistry.selector));
+        vm.expectRevert(ZeroRegistry.selector);
         I_DEPLOYER.newMorphoProtocolAdapter(OracleRegistry(address(0)), vault, admin);
     }
 
@@ -62,7 +64,7 @@ contract MorphoProtocolAdapterTest is Test {
     function testInitializeZeroVault(address registryAdmin, address admin) external {
         vm.assume(registryAdmin != address(0));
         OracleRegistry registry = _createRegistry(registryAdmin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        vm.expectRevert(ZeroVault.selector);
         I_DEPLOYER.newMorphoProtocolAdapter(registry, address(0), admin);
     }
 
@@ -71,7 +73,7 @@ contract MorphoProtocolAdapterTest is Test {
         vm.assume(registryAdmin != address(0));
         vm.assume(vault != address(0));
         OracleRegistry registry = _createRegistry(registryAdmin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, address(0));
     }
 
@@ -141,7 +143,7 @@ contract MorphoProtocolAdapterTest is Test {
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(nonAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setRegistry(registry);
     }
 
@@ -155,7 +157,7 @@ contract MorphoProtocolAdapterTest is Test {
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroRegistry.selector));
+        vm.expectRevert(ZeroRegistry.selector);
         adapter.setRegistry(OracleRegistry(address(0)));
     }
 
@@ -168,7 +170,7 @@ contract MorphoProtocolAdapterTest is Test {
         OracleRegistry registry = _createRegistry(registryAdmin);
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
-        vm.expectRevert(abi.encodeWithSelector(OracleNotFound.selector));
+        vm.expectRevert(OracleNotFound.selector);
         adapter.price();
     }
 
@@ -382,7 +384,7 @@ contract MorphoProtocolAdapterTest is Test {
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(nonAdmin);
-        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        vm.expectRevert(OnlyAdmin.selector);
         adapter.setAdmin(address(1));
     }
 
@@ -396,7 +398,77 @@ contract MorphoProtocolAdapterTest is Test {
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         adapter.setAdmin(address(0));
+    }
+
+    /// Per `ICloneableV2`, the typed `initialize(<Config>)` overload MUST
+    /// always revert with `InitializeSignatureFn`. Closes audit #61.
+    function testInitializeSignatureOverloadAlwaysReverts(address vault, address admin) external {
+        MorphoProtocolAdapter impl = new MorphoProtocolAdapter();
+
+        MorphoProtocolAdapterConfig memory cfg =
+            MorphoProtocolAdapterConfig({registry: OracleRegistry(address(0xCAFE)), vault: vault, admin: admin});
+
+        vm.expectRevert(abi.encodeWithSelector(ICloneableV2.InitializeSignatureFn.selector));
+        impl.initialize(cfg);
+    }
+
+    /// OZ `Initializable.initializer` modifier MUST reject a second
+    /// `initialize(bytes)` call on an already-initialized proxy with
+    /// `InvalidInitialization()`. Closes audit #62.
+    function testCannotDoubleInitialize(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = _createRegistry(registryAdmin);
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        bytes memory data = abi.encode(MorphoProtocolAdapterConfig({registry: registry, vault: vault, admin: admin}));
+
+        vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
+        adapter.initialize(data);
+    }
+
+    /// `setRegistry` must propagate to `price()` resolution: after swapping
+    /// the registry pointer, the adapter MUST resolve through the new registry
+    /// (not the old). The existing `testSetRegistry` only pins the storage
+    /// write and the event — a regression that landed the assignment on a
+    /// different slot would pass that test but break price resolution.
+    /// Closes audit #67.
+    function testSetRegistryUpdatesPriceResolution(address registryAdmin, address vault, address admin) external {
+        vm.assume(registryAdmin != address(0));
+        vm.assume(vault != address(0));
+        vm.assume(admin != address(0));
+
+        address oracle1 = address(uint160(uint256(keccak256("oracle.one"))));
+        address oracle2 = address(uint160(uint256(keccak256("oracle.two"))));
+
+        OracleRegistry registry1 = _createRegistry(registryAdmin);
+        OracleRegistry registry2 = _createRegistry(registryAdmin);
+
+        vm.prank(registryAdmin);
+        registry1.setOracle(vault, AggregatorV2V3Interface(oracle1));
+        vm.prank(registryAdmin);
+        registry2.setOracle(vault, AggregatorV2V3Interface(oracle2));
+
+        _mockDecimals(oracle1, 8);
+        _mockDecimals(oracle2, 8);
+        vm.mockCall(
+            oracle1, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(int256(100e8))
+        );
+        vm.mockCall(
+            oracle2, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(int256(200e8))
+        );
+
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry1, vault, admin);
+
+        assertEq(adapter.price(), 100e8 * 1e28, "Should resolve via registry1");
+
+        vm.prank(admin);
+        adapter.setRegistry(registry2);
+
+        assertEq(adapter.price(), 200e8 * 1e28, "Should resolve via registry2 after swap");
     }
 }

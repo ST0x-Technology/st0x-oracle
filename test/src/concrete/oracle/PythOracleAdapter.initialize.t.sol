@@ -10,6 +10,8 @@ import {
     ZeroPriceId,
     ZeroMaxAge
 } from "st0x.oracle/concrete/oracle/PythOracleAdapter.sol";
+import {ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
+import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {Vm} from "forge-std/Test.sol";
 
 contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
@@ -18,7 +20,7 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(priceId != bytes32(0));
         vm.assume(maxAge > 0);
         vm.assume(admin != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        vm.expectRevert(ZeroVault.selector);
         I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
                 vault: address(0), priceId: priceId, maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
@@ -31,7 +33,7 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(vault != address(0));
         vm.assume(maxAge > 0);
         vm.assume(admin != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroPriceId.selector));
+        vm.expectRevert(ZeroPriceId.selector);
         I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
                 vault: vault, priceId: bytes32(0), maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
@@ -44,7 +46,7 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(vault != address(0));
         vm.assume(priceId != bytes32(0));
         vm.assume(admin != address(0));
-        vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector));
+        vm.expectRevert(ZeroMaxAge.selector);
         I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
                 vault: vault, priceId: priceId, maxAge: 0, admin: admin, pauseConfig: _emptyPauseConfig()
@@ -57,7 +59,7 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         vm.assume(vault != address(0));
         vm.assume(priceId != bytes32(0));
         vm.assume(maxAge > 0);
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         I_DEPLOYER.newPythOracleAdapter(
             PythOracleAdapterConfig({
                 vault: vault, priceId: priceId, maxAge: maxAge, admin: address(0), pauseConfig: _emptyPauseConfig()
@@ -116,6 +118,62 @@ contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
         }
         assertTrue(eventFound, "PythOracleAdapterInitialized event not found");
         assertTrue(address(oracle) != address(0));
+    }
+
+    /// Per `ICloneableV2`, the typed `initialize(<Config>)` overload MUST
+    /// always revert with `InitializeSignatureFn`. Implementations call it
+    /// only for ABI documentation, never as a real entry point. Pin the
+    /// behaviour directly on the implementation so a refactor that lets it
+    /// succeed (and silently bypass the proper `initialize(bytes)` path) fails
+    /// here. Closes audit #61.
+    function testInitializeSignatureOverloadAlwaysReverts(address vault, bytes32 priceId, uint256 maxAge, address admin)
+        external
+    {
+        PythOracleAdapter impl = new PythOracleAdapter();
+
+        PythOracleAdapterConfig memory cfg = PythOracleAdapterConfig({
+            vault: vault, priceId: priceId, maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
+        });
+
+        vm.expectRevert(abi.encodeWithSelector(ICloneableV2.InitializeSignatureFn.selector));
+        impl.initialize(cfg);
+    }
+
+    /// OZ `Initializable.initializer` modifier MUST reject a second
+    /// `initialize(bytes)` call on an already-initialized proxy with
+    /// `InvalidInitialization()`. If the modifier is ever removed or the
+    /// contract switched to `reinitializer`, double-init would silently reset
+    /// core state — catch loudly here. Closes audit #62.
+    function testCannotDoubleInitialize(address vault, bytes32 priceId, uint256 maxAge, address admin) external {
+        vm.assume(vault != address(0));
+        vm.assume(priceId != bytes32(0));
+        vm.assume(maxAge > 0);
+        vm.assume(admin != address(0));
+
+        PythOracleAdapter oracle = createOracle(vault, priceId, maxAge, admin);
+
+        bytes memory data = abi.encode(
+            PythOracleAdapterConfig({
+                vault: vault, priceId: priceId, maxAge: maxAge, admin: admin, pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
+        oracle.initialize(data);
+    }
+
+    /// `description()` is documented to return the empty string on every
+    /// `BasePythOracleAdapter` subclass (the Aggregator metadata is intentionally
+    /// blank). Pin the contract directly so a future override that returns a
+    /// non-empty description surfaces immediately. Closes audit #51.
+    function testDescription(address vault, bytes32 priceId, uint256 maxAge, address admin) external {
+        vm.assume(vault != address(0));
+        vm.assume(priceId != bytes32(0));
+        vm.assume(maxAge > 0);
+        vm.assume(admin != address(0));
+
+        PythOracleAdapter oracle = createOracle(vault, priceId, maxAge, admin);
+        assertEq(oracle.description(), "");
     }
 
     /// Test that deploying multiple oracles produces independent proxies.

@@ -131,7 +131,7 @@ contract PythOracleAdapterLatestAnswerTest is Test {
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ZeroVaultSupply.selector));
+        vm.expectRevert(ZeroVaultSupply.selector);
         oracle.latestAnswer();
     }
 

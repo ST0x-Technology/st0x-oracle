@@ -19,6 +19,8 @@ import {
     MultiPythOracleAdapterBeaconSetDeployer,
     MultiPythOracleAdapterBeaconSetDeployerConfig
 } from "st0x.oracle/concrete/deploy/MultiPythOracleAdapterBeaconSetDeployer.sol";
+import {ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
+import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 
 uint256 constant BASE_CHAIN_ID = 8453;
 
@@ -104,7 +106,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
 
     /// Test initialization reverts with zero vault.
     function testInitializeRevertsZeroVault() external {
-        vm.expectRevert(abi.encodeWithSelector(ZeroVault.selector));
+        vm.expectRevert(ZeroVault.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: address(0), feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
@@ -115,7 +117,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     /// Test initialization reverts with zero admin.
     function testInitializeRevertsZeroAdmin() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeroadmin"))));
-        vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
+        vm.expectRevert(ZeroAdmin.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: mockVault, feeds: _singleFeedConfig(), admin: address(0), pauseConfig: _emptyPauseConfig()
@@ -127,7 +129,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
     function testInitializeRevertsZeroFeeds() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zerofeeds"))));
         FeedConfig[] memory emptyFeeds = new FeedConfig[](0);
-        vm.expectRevert(abi.encodeWithSelector(ZeroFeeds.selector));
+        vm.expectRevert(ZeroFeeds.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: mockVault, feeds: emptyFeeds, admin: address(this), pauseConfig: _emptyPauseConfig()
@@ -142,7 +144,7 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         for (uint256 i = 0; i < feeds.length; i++) {
             feeds[i] = FeedConfig({priceId: bytes32(uint256(i + 1)), maxAge: 300});
         }
-        vm.expectRevert(abi.encodeWithSelector(TooManyFeeds.selector));
+        vm.expectRevert(TooManyFeeds.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
@@ -220,5 +222,91 @@ contract MultiPythOracleAdapterInitializeTest is Test {
             })
         );
         assertEq(adapter.version(), 1);
+    }
+
+    /// `description()` is documented to return the empty string on every
+    /// `BasePythOracleAdapter` subclass. Pin the contract directly so a future
+    /// override that returns a non-empty description surfaces immediately.
+    /// Closes audit #51.
+    function testDescription() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.description"))));
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+        assertEq(adapter.description(), "");
+    }
+
+    /// Per `ICloneableV2`, the typed `initialize(<Config>)` overload MUST
+    /// always revert with `InitializeSignatureFn`. Implementations expose it
+    /// only for ABI documentation, never as a real entry point. Closes audit
+    /// #61.
+    function testInitializeSignatureOverloadAlwaysReverts() external {
+        MultiPythOracleAdapter impl = new MultiPythOracleAdapter();
+
+        MultiPythOracleAdapterConfig memory cfg = MultiPythOracleAdapterConfig({
+            vault: address(0xBEEF), feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+        });
+
+        vm.expectRevert(abi.encodeWithSelector(ICloneableV2.InitializeSignatureFn.selector));
+        impl.initialize(cfg);
+    }
+
+    /// OZ `Initializable.initializer` modifier MUST reject a second
+    /// `initialize(bytes)` call on an already-initialized proxy with
+    /// `InvalidInitialization()`. Closes audit #62.
+    function testCannotDoubleInitialize() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.doubleinit"))));
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: _singleFeedConfig(), admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        bytes memory data = abi.encode(
+            MultiPythOracleAdapterConfig({
+                vault: address(0xDEAD),
+                feeds: _singleFeedConfig(),
+                admin: address(this),
+                pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(Initializable.InvalidInitialization.selector));
+        adapter.initialize(data);
+    }
+
+    /// `getFeeds()` MUST return an array whose length equals `feedCount()` and
+    /// whose entries match `getFeed(i)` and the input feeds for every index in
+    /// `[0, feedCount)`. Pin the invariant directly so a future refactor that
+    /// (e.g.) reorders storage or off-by-one indexes the mapping surfaces
+    /// here. Closes audit #76.
+    function testGetFeedsConsistencyWithGetFeed(uint8 feedCountRaw) external {
+        uint256 numFeeds = bound(uint256(feedCountRaw), 1, MAX_FEEDS);
+        address mockVault = address(uint160(uint256(keccak256(abi.encode("vault.consistency", feedCountRaw)))));
+
+        FeedConfig[] memory feeds = new FeedConfig[](numFeeds);
+        for (uint256 i = 0; i < numFeeds; i++) {
+            feeds[i] = FeedConfig({priceId: keccak256(abi.encode("feed", i)), maxAge: 100 + i});
+        }
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+
+        FeedConfig[] memory all = adapter.getFeeds();
+        assertEq(all.length, numFeeds, "Length mismatch");
+        assertEq(adapter.feedCount(), numFeeds, "feedCount mismatch");
+
+        for (uint256 i = 0; i < numFeeds; i++) {
+            FeedConfig memory single = adapter.getFeed(i);
+            assertEq(all[i].priceId, single.priceId, "priceId order divergence");
+            assertEq(all[i].maxAge, single.maxAge, "maxAge order divergence");
+            assertEq(all[i].priceId, feeds[i].priceId, "priceId mismatch with input");
+            assertEq(all[i].maxAge, feeds[i].maxAge, "maxAge mismatch with input");
+        }
     }
 }

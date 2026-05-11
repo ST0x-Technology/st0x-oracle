@@ -101,7 +101,7 @@ contract MultiPythOracleAdapterSetFeedsOrderingTest is Test {
             feeds[i] = FeedConfig({priceId: bytes32(uint256(i + 1)), maxAge: 300});
         }
         address mockVault = address(uint160(uint256(keccak256("vault.helper.toomany"))));
-        vm.expectRevert(abi.encodeWithSelector(TooManyFeeds.selector));
+        vm.expectRevert(TooManyFeeds.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
@@ -115,7 +115,7 @@ contract MultiPythOracleAdapterSetFeedsOrderingTest is Test {
     function testInitializeZeroFeedsRevertsViaHelper() external {
         FeedConfig[] memory feeds = new FeedConfig[](0);
         address mockVault = address(uint160(uint256(keccak256("vault.helper.zero"))));
-        vm.expectRevert(abi.encodeWithSelector(ZeroFeeds.selector));
+        vm.expectRevert(ZeroFeeds.selector);
         I_DEPLOYER.newMultiPythOracleAdapter(
             MultiPythOracleAdapterConfig({
                 vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
@@ -129,7 +129,7 @@ contract MultiPythOracleAdapterSetFeedsOrderingTest is Test {
     function testSetFeedsZeroFeedsRevertsViaHelper() external {
         MultiPythOracleAdapter adapter = _deployWith(2);
         FeedConfig[] memory empty = new FeedConfig[](0);
-        vm.expectRevert(abi.encodeWithSelector(ZeroFeeds.selector));
+        vm.expectRevert(ZeroFeeds.selector);
         adapter.setFeeds(empty);
     }
 
@@ -141,7 +141,7 @@ contract MultiPythOracleAdapterSetFeedsOrderingTest is Test {
         for (uint256 i = 0; i < feeds.length; i++) {
             feeds[i] = FeedConfig({priceId: bytes32(uint256(i + 1)), maxAge: 300});
         }
-        vm.expectRevert(abi.encodeWithSelector(TooManyFeeds.selector));
+        vm.expectRevert(TooManyFeeds.selector);
         adapter.setFeeds(feeds);
     }
 

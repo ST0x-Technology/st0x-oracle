@@ -178,7 +178,7 @@ contract MultiPythOracleAdapterFuzzTest is Test {
         }
 
         if (allStale) {
-            vm.expectRevert(abi.encodeWithSelector(AllFeedsStale.selector));
+            vm.expectRevert(AllFeedsStale.selector);
             adapter.latestAnswer();
         } else {
             int256 answer = adapter.latestAnswer();
