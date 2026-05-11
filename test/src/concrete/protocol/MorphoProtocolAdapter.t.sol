@@ -11,7 +11,8 @@ import {
     ZeroRegistry,
     ZeroVault,
     OracleNotFound,
-    NonPositivePrice
+    NonPositivePrice,
+    UnexpectedOracleDecimals
 } from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {
     MorphoProtocolAdapterBeaconSetDeployer,
@@ -171,6 +172,12 @@ contract MorphoProtocolAdapterTest is Test {
         adapter.price();
     }
 
+    /// Helper: mock the oracle's `decimals()` to return 8 so the
+    /// `EXPECTED_ORACLE_DECIMALS` check in `price()` passes.
+    function _mockDecimals(address mockOracle, uint8 d) internal {
+        vm.mockCall(mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.decimals.selector), abi.encode(d));
+    }
+
     /// Test price() scales 8 decimals to 36 decimals correctly.
     function testPriceScaling(address admin) external {
         vm.assume(admin != address(0));
@@ -183,6 +190,7 @@ contract MorphoProtocolAdapterTest is Test {
         vm.prank(admin);
         registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
+        _mockDecimals(mockOracle, 8);
         // Mock a price of 100.00000000 (100 USD at 8 decimals)
         int256 mockPrice = 100e8;
         vm.mockCall(
@@ -210,6 +218,7 @@ contract MorphoProtocolAdapterTest is Test {
         vm.prank(admin);
         registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
+        _mockDecimals(mockOracle, 8);
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(mockPrice)
         );
@@ -232,6 +241,7 @@ contract MorphoProtocolAdapterTest is Test {
         vm.prank(admin);
         registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
+        _mockDecimals(mockOracle, 8);
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(int256(0))
         );
@@ -255,6 +265,7 @@ contract MorphoProtocolAdapterTest is Test {
         vm.prank(admin);
         registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
 
+        _mockDecimals(mockOracle, 8);
         vm.mockCall(
             mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(negativePrice)
         );
@@ -262,6 +273,58 @@ contract MorphoProtocolAdapterTest is Test {
         MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
 
         vm.expectRevert(abi.encodeWithSelector(NonPositivePrice.selector));
+        adapter.price();
+    }
+
+    /// `price()` must revert when the registered oracle reports any decimals
+    /// value other than 8 — preventing silent `10^N`-magnitude mis-pricing if
+    /// the registry is repointed to e.g. an 18-decimal Chainlink feed.
+    function testPriceRevertsOnNonEightDecimals(address admin, uint8 wrongDecimals) external {
+        vm.assume(admin != address(0));
+        vm.assume(wrongDecimals != 8);
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        _mockDecimals(mockOracle, wrongDecimals);
+        // Set a non-zero answer so we can prove the decimals check fires
+        // BEFORE the latestAnswer/NonPositivePrice path.
+        vm.mockCall(
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), abi.encode(int256(100e8))
+        );
+
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedOracleDecimals.selector, wrongDecimals, uint8(8)));
+        adapter.price();
+    }
+
+    /// The decimals check happens BEFORE `latestAnswer()` is called — verify
+    /// by mocking `latestAnswer` to revert and confirming the decimals error
+    /// surfaces first (not the latestAnswer revert).
+    function testPriceDecimalsCheckRunsBeforeAnswer(address admin, uint8 wrongDecimals) external {
+        vm.assume(admin != address(0));
+        vm.assume(wrongDecimals != 8);
+
+        address vault = address(uint160(uint256(keccak256("vault"))));
+        address mockOracle = address(uint160(uint256(keccak256("mock.oracle"))));
+
+        OracleRegistry registry = _createRegistry(admin);
+        vm.prank(admin);
+        registry.setOracle(vault, AggregatorV2V3Interface(mockOracle));
+
+        _mockDecimals(mockOracle, wrongDecimals);
+        vm.mockCallRevert(
+            mockOracle, abi.encodeWithSelector(AggregatorV2V3Interface.latestAnswer.selector), "should not reach"
+        );
+
+        MorphoProtocolAdapter adapter = I_DEPLOYER.newMorphoProtocolAdapter(registry, vault, admin);
+
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedOracleDecimals.selector, wrongDecimals, uint8(8)));
         adapter.price();
     }
 
