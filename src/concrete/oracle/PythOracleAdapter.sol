@@ -50,23 +50,30 @@ struct PythOracleAdapterConfig {
 /// Uses conservative pricing (price - confidence interval) per rain.pyth
 /// patterns. Scaling uses LibDecimalFloat for audited precision.
 ///
-/// Price formula: vaultSharePrice = pythPrice * totalAssets / totalSupply
+/// Price formula: vaultSharePrice = (pythPrice - pythConfidence) * totalAssets / totalSupply
+/// — i.e. the conservative price is used. See SPEC §15.2 and
+/// `BasePythOracleAdapter._conservativePriceFloat`.
 contract PythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initializable {
     /// @dev The Pyth price feed ID for the underlying asset.
     bytes32 public priceId;
     /// @dev Maximum acceptable price age in seconds.
     uint256 public maxAge;
 
-    /// @dev Emitted when the oracle is initialized.
+    /// @notice Emitted when the oracle is initialized.
+    /// @param sender The caller that initialized the proxy.
+    /// @param config The initialization configuration.
     event PythOracleAdapterInitialized(address indexed sender, PythOracleAdapterConfig config);
 
     constructor() {
         _disableInitializers();
     }
 
-    /// As per ICloneableV2, this overload MUST always revert. Documents the
-    /// signature of the initialize function.
-    /// @param config The initialization configuration.
+    /// @notice Documents the typed signature of the initialize function. Per
+    /// ICloneableV2 this overload MUST always revert; callers should use the
+    /// `bytes calldata` overload instead.
+    /// @dev Always reverts with `InitializeSignatureFn`.
+    /// @param config The initialization configuration. Ignored.
+    /// @return Never returns; included only for the function signature.
     function initialize(PythOracleAdapterConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();

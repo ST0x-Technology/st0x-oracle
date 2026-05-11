@@ -49,6 +49,7 @@ struct FeedConfig {
 /// @notice Configuration for MultiPythOracleAdapter initialization.
 /// @param vault The ERC-4626 vault address this oracle prices shares for.
 /// @param feeds Ordered list of feed configurations (tried in order).
+/// MUTABLE post-init via admin's `setFeeds` / `setMaxAge`.
 /// @param admin The admin address for governance.
 /// @param pauseConfig Corporate-action auto-pause config — see SPEC § 16.
 /// All-zero is the legacy/manual-only mode; `corporateActionsVault =
@@ -66,30 +67,47 @@ struct MultiPythOracleAdapterConfig {
 /// near 24/7 coverage for equities with separate feeds for regular, pre-market,
 /// post-market, and overnight sessions.
 ///
+/// **Mutability divergence from PythOracleAdapter.** Unlike the single-feed
+/// sibling, the feed list and per-feed maxAge are mutable post-init under
+/// admin (`setFeeds`, `setMaxAge`) so per-session feed retuning does not
+/// require a new proxy + registry switch. Vault, admin, and corporate-action
+/// pause config remain immutable per SPEC §16.2 and the BeaconSetDeployer
+/// pattern.
+///
 /// Same external interface as PythOracleAdapter (AggregatorV2V3Interface).
 /// Each feed has its own maxAge since update frequency varies by session.
 ///
-/// Price formula: vaultSharePrice = pythPrice * totalAssets / totalSupply
+/// Price formula: vaultSharePrice = (pythPrice - pythConfidence) * totalAssets / totalSupply
+/// — i.e. the conservative price is used. See SPEC §15.2 and
+/// `BasePythOracleAdapter._conservativePriceFloat`.
 contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initializable {
     /// @dev Number of configured feeds.
     uint256 public feedCount;
     /// @dev Feed configurations indexed by position.
     mapping(uint256 => FeedConfig) internal _feeds;
 
-    /// @dev Emitted when the oracle is initialized.
+    /// @notice Emitted when the oracle is initialized.
+    /// @param sender The caller that initialized the proxy.
+    /// @param config The initialization configuration.
     event MultiPythOracleAdapterInitialized(address indexed sender, MultiPythOracleAdapterConfig config);
-    /// @dev Emitted when feeds are updated.
+    /// @notice Emitted when feeds are updated.
+    /// @param feeds The new ordered feed configurations.
     event FeedsSet(FeedConfig[] feeds);
-    /// @dev Emitted when a single feed's maxAge is updated.
+    /// @notice Emitted when a single feed's maxAge is updated.
+    /// @param index The feed index whose maxAge changed.
+    /// @param maxAge The new maxAge value in seconds.
     event FeedMaxAgeSet(uint256 index, uint256 maxAge);
 
     constructor() {
         _disableInitializers();
     }
 
-    /// As per ICloneableV2, this overload MUST always revert. Documents the
-    /// signature of the initialize function.
-    /// @param config The initialization configuration.
+    /// @notice Documents the typed signature of the initialize function. Per
+    /// ICloneableV2 this overload MUST always revert; callers should use the
+    /// `bytes calldata` overload instead.
+    /// @dev Always reverts with `InitializeSignatureFn`.
+    /// @param config The initialization configuration. Ignored.
+    /// @return Never returns; included only for the function signature.
     function initialize(MultiPythOracleAdapterConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();

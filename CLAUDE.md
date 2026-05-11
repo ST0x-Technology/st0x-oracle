@@ -26,6 +26,21 @@ forge fmt            # Format Solidity code
 forge fmt --check    # Check formatting without modifying
 ```
 
+## Pre-Push Gate (mandatory)
+
+Before every push, mirror CI locally — never use CI to surface issues.
+The three nix tasks below must all pass:
+
+```bash
+nix develop -c rainix-sol-test     # unit + fuzz + fork tests
+nix develop -c rainix-sol-static   # slither static analysis
+nix develop -c rainix-sol-legal    # REUSE license compliance
+```
+
+`forge test` alone is NOT a sufficient gate; slither and REUSE are
+regularly the failing step. See `AGENTS.md` for the full deployment and
+slither-suppression conventions.
+
 ## Architecture (Three Layers)
 
 **Oracle Layer** — canonical price source per vault, implements `AggregatorV2V3Interface` (8 decimals):
@@ -97,13 +112,21 @@ src/
 
 ## Security Rules
 
-- Pyth prices can be negative — always revert on `answer <= 0`
-- Scaling math must not overflow — use checked arithmetic
-- `maxAge` must be enforced on every price read
-- Vault with zero total supply must revert (no valid price)
-- Pause mechanism for corporate actions (splits, dividends)
-- All admin roles held by founder multisig, no role separation
-- Protocol adapters revert with `OracleNotFound` if vault not registered in registry
+- Pyth prices can be negative — always revert on `answer <= 0`.
+- Pyth confidence intervals must be subtracted on the `latestAnswer` path
+  (conservative pricing). See `BasePythOracleAdapter._conservativePriceFloat`.
+  Do not bypass.
+- Scaling math is in Rain `Float` arithmetic; overflow / lossy conversion
+  back to `int256` must revert (`ZeroVaultSharePrice`, range guards).
+- `maxAge` must be enforced on every price read.
+- Vault with zero total supply must revert (`ZeroVaultSupply`).
+- Two pause mechanisms, both enforced on every price read:
+  1. **Manual** admin flag → `OraclePausedManual()`.
+  2. **Auto** corporate-action window read from `ICorporateActionsV1` on
+     the configured corporateActionsVault → `OraclePausedCorporateAction(uint64 effectiveTime)`.
+  See SPEC § 16 and `src/lib/LibCorporateActionsPause.sol`.
+- All admin roles held by founder multisig; no role separation.
+- Protocol adapters revert with `OracleNotFound` if vault not registered in registry.
 
 ## Conventions
 

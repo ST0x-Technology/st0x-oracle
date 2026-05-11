@@ -39,10 +39,16 @@ nix develop -c rainix-sol-legal
 
 If any of these fail locally, CI will fail too. Do NOT push without running all three.
 
-At minimum:
-1. `forge fmt` — auto-format all Solidity files
-2. `forge build` — compile everything
-3. `forge test` — run unit + fuzz tests
+During iteration (not as a substitute for the three CI tasks above), the
+inner-loop commands are:
+
+1. `forge fmt` — auto-format Solidity sources
+2. `forge build` — compile
+3. `forge test` — unit + fuzz tests
+
+These are NOT a sufficient pre-push gate. `rainix-sol-test`,
+`rainix-sol-static`, and `rainix-sol-legal` are mandatory before every push;
+CI runs the same checks and will reject otherwise.
 
 For fork tests (ProdFork.t.sol):
 ```bash
@@ -130,10 +136,16 @@ Workflow secrets follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
 - **PassthroughProtocolAdapter** — passes oracle price through unchanged (AggregatorV3Interface)
 - **OracleRegistry** — maps vault → oracle adapter. Protocol adapters look up their oracle from the registry at runtime.
 - **OracleUnifiedDeployer** — deploys all three adapters for a vault in one call. Takes registry address as parameter.
-- **Beacon pattern** — all contracts use UpgradeableBeacon proxies. `BEACON_INITIAL_OWNER` is `rainlang.eth` (`0x8E4bdeec7CEB9570D440676345dA1dCe10329f5b`).
+- **Beacon pattern** — all contracts use UpgradeableBeacon proxies.
+  `BEACON_INITIAL_OWNER` is `rainlang.eth`; see
+  `src/lib/LibProdDeploy.sol#BEACON_INITIAL_OWNER` for the authoritative
+  address.
 
 ## Key Constants
 
-- `BEACON_INITIAL_OWNER`: `0x8E4bdeec7CEB9570D440676345dA1dCe10329f5b` (rainlang.eth)
+- `BEACON_INITIAL_OWNER`: see
+  `src/lib/LibProdDeploy.sol#BEACON_INITIAL_OWNER` (rainlang.eth). The
+  Solidity constant is the single source of truth; do not duplicate the
+  literal address into other docs.
 - All deployer addresses are in `src/lib/LibProdDeploy.sol`
 - All oracle instance addresses are in `test/src/concrete/ProdFork.t.sol` `LibProdOracles`
