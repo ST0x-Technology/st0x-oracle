@@ -187,6 +187,61 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, effectiveTime);
     }
 
+    // -------- Defensive boundary tests (audit #72) --------
+
+    /// Per the library's comment, `pendingEffective > block.timestamp` is
+    /// guaranteed by the PENDING completion filter on the upstream vault, not
+    /// re-validated here. If a misbehaving upstream returned a pending action
+    /// with `effectiveTime <= now`, the pre-window predicate `now + before >=
+    /// pendingEffective` is trivially satisfied for any non-negative
+    /// `pauseTimeBefore`, so the oracle would pause. Pin this behaviour so a
+    /// future refactor that adds a local guard surfaces as a deliberate test
+    /// update. Closes audit #72 (a).
+    function testPendingEffectiveAtNowStillPausesDefensive() external {
+        // Upstream invariant violation: PENDING action with effective time at
+        // exactly `now`.
+        uint64 effectiveTime = uint64(block.timestamp);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        // Current behaviour: pauses because `now + BEFORE >= now`.
+        assertEq(paused, true, "current lib pauses when upstream returns pendingEffective <= now");
+        assertEq(ts, effectiveTime);
+    }
+
+    /// `pauseTimeAfter == type(uint64).max` must not overflow the post-window
+    /// addition `completedEffective + pauseTimeAfter`. The addition is in
+    /// uint256 space so it cannot overflow for any realistic timestamp; this
+    /// test pins that guarantee against accidental narrowing to uint64. Closes
+    /// audit #72 (b).
+    function testMaxPauseTimeAfterDoesNotOverflow() external {
+        uint64 effectiveTime = uint64(block.timestamp - 1);
+        mock.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, type(uint64).max);
+        assertEq(paused, true, "max pauseTimeAfter must not overflow");
+        assertEq(ts, effectiveTime);
+    }
+
+    /// `pauseTimeBefore == 0` collapses the pre-window to a single instant:
+    /// the predicate `block.timestamp + 0 >= pendingEffective` is true iff
+    /// `pendingEffective <= now`. When the upstream honours the PENDING
+    /// invariant (`pendingEffective > now`), the predicate is false and the
+    /// oracle does not pause — already covered by
+    /// `testZeroBeforeWithExactPendingReturnsFalse`. The symmetric boundary,
+    /// where `pendingEffective` equals exactly `now`, is the upstream-
+    /// invariant edge: lib trusts the filter, but if the filter ever
+    /// included an `effectiveTime == now` action as PENDING, the oracle
+    /// would pause. Closes audit #72 (c).
+    function testZeroBeforeWithPendingAtNowPauses() external {
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp));
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 0, AFTER);
+        // `now + 0 >= now` is true, so the pre-window matches at the instant.
+        assertEq(paused, true);
+        assertEq(ts, uint64(block.timestamp));
+    }
+
     /// SPEC §16.3: `effectiveTime` is zero iff `paused` is false. Fuzz the
     /// presence and timing of pending and completed actions and assert the
     /// invariant holds.

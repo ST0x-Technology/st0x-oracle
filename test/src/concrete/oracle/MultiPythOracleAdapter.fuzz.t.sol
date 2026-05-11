@@ -186,6 +186,43 @@ contract MultiPythOracleAdapterFuzzTest is Test {
         }
     }
 
+    /// @notice Exercise the deepest cascade: configure the adapter at exactly
+    /// `MAX_FEEDS = 8`, mark the first seven feeds stale, and verify the
+    /// adapter returns the last feed's price. Closes audit #63 (positive
+    /// boundary at MAX_FEEDS with cascade depth = MAX_FEEDS).
+    function testCascadeAtMaxFeedsAllStaleExceptLast() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.cascade.max"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        uint256 maxFeeds = 8;
+        FeedConfig[] memory feeds = new FeedConfig[](maxFeeds);
+        bytes32[] memory feedIds = new bytes32[](maxFeeds);
+        for (uint256 i = 0; i < maxFeeds; i++) {
+            feedIds[i] = keccak256(abi.encode("max-cascade", i));
+            feeds[i] = FeedConfig({priceId: feedIds[i], maxAge: 300});
+        }
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+        assertEq(adapter.feedCount(), maxFeeds);
+
+        // First 7 feeds stale; last fresh.
+        for (uint256 i = 0; i < maxFeeds - 1; i++) {
+            _mockStaleFeed(feedIds[i], 300);
+        }
+        int64 lastPrice = 12345;
+        _mockFreshFeed(feedIds[maxFeeds - 1], 300, lastPrice, 1);
+
+        // Conservative price = lastPrice - conf = 12344, at expo -8.
+        // _vaultSharePrice scales that through the 1:1 vault ratio to 8
+        // decimals, so the answer equals conservativePrice.
+        int256 answer = adapter.latestAnswer();
+        assertEq(answer, int256(int64(lastPrice)) - 1, "Deepest cascade must surface last feed's conservative price");
+    }
+
     /// @notice A non-stale Pyth revert (e.g. `PriceFeedNotFound` for a
     /// misconfigured priceId) must propagate, not be absorbed into the
     /// `AllFeedsStale` cascade. Pre-fix the bare `catch` swallowed all

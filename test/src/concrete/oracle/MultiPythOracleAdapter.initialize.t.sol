@@ -150,6 +150,30 @@ contract MultiPythOracleAdapterInitializeTest is Test {
         );
     }
 
+    /// `feeds.length == MAX_FEEDS` is the inclusive upper bound of the
+    /// constructor guard (`> MAX_FEEDS` reverts). Exercising it as a positive
+    /// boundary catches an off-by-one regression (`>=`) that would otherwise
+    /// silently reject the largest valid config. Closes audit #63.
+    function testInitializeMaxFeedsBoundary() external {
+        address mockVault = address(uint160(uint256(keccak256("vault.multi.maxfeeds"))));
+        FeedConfig[] memory feeds = new FeedConfig[](MAX_FEEDS);
+        for (uint256 i = 0; i < MAX_FEEDS; i++) {
+            feeds[i] = FeedConfig({priceId: bytes32(uint256(i + 1)), maxAge: 300});
+        }
+
+        // Should NOT revert; MAX_FEEDS is the inclusive upper bound.
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({
+                vault: mockVault, feeds: feeds, admin: address(this), pauseConfig: _emptyPauseConfig()
+            })
+        );
+        assertEq(adapter.feedCount(), MAX_FEEDS);
+        for (uint256 i = 0; i < MAX_FEEDS; i++) {
+            assertEq(adapter.getFeed(i).priceId, bytes32(uint256(i + 1)));
+            assertEq(adapter.getFeed(i).maxAge, 300);
+        }
+    }
+
     /// Test initialization reverts with zero priceId in a feed.
     function testInitializeRevertsZeroPriceId() external {
         address mockVault = address(uint160(uint256(keccak256("vault.multi.zeropriceid"))));
