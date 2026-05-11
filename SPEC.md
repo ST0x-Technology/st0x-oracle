@@ -539,9 +539,13 @@ OracleUnifiedDeployer.newOracleAndProtocolAdapters(
     vault,          // Wrapped AAPL ERC-4626 vault address
     priceId,        // AAPL/USD feed ID (from LibPyth constants)
     60,             // maxAge in seconds
-    registry        // The canonical OracleRegistry
+    registry,       // The canonical OracleRegistry
+    pauseConfig     // Corporate-action auto-pause config — see § 16.
+                    // Set corporateActionsVault = address(0) to disable.
 );
-// Returns oracleAdapter, morphoAdapter, passthroughAdapter addresses
+// The function declares no return values; the deployed addresses
+// (oracleAdapter, morphoAdapter, passthroughAdapter) are emitted via
+// the `Deployment` event and must be recovered from logs.
 
 // Step 2: Register oracle in registry (admin action, separate tx)
 registry.setOracle(vault, oracleAdapter);

@@ -27,7 +27,11 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 /// otherwise calls route to the old sub-deployer until this bytecode is
 /// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract OracleUnifiedDeployer {
-    /// Emitted when a new oracle and protocol adapter set is deployed.
+    /// @notice Emitted when a new oracle and protocol adapter set is deployed.
+    /// @param sender The caller that triggered the deployment.
+    /// @param pythOracleAdapter The address of the new PythOracleAdapter proxy.
+    /// @param morphoProtocolAdapter The address of the new MorphoProtocolAdapter proxy.
+    /// @param passthroughProtocolAdapter The address of the new PassthroughProtocolAdapter proxy.
     event Deployment(
         address sender, address pythOracleAdapter, address morphoProtocolAdapter, address passthroughProtocolAdapter
     );
@@ -38,8 +42,10 @@ contract OracleUnifiedDeployer {
     /// @param maxAge Maximum acceptable price age in seconds.
     /// @param registry The oracle registry. Admin must call registry.setOracle() separately.
     /// @param pauseConfig Corporate-action auto-pause configuration — see
-    /// SPEC § 16. Pass an all-zero struct to disable auto-pause (legacy /
-    /// manual-only mode).
+    /// SPEC § 16. To disable auto-pause entirely, set
+    /// `pauseConfig.corporateActionsVault = address(0)` (other fields ignored).
+    /// Setting only `actionTypeMask = 0` while keeping a non-zero
+    /// corporateActionsVault costs gas on every read but never pauses.
     // slither-disable-next-line reentrancy-events
     function newOracleAndProtocolAdapters(
         address vault,

@@ -22,7 +22,10 @@ error ZeroVault();
 /// @dev Error raised when the price is not positive.
 error NonPositivePrice();
 
-/// @dev Error raised when no oracle is found for the vault in the registry.
+/// @dev Error raised when the currently-pointed registry has no entry for
+/// `vault`. This includes both the canonical-registry-never-registered case
+/// AND the `setRegistry`-pointed-elsewhere case (where the admin swapped
+/// the registry to one that doesn't know about this vault).
 error OracleNotFound();
 
 /// @dev Error raised when the registered oracle reports decimals other than 8.
@@ -32,8 +35,11 @@ error OracleNotFound();
 /// Morpho borrow against a 10^N×-wrong price.
 error UnexpectedOracleDecimals(uint8 actual, uint8 expected);
 
-/// @dev Morpho Blue's IOracle interface.
+/// @notice Morpho Blue's IOracle interface — the minimum surface a Morpho
+/// market expects from its oracle.
 interface IOracle {
+    /// @notice Returns the price scaled to 1e36 as required by Morpho Blue.
+    /// @return The price as uint256 scaled to 1e36.
     function price() external view returns (uint256);
 }
 
@@ -62,20 +68,29 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
     /// @dev Admin address for governance actions.
     address public admin;
 
-    /// @dev Emitted when the adapter is initialized.
+    /// @notice Emitted when the adapter is initialized.
+    /// @param sender The caller that initialized the proxy.
+    /// @param config The initialization configuration.
     event MorphoProtocolAdapterInitialized(address indexed sender, MorphoProtocolAdapterConfig config);
-    /// @dev Emitted when the registry reference is updated.
+    /// @notice Emitted when the registry reference is updated.
+    /// @param oldRegistry The previous registry address.
+    /// @param newRegistry The new registry address.
     event RegistrySet(address indexed oldRegistry, address indexed newRegistry);
-    /// @dev Emitted when the admin is changed.
+    /// @notice Emitted when the admin is changed.
+    /// @param oldAdmin The previous admin address.
+    /// @param newAdmin The new admin address.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
     }
 
-    /// As per ICloneableV2, this overload MUST always revert. Documents the
-    /// signature of the initialize function.
-    /// @param config The initialization configuration.
+    /// @notice Documents the typed signature of the initialize function. Per
+    /// ICloneableV2 this overload MUST always revert; callers should use the
+    /// `bytes calldata` overload instead.
+    /// @dev Always reverts with `InitializeSignatureFn`.
+    /// @param config The initialization configuration. Ignored.
+    /// @return Never returns; included only for the function signature.
     function initialize(MorphoProtocolAdapterConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();
@@ -104,6 +119,7 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
     }
 
     /// @notice Update the registry reference. Admin only.
+    /// @param newRegistry The new oracle registry address.
     function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
         if (address(newRegistry) == address(0)) revert ZeroRegistry();
         emit RegistrySet(address(registry), address(newRegistry));
@@ -111,6 +127,12 @@ contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
     }
 
     /// @notice Update the admin address. Admin only.
+    /// @dev One-step transfer — the new admin takes effect immediately. A
+    /// wrong `newAdmin` will lock the adapter's governance permanently:
+    /// `setRegistry` will become uncallable by the intended principal. The
+    /// only recovery is `OracleRegistry.setOracle(vault, newOracle)` to
+    /// redirect downstream protocols to a different `MorphoProtocolAdapter`
+    /// proxy. Use a multisig that cannot be misaddressed.
     /// @param newAdmin The new admin address.
     function setAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAdmin();

@@ -22,7 +22,9 @@ error ZeroOracle();
 error ArrayLengthMismatch();
 
 /// @title OracleRegistryConfig
-/// @notice Configuration for OracleRegistry initialization.
+/// @notice Single-field config struct kept to mirror the BeaconSetDeployer
+/// pattern used by sibling adapters; future fields can be added without an
+/// ABI break for the initializer.
 /// @param admin The admin address.
 struct OracleRegistryConfig {
     address admin;
@@ -39,20 +41,30 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @dev Mapping from vault address to oracle adapter.
     mapping(address vault => AggregatorV2V3Interface oracle) internal _oracles;
 
-    /// @dev Emitted when the registry is initialized.
+    /// @notice Emitted when the registry is initialized.
+    /// @param sender The caller that initialized the proxy.
+    /// @param config The initialization configuration.
     event OracleRegistryInitialized(address indexed sender, OracleRegistryConfig config);
-    /// @dev Emitted when an oracle is set for a vault.
+    /// @notice Emitted when an oracle is set for a vault.
+    /// @param vault The vault address.
+    /// @param oldOracle The previous oracle adapter address (zero if none).
+    /// @param newOracle The new oracle adapter address.
     event OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle);
-    /// @dev Emitted when the admin is changed.
+    /// @notice Emitted when the admin is changed.
+    /// @param oldAdmin The previous admin address.
+    /// @param newAdmin The new admin address.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
 
     constructor() {
         _disableInitializers();
     }
 
-    /// As per ICloneableV2, this overload MUST always revert. Documents the
-    /// signature of the initialize function.
-    /// @param config The initialization configuration.
+    /// @notice Documents the typed signature of the initialize function. Per
+    /// ICloneableV2 this overload MUST always revert; callers should use the
+    /// `bytes calldata` overload instead.
+    /// @dev Always reverts with `InitializeSignatureFn`.
+    /// @param config The initialization configuration. Ignored.
+    /// @return Never returns; included only for the function signature.
     function initialize(OracleRegistryConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();
@@ -77,6 +89,12 @@ contract OracleRegistry is ICloneableV2, Initializable {
     }
 
     /// @notice Update the admin address. Admin only.
+    /// @dev One-step transfer — the new admin takes effect immediately. A
+    /// wrong `newAdmin` will lock the registry's governance permanently:
+    /// `setOracle` / `setOracleBulk` will become uncallable. There is no
+    /// in-band recovery — downstream protocol adapters that look up via this
+    /// registry will be stuck on their current oracle. Use a multisig that
+    /// cannot be misaddressed.
     /// @param newAdmin The new admin address.
     function setAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAdmin();

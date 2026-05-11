@@ -13,7 +13,8 @@ import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 error ZeroImplementation();
 
 /// @dev Error raised when a zero address is provided for the initial beacon
-/// owner.
+/// owner. Only constrains construction-time ownership; subsequent owner
+/// rotations are the beacon's concern.
 error ZeroBeaconOwner();
 
 /// @dev Error raised when initialization of the protocol adapter fails.
@@ -30,8 +31,11 @@ struct MorphoProtocolAdapterBeaconSetDeployerConfig {
 }
 
 /// @title MorphoProtocolAdapterBeaconSetDeployer
-/// @notice Deploys and manages a beacon set for MorphoProtocolAdapter
-/// contracts. Used for Morpho Blue protocol integration.
+/// @notice Deploys a beacon and the proxies that share it for
+/// MorphoProtocolAdapter contracts. Beacon management (upgrades, ownership
+/// transfer) is performed externally by the beacon owner; this contract
+/// retains no authority over the beacon after construction. Used for Morpho
+/// Blue protocol integration.
 contract MorphoProtocolAdapterBeaconSetDeployer {
     /// Emitted when a new MorphoProtocolAdapter is deployed.
     event Deployment(address sender, address morphoProtocolAdapter);
@@ -54,7 +58,12 @@ contract MorphoProtocolAdapterBeaconSetDeployer {
     /// @notice Deploys and initializes a new MorphoProtocolAdapter proxy.
     /// @param registry The oracle registry address.
     /// @param vault The vault address this adapter serves.
-    /// @param admin The admin address.
+    /// @param admin Sole governance principal of the deployed adapter:
+    /// can call `setRegistry(newRegistry)` to swap the registry pointer
+    /// and `setAdmin(newAdmin)` to rotate this role. Distinct from the
+    /// `OracleRegistry` admin, which is not affected by this argument.
+    /// One-step transfer model — pass an address that cannot be
+    /// misaddressed (typically a multisig).
     /// @return adapter The deployed MorphoProtocolAdapter proxy.
     // slither-disable-next-line reentrancy-events
     function newMorphoProtocolAdapter(OracleRegistry registry, address vault, address admin)

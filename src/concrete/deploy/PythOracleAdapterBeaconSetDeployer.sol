@@ -12,7 +12,8 @@ import {PythOracleAdapter, PythOracleAdapterConfig} from "src/concrete/oracle/Py
 error ZeroImplementation();
 
 /// @dev Error raised when a zero address is provided for the initial beacon
-/// owner.
+/// owner. Only constrains construction-time ownership; subsequent owner
+/// rotations are the beacon's concern.
 error ZeroBeaconOwner();
 
 /// @dev Error raised when initialization of the oracle adapter fails.
@@ -29,8 +30,11 @@ struct PythOracleAdapterBeaconSetDeployerConfig {
 }
 
 /// @title PythOracleAdapterBeaconSetDeployer
-/// @notice Deploys and manages a beacon set for PythOracleAdapter contracts.
-/// Follows the st0x.deploy BeaconSetDeployer pattern.
+/// @notice Deploys a beacon and the proxies that share it for
+/// PythOracleAdapter contracts. Beacon management (upgrades, ownership
+/// transfer) is performed externally by the beacon owner; this contract
+/// retains no authority over the beacon after construction. Follows the
+/// st0x.deploy BeaconSetDeployer pattern.
 contract PythOracleAdapterBeaconSetDeployer {
     /// Emitted when a new PythOracleAdapter is deployed.
     event Deployment(address sender, address pythOracleAdapter);
