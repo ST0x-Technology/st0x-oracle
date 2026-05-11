@@ -5,7 +5,7 @@ pragma solidity =0.8.25;
 import {PythOracleAdapterTest} from "test/abstract/PythOracleAdapterTest.sol";
 import {OraclePausedManual, OnlyAdmin, BasePythOracleAdapter} from "src/abstract/BasePythOracleAdapter.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 
 contract PythOracleAdapterSetPausedTest is PythOracleAdapterTest {
     /// Test that setPaused works for admin.

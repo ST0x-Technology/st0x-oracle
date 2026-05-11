@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test, Vm} from "forge-std-1.16.1/src/Test.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
@@ -26,10 +26,6 @@ library LibProdOracles {
     /// Deployed to Base 2026-02-13.
     address constant WTCOIN_PASSTHROUGH = 0x2e73ef522E9369576bD5fC8f25Bf2f0E4cC6b57E;
 
-    /// OracleRegistry instance.
-    /// Deployed to Base 2026-02-13.
-    address constant ORACLE_REGISTRY = 0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156;
-
     /// wtCOIN ERC-4626 vault.
     address constant WTCOIN_VAULT = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204;
 
@@ -46,12 +42,16 @@ library LibProdOracles {
 ///
 /// To run: forge test --match-contract ProdForkTest --fork-url $RPC_URL_BASE_FORK
 ///
-/// NOTE: Tests will be skipped (pass vacuously) until oracle addresses are
-/// set in LibProdOracles. This allows the PR to merge before deployment.
+/// Tests in this contract use `vm.skip(true)` rather than silent `return;` when
+/// the fork RPC env var (`RPC_URL_BASE_FORK`) is missing or a required prod
+/// address is unset / has no code on the fork. This makes missing fork
+/// availability surface as SKIPPED in `forge test` output (and in CI), rather
+/// than as a vacuously-passing test with zero assertions.
 contract ProdForkTest is Test {
     /// @dev Skip modifier for oracle-only tests.
     modifier onlyIfOracleDeployed() {
         if (LibProdOracles.WTCOIN_ORACLE == address(0)) {
+            vm.skip(true);
             return;
         }
         _;
@@ -60,6 +60,7 @@ contract ProdForkTest is Test {
     /// @dev Skip modifier for Morpho adapter tests.
     modifier onlyIfMorphoDeployed() {
         if (LibProdOracles.WTCOIN_MORPHO == address(0)) {
+            vm.skip(true);
             return;
         }
         _;
@@ -68,6 +69,7 @@ contract ProdForkTest is Test {
     /// @dev Skip modifier for Passthrough adapter tests.
     modifier onlyIfPassthroughDeployed() {
         if (LibProdOracles.WTCOIN_PASSTHROUGH == address(0)) {
+            vm.skip(true);
             return;
         }
         _;
@@ -75,7 +77,8 @@ contract ProdForkTest is Test {
 
     /// @dev Skip modifier for registry tests.
     modifier onlyIfRegistryDeployed() {
-        if (LibProdOracles.ORACLE_REGISTRY == address(0)) {
+        if (LibProdDeploy.ORACLE_REGISTRY == address(0)) {
+            vm.skip(true);
             return;
         }
         _;
@@ -87,6 +90,7 @@ contract ProdForkTest is Test {
             LibProdOracles.WTCOIN_ORACLE == address(0) || LibProdOracles.WTCOIN_MORPHO == address(0)
                 || LibProdOracles.WTCOIN_PASSTHROUGH == address(0)
         ) {
+            vm.skip(true);
             return;
         }
         _;
@@ -282,8 +286,8 @@ contract ProdForkTest is Test {
     function testProdRegistryHasWtcoinOracle() external onlyIfRegistryDeployed onlyIfOracleDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
-        AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
+        AggregatorV2V3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
         assertEq(address(oracle), LibProdOracles.WTCOIN_ORACLE, "Registry should map wtCOIN vault to oracle");
     }
 
@@ -291,7 +295,7 @@ contract ProdForkTest is Test {
     function testProdRegistrySetOracle() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
 
         // Set a dummy oracle for a dummy vault
@@ -299,7 +303,7 @@ contract ProdForkTest is Test {
         address dummyOracle = address(0x2222222222222222222222222222222222222222);
 
         vm.prank(registryAdmin);
-        registry.setOracle(dummyVault, AggregatorV3Interface(dummyOracle));
+        registry.setOracle(dummyVault, AggregatorV2V3Interface(dummyOracle));
 
         assertEq(address(registry.getOracle(dummyVault)), dummyOracle, "Oracle should be set");
     }
@@ -308,7 +312,7 @@ contract ProdForkTest is Test {
     function testProdRegistrySetOracleBulk() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
 
         address[] memory vaults = new address[](3);
@@ -316,10 +320,10 @@ contract ProdForkTest is Test {
         vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
         vaults[2] = address(0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC);
 
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](3);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
-        oracles[1] = AggregatorV3Interface(address(0x2222222222222222222222222222222222222222));
-        oracles[2] = AggregatorV3Interface(address(0x3333333333333333333333333333333333333333));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](3);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
+        oracles[1] = AggregatorV2V3Interface(address(0x2222222222222222222222222222222222222222));
+        oracles[2] = AggregatorV2V3Interface(address(0x3333333333333333333333333333333333333333));
 
         vm.prank(registryAdmin);
         registry.setOracleBulk(vaults, oracles);
@@ -333,13 +337,13 @@ contract ProdForkTest is Test {
     function testProdRegistryOnlyAdminCanSetOracle() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
 
         vm.prank(address(0xdead));
         vm.expectRevert();
         registry.setOracle(
             address(0x1111111111111111111111111111111111111111),
-            AggregatorV3Interface(address(0x2222222222222222222222222222222222222222))
+            AggregatorV2V3Interface(address(0x2222222222222222222222222222222222222222))
         );
     }
 
@@ -347,12 +351,12 @@ contract ProdForkTest is Test {
     function testProdRegistryOnlyAdminCanSetOracleBulk() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
 
         address[] memory vaults = new address[](1);
         vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](1);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(address(0xdead));
         vm.expectRevert();
@@ -363,14 +367,14 @@ contract ProdForkTest is Test {
     function testProdRegistryBulkMismatchedLengthsReverts() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
 
         address[] memory vaults = new address[](2);
         vaults[0] = address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa);
         vaults[1] = address(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB);
-        AggregatorV3Interface[] memory oracles = new AggregatorV3Interface[](1);
-        oracles[0] = AggregatorV3Interface(address(0x1111111111111111111111111111111111111111));
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](1);
+        oracles[0] = AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111));
 
         vm.prank(registryAdmin);
         vm.expectRevert();
@@ -381,31 +385,31 @@ contract ProdForkTest is Test {
     function testProdRegistrySetOracleZeroVaultReverts() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
 
         vm.prank(registryAdmin);
         vm.expectRevert();
-        registry.setOracle(address(0), AggregatorV3Interface(address(0x1111111111111111111111111111111111111111)));
+        registry.setOracle(address(0), AggregatorV2V3Interface(address(0x1111111111111111111111111111111111111111)));
     }
 
     /// @notice Setting zero oracle reverts.
     function testProdRegistrySetOracleZeroOracleReverts() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
 
         vm.prank(registryAdmin);
         vm.expectRevert();
-        registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV3Interface(address(0)));
+        registry.setOracle(address(0x1111111111111111111111111111111111111111), AggregatorV2V3Interface(address(0)));
     }
 
     /// @notice Admin can transfer admin role.
     function testProdRegistrySetAdmin() external onlyIfRegistryDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         address registryAdmin = registry.admin();
         address newAdmin = address(0x4444444444444444444444444444444444444444);
 
@@ -417,7 +421,7 @@ contract ProdForkTest is Test {
         vm.prank(newAdmin);
         registry.setOracle(
             address(0x5555555555555555555555555555555555555555),
-            AggregatorV3Interface(address(0x6666666666666666666666666666666666666666))
+            AggregatorV2V3Interface(address(0x6666666666666666666666666666666666666666))
         );
 
         // Old admin cannot
@@ -425,7 +429,7 @@ contract ProdForkTest is Test {
         vm.expectRevert();
         registry.setOracle(
             address(0x7777777777777777777777777777777777777777),
-            AggregatorV3Interface(address(0x8888888888888888888888888888888888888888))
+            AggregatorV2V3Interface(address(0x8888888888888888888888888888888888888888))
         );
     }
 
@@ -433,7 +437,7 @@ contract ProdForkTest is Test {
     function testProdRegistryUpdatePropagates() external onlyIfRegistryDeployed onlyIfAllDeployed {
         _forkBase();
 
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
+        OracleRegistry registry = OracleRegistry(LibProdDeploy.ORACLE_REGISTRY);
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MORPHO);
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_PASSTHROUGH);
 
@@ -448,7 +452,7 @@ contract ProdForkTest is Test {
         address dummyOracle = address(0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF);
 
         vm.prank(registryAdmin);
-        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(dummyOracle));
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV2V3Interface(dummyOracle));
 
         // Adapters now point to dummy — calls should revert
         vm.expectRevert();
@@ -459,7 +463,7 @@ contract ProdForkTest is Test {
 
         // Restore original oracle
         vm.prank(registryAdmin);
-        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV3Interface(LibProdOracles.WTCOIN_ORACLE));
+        registry.setOracle(LibProdOracles.WTCOIN_VAULT, AggregatorV2V3Interface(LibProdOracles.WTCOIN_ORACLE));
 
         // Should work again
         uint256 morphoPriceAfter = morpho.price();

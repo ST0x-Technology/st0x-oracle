@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
-import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
+import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 
 /// @dev Error raised when the caller is not the admin.
 error OnlyAdmin();
@@ -37,7 +37,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @dev Admin address for governance actions.
     address public admin;
     /// @dev Mapping from vault address to oracle adapter.
-    mapping(address vault => AggregatorV3Interface oracle) internal _oracles;
+    mapping(address vault => AggregatorV2V3Interface oracle) internal _oracles;
 
     /// @dev Emitted when the registry is initialized.
     event OracleRegistryInitialized(address indexed sender, OracleRegistryConfig config);
@@ -87,7 +87,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @notice Set or update the oracle for a vault. Admin only.
     /// @param vault The vault address.
     /// @param oracle The oracle adapter address.
-    function setOracle(address vault, AggregatorV3Interface oracle) external onlyAdmin {
+    function setOracle(address vault, AggregatorV2V3Interface oracle) external onlyAdmin {
         if (vault == address(0)) revert ZeroVault();
         if (address(oracle) == address(0)) revert ZeroOracle();
 
@@ -100,7 +100,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @notice Bulk set or update oracles for multiple vaults. Admin only.
     /// @param vaults The vault addresses.
     /// @param oracles The oracle adapter addresses.
-    function setOracleBulk(address[] calldata vaults, AggregatorV3Interface[] calldata oracles) external onlyAdmin {
+    function setOracleBulk(address[] calldata vaults, AggregatorV2V3Interface[] calldata oracles) external onlyAdmin {
         if (vaults.length != oracles.length) revert ArrayLengthMismatch();
 
         for (uint256 i = 0; i < vaults.length; i++) {
@@ -117,7 +117,7 @@ contract OracleRegistry is ICloneableV2, Initializable {
     /// @notice Get the oracle for a vault.
     /// @param vault The vault address.
     /// @return The oracle adapter, or address(0) if not registered.
-    function getOracle(address vault) external view returns (AggregatorV3Interface) {
+    function getOracle(address vault) external view returns (AggregatorV2V3Interface) {
         return _oracles[vault];
     }
 }
