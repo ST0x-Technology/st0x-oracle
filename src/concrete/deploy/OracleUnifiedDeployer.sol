@@ -19,6 +19,13 @@ import {LibProdDeploy} from "src/lib/LibProdDeploy.sol";
 /// (Morpho, Passthrough for Aave/Compound) for a new vault. The beacon set
 /// deployer addresses are hardcoded to simplify and harden deployment by
 /// providing an audit trail in git of any address modifications.
+/// @dev The sub-deployer addresses (`LibProdDeploy.PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER`,
+/// `LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER`,
+/// `LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER`) are
+/// inlined into this contract's runtime bytecode at compile time.
+/// Redeploying any sub-deployer requires redeploying this contract too —
+/// otherwise calls route to the old sub-deployer until this bytecode is
+/// replaced. There is no on-chain pointer to chase. Tracked at #209.
 contract OracleUnifiedDeployer {
     /// Emitted when a new oracle and protocol adapter set is deployed.
     event Deployment(
