@@ -153,11 +153,15 @@ contract PythOracleAdapterLatestAnswerTest is Test {
         (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
             oracle.latestRoundData();
 
-        assertEq(roundId, 1);
-        assertEq(answeredInRound, 1);
+        // Per audit #43, roundId / answeredInRound now encode the Pyth
+        // publishTime (truncated to uint80) so consumers can diff fresh
+        // rounds. publishTime > 0 on a live feed.
+        assertTrue(roundId > 0, "roundId should be derived from publishTime > 0");
+        assertEq(answeredInRound, roundId, "answeredInRound should equal roundId");
         assertTrue(answer > 0, "Price should be positive");
         assertTrue(startedAt > 0, "startedAt should be nonzero");
         assertEq(startedAt, updatedAt);
+        assertEq(uint256(roundId), startedAt, "roundId should equal startedAt for uint80-fitting publishTimes");
 
         assertEq(answer, oracle.latestAnswer());
     }

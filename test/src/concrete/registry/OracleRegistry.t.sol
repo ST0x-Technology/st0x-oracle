@@ -10,7 +10,9 @@ import {
     ZeroAdmin,
     ZeroVault,
     ZeroOracle,
-    ArrayLengthMismatch
+    ArrayLengthMismatch,
+    BulkLengthExceeded,
+    MAX_BULK_LENGTH
 } from "src/concrete/registry/OracleRegistry.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
@@ -208,6 +210,51 @@ contract OracleRegistrySetOracleBulkTest is OracleRegistryTest {
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(ZeroOracle.selector));
         registry.setOracleBulk(vaults, oracles);
+    }
+
+    /// `setOracleBulk` must revert `BulkLengthExceeded(length, max)` when the
+    /// input arrays are strictly longer than `MAX_BULK_LENGTH`. The cap exists
+    /// so a multisig signer can confirm the bound from the calldata alone —
+    /// the function must surface the cap, not silently consume gas. Closes
+    /// audit #36.
+    function testSetOracleBulkRevertsAboveMaxLength(address admin) external {
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = createRegistry(admin);
+
+        address[] memory vaults = new address[](MAX_BULK_LENGTH + 1);
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](MAX_BULK_LENGTH + 1);
+        for (uint256 i = 0; i < vaults.length; i++) {
+            vaults[i] = address(uint160(i + 1));
+            oracles[i] = AggregatorV2V3Interface(address(uint160(i + 1 + 1e6)));
+        }
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(BulkLengthExceeded.selector, MAX_BULK_LENGTH + 1, MAX_BULK_LENGTH));
+        registry.setOracleBulk(vaults, oracles);
+    }
+
+    /// `setOracleBulk` must succeed at exactly `MAX_BULK_LENGTH` entries — the
+    /// cap is inclusive. Catches an off-by-one regression (`>=`) that would
+    /// silently reject the largest valid bulk call. Closes audit #36.
+    function testSetOracleBulkSucceedsAtExactlyMaxLength(address admin) external {
+        vm.assume(admin != address(0));
+
+        OracleRegistry registry = createRegistry(admin);
+
+        address[] memory vaults = new address[](MAX_BULK_LENGTH);
+        AggregatorV2V3Interface[] memory oracles = new AggregatorV2V3Interface[](MAX_BULK_LENGTH);
+        for (uint256 i = 0; i < vaults.length; i++) {
+            vaults[i] = address(uint160(i + 1));
+            oracles[i] = AggregatorV2V3Interface(address(uint160(i + 1 + 1e6)));
+        }
+
+        vm.prank(admin);
+        registry.setOracleBulk(vaults, oracles);
+
+        for (uint256 i = 0; i < vaults.length; i++) {
+            assertEq(address(registry.getOracle(vaults[i])), address(oracles[i]));
+        }
     }
 
     /// Test successful bulk registration.

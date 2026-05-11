@@ -47,6 +47,12 @@ error VaultSharePriceOverflow(uint256 price8);
 /// source (Pyth's own getPriceAtPublishTime, an indexer, etc.).
 error HistoricalRoundDataUnsupported(uint80 roundId);
 
+/// @dev Error raised when `_setCorporateActionPauseConfig` is called more than
+/// once. Enforces the SPEC §16.2 "immutable after initialize" invariant on the
+/// four corporate-action pause storage slots so subclass discipline cannot
+/// silently break it.
+error CorporateActionConfigAlreadyInitialized();
+
 /// @title CorporateActionPauseConfig
 /// @notice Configuration for the corporate-action-aware auto-pause feature.
 /// All fields are immutable after initialize — see SPEC § 16.2.
@@ -113,6 +119,14 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// pausing. Immutable.
     uint64 public pauseTimeAfter;
 
+    /// @dev True once `_setCorporateActionPauseConfig` has run. The four
+    /// corporate-action pause slots become immutable thereafter — any second
+    /// call reverts with `CorporateActionConfigAlreadyInitialized`. Subclass
+    /// initializers MUST call the helper exactly once. Packed alongside
+    /// `pauseTimeBefore` and `pauseTimeAfter` in the same storage slot
+    /// (8 + 8 + 1 bytes ≪ 32), so the new invariant costs no extra slot.
+    bool internal _corporateActionConfigInitialized;
+
     /// @dev Reserved storage to avoid shifting subclass slot positions when
     /// new base-class state is introduced in future versions. Decrement
     /// `__gap.length` by 1 for each `uint256`-equivalent slot added above.
@@ -125,6 +139,20 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// @param oldAdmin The previous admin address.
     /// @param newAdmin The new admin address.
     event AdminSet(address indexed oldAdmin, address indexed newAdmin);
+    /// @notice Emitted exactly once on initialize to record the corporate-action
+    /// auto-pause config. Lets off-chain indexers reconstruct an oracle's
+    /// full governance state from event logs alone, without per-oracle storage
+    /// reads.
+    /// @param corporateActionsVault Address implementing `ICorporateActionsV1`,
+    /// or `address(0)` to disable auto-pause.
+    /// @param actionTypeMask Bitmap of action types that trigger an auto-pause.
+    /// @param pauseTimeBefore Seconds before a pending action's `effectiveTime`
+    /// to start pausing.
+    /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime`
+    /// to keep pausing.
+    event CorporateActionPauseConfigSet(
+        address corporateActionsVault, uint256 actionTypeMask, uint64 pauseTimeBefore, uint64 pauseTimeAfter
+    );
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -156,6 +184,13 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     }
 
     /// @inheritdoc AggregatorV2V3Interface
+    /// @dev `roundId` and `answeredInRound` are derived from the Pyth
+    /// `publishTime` (truncated to `uint80`) so they advance monotonically per
+    /// Chainlink convention without adding storage. Integrators that diff
+    /// `roundId` between calls to detect a fresh update will see a different
+    /// value whenever Pyth has produced a new price. The truncation collision
+    /// is far in the future — `uint80` covers more seconds than any plausible
+    /// deployment lifetime.
     // slither-disable-next-line pyth-unchecked-confidence
     function latestRoundData()
         external
@@ -168,7 +203,14 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
         PythStructs.Price memory priceData = _getPriceData();
         int256 scaledPrice = _vaultSharePrice(priceData);
 
-        return (1, scaledPrice, uint256(uint64(priceData.publishTime)), uint256(uint64(priceData.publishTime)), 1);
+        uint80 publishRoundId = uint80(uint64(priceData.publishTime));
+        return (
+            publishRoundId,
+            scaledPrice,
+            uint256(uint64(priceData.publishTime)),
+            uint256(uint64(priceData.publishTime)),
+            publishRoundId
+        );
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -225,12 +267,21 @@ abstract contract BasePythOracleAdapter is AggregatorV2V3Interface {
     /// `corporateActionsVault == address(0)` disables auto-pause for the
     /// life of the proxy and is the right choice when an oracle is
     /// redeployed against a vault that hasn't yet been upgraded to expose
-    /// `ICorporateActionsV1`.
+    /// `ICorporateActionsV1`. Reverts with
+    /// `CorporateActionConfigAlreadyInitialized` if called a second time —
+    /// the four corporate-action pause slots are SPEC §16.2 immutable.
+    /// Emits `CorporateActionPauseConfigSet` so off-chain indexers can
+    /// reconstruct the config from logs alone.
     function _setCorporateActionPauseConfig(CorporateActionPauseConfig memory config) internal {
+        if (_corporateActionConfigInitialized) revert CorporateActionConfigAlreadyInitialized();
+        _corporateActionConfigInitialized = true;
         corporateActionsVault = config.corporateActionsVault;
         actionTypeMask = config.actionTypeMask;
         pauseTimeBefore = config.pauseTimeBefore;
         pauseTimeAfter = config.pauseTimeAfter;
+        emit CorporateActionPauseConfigSet(
+            config.corporateActionsVault, config.actionTypeMask, config.pauseTimeBefore, config.pauseTimeAfter
+        );
     }
 
     /// @dev Computes conservative price (price - confidence) as a Rain Float.

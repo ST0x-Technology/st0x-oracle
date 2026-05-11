@@ -114,8 +114,10 @@ contract MorphoProtocolAdapterBeaconSetDeployerConstructTest is Test {
         bool found;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == keccak256("Deployment(address,address)")) {
-                (address sender, address adapterAddr) = abi.decode(logs[i].data, (address, address));
-                assertEq(sender, address(this));
+                // Both fields are indexed — decode from topics, not data.
+                address caller = address(uint160(uint256(logs[i].topics[1])));
+                address adapterAddr = address(uint160(uint256(logs[i].topics[2])));
+                assertEq(caller, address(this));
                 assertEq(adapterAddr, address(adapter));
                 found = true;
             }

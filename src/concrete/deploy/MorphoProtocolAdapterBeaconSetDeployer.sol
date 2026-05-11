@@ -37,8 +37,14 @@ struct MorphoProtocolAdapterBeaconSetDeployerConfig {
 /// retains no authority over the beacon after construction. Used for Morpho
 /// Blue protocol integration.
 contract MorphoProtocolAdapterBeaconSetDeployer {
-    /// Emitted when a new MorphoProtocolAdapter is deployed.
-    event Deployment(address sender, address morphoProtocolAdapter);
+    /// @notice Emitted when a new MorphoProtocolAdapter is deployed.
+    /// @param caller The direct on-chain caller of `newMorphoProtocolAdapter`.
+    /// For adapters created via `OracleUnifiedDeployer` /
+    /// `MultiOracleUnifiedDeployer` this is the unified-deployer contract, not
+    /// the originating EOA. Indexed so monitoring can filter by deployer.
+    /// @param morphoProtocolAdapter The address of the new proxy. Indexed so
+    /// monitoring can filter by adapter.
+    event Deployment(address indexed caller, address indexed morphoProtocolAdapter);
 
     /// The beacon for the MorphoProtocolAdapter implementation contracts.
     IBeacon public immutable I_MORPHO_PROTOCOL_ADAPTER_BEACON;

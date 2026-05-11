@@ -41,8 +41,15 @@ struct PassthroughProtocolAdapterBeaconSetDeployerConfig {
 /// contract retains no authority over the beacon after construction. Used
 /// for Aave V3, Compound V3, and any future Chainlink-compatible protocol.
 contract PassthroughProtocolAdapterBeaconSetDeployer {
-    /// Emitted when a new PassthroughProtocolAdapter is deployed.
-    event Deployment(address sender, address passthroughProtocolAdapter);
+    /// @notice Emitted when a new PassthroughProtocolAdapter is deployed.
+    /// @param caller The direct on-chain caller of
+    /// `newPassthroughProtocolAdapter`. For adapters created via
+    /// `OracleUnifiedDeployer` / `MultiOracleUnifiedDeployer` this is the
+    /// unified-deployer contract, not the originating EOA. Indexed so
+    /// monitoring can filter by deployer.
+    /// @param passthroughProtocolAdapter The address of the new proxy. Indexed
+    /// so monitoring can filter by adapter.
+    event Deployment(address indexed caller, address indexed passthroughProtocolAdapter);
 
     /// The beacon for the PassthroughProtocolAdapter implementation contracts.
     IBeacon public immutable I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON;

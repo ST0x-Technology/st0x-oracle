@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
+import {Vm} from "forge-std-1.16.1/src/Test.sol";
 import {PythOracleAdapterTest} from "test/abstract/PythOracleAdapterTest.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
@@ -158,5 +159,87 @@ contract PythOracleAdapterAutoPauseTest is PythOracleAdapterTest {
         );
         vm.expectRevert(abi.encodeWithSelector(HistoricalRoundDataUnsupported.selector, requestedRound));
         oracle.getRoundData(requestedRound);
+    }
+
+    /// `latestRoundData` MUST encode `uint80(uint64(publishTime))` into both
+    /// `roundId` and `answeredInRound` so Chainlink consumers that diff round
+    /// ids across blocks see a fresh round whenever Pyth has produced one.
+    /// Pre-fix the values were hardcoded to `1`. Closes audit #43.
+    function testLatestRoundDataIdIsPublishTime() external {
+        // Re-mock Pyth so publishTime is a fixed sentinel, not block.timestamp.
+        uint256 sentinel = 1_234_567_890;
+        PythStructs.Price memory p = PythStructs.Price({price: 100e8, conf: 1e6, expo: -8, publishTime: sentinel});
+        vm.mockCall(PYTH_BASE, abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector), abi.encode(p));
+
+        PythOracleAdapter oracle = _config(
+            CorporateActionPauseConfig({
+                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+            })
+        );
+        (uint80 roundId,, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) = oracle.latestRoundData();
+
+        assertEq(roundId, uint80(uint64(sentinel)), "roundId should be uint80(uint64(publishTime))");
+        assertEq(answeredInRound, uint80(uint64(sentinel)), "answeredInRound should equal roundId");
+        assertEq(startedAt, sentinel);
+        assertEq(updatedAt, sentinel);
+        assertEq(roundId, answeredInRound, "Chainlink: a fresh round is answered in itself");
+    }
+
+    /// Calling `latestRoundData` twice with two different Pyth publishTimes
+    /// must return two different roundIds — proving the metadata advances
+    /// monotonically across reads, not stuck at the pre-fix constant `1`.
+    /// Closes audit #43.
+    function testLatestRoundDataIdAdvancesAcrossUpdates() external {
+        PythOracleAdapter oracle = _config(
+            CorporateActionPauseConfig({
+                corporateActionsVault: address(0), actionTypeMask: 0, pauseTimeBefore: 0, pauseTimeAfter: 0
+            })
+        );
+
+        uint256 t1 = 1_000_000_000;
+        vm.mockCall(
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector),
+            abi.encode(PythStructs.Price({price: 100e8, conf: 1e6, expo: -8, publishTime: t1}))
+        );
+        (uint80 round1,,,,) = oracle.latestRoundData();
+
+        uint256 t2 = 1_000_000_777;
+        vm.mockCall(
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector),
+            abi.encode(PythStructs.Price({price: 101e8, conf: 1e6, expo: -8, publishTime: t2}))
+        );
+        (uint80 round2,,,,) = oracle.latestRoundData();
+
+        assertGt(round2, round1, "roundId must advance when publishTime advances");
+        assertEq(round1, uint80(uint64(t1)));
+        assertEq(round2, uint80(uint64(t2)));
+    }
+
+    /// `_setCorporateActionPauseConfig` is called by every subclass initializer
+    /// and must emit `CorporateActionPauseConfigSet` so off-chain indexers can
+    /// reconstruct the four corporate-action governance slots from logs alone.
+    /// Closes audit #149.
+    function testInitializeEmitsCorporateActionPauseConfigSet() external {
+        CorporateActionPauseConfig memory cfg = _stockSplitConfig();
+
+        vm.recordLogs();
+        _config(cfg);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("CorporateActionPauseConfigSet(address,uint256,uint64,uint64)")) {
+                (address evVault, uint256 evMask, uint64 evBefore, uint64 evAfter) =
+                    abi.decode(logs[i].data, (address, uint256, uint64, uint64));
+                assertEq(evVault, cfg.corporateActionsVault);
+                assertEq(evMask, cfg.actionTypeMask);
+                assertEq(evBefore, cfg.pauseTimeBefore);
+                assertEq(evAfter, cfg.pauseTimeAfter);
+                found = true;
+            }
+        }
+        assertTrue(found, "CorporateActionPauseConfigSet event missing");
     }
 }
