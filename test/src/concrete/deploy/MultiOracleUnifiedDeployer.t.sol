@@ -21,6 +21,11 @@ import {
 } from "src/concrete/deploy/OracleRegistryBeaconSetDeployer.sol";
 import {CorporateActionPauseConfig} from "src/abstract/BasePythOracleAdapter.sol";
 
+/// @title MultiOracleUnifiedDeployerTest
+/// @notice Mirrors `OracleUnifiedDeployerTest` — etches the three sub-deployers
+/// at their `LibProdDeploy` constants and mocks each `new*Adapter` call to
+/// return a chosen address, then asserts the `Deployment` event payload.
+/// Closes audit #54 (the prior implementation was a `try/catch {}` no-op).
 contract MultiOracleUnifiedDeployerTest is Test {
     OracleRegistry internal immutable I_REGISTRY_IMPLEMENTATION;
     OracleRegistryBeaconSetDeployer internal immutable I_REGISTRY_DEPLOYER;
@@ -45,23 +50,69 @@ contract MultiOracleUnifiedDeployerTest is Test {
         return I_REGISTRY_DEPLOYER.newOracleRegistry();
     }
 
-    /// Test that the deployer calls through to the beacon set deployer
-    /// (constant is now set in LibProdDeploy).
-    /// This is a fork test since it relies on the deployed beacon set deployer.
-    function testDeployerCallsBeaconSet() external {
-        // Skip if not on a fork where the beacon set deployer exists.
-        if (LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER.code.length == 0) {
-            return;
-        }
+    /// Happy path: with all three sub-deployers etched and mocked, the unified
+    /// deployer must call through to each in order and emit `Deployment` with
+    /// the resolved adapter addresses.
+    function testNewMultiOracleAndProtocolAdaptersEmitsAndChains(
+        address vault,
+        bytes32 priceId,
+        uint256 maxAge,
+        address oracleAdapter,
+        address morphoAdapter,
+        address passthroughAdapter,
+        address registryAdmin
+    ) external {
+        vm.assume(oracleAdapter.code.length == 0);
+        vm.assume(morphoAdapter.code.length == 0);
+        vm.assume(passthroughAdapter.code.length == 0);
+        vm.assume(registryAdmin != address(0));
 
-        MultiOracleUnifiedDeployer deployer = new MultiOracleUnifiedDeployer();
-        OracleRegistry registry = _createRegistry(address(this));
+        MultiOracleUnifiedDeployer unified = new MultiOracleUnifiedDeployer();
+        OracleRegistry registry = _createRegistry(registryAdmin);
 
         FeedConfig[] memory feeds = new FeedConfig[](1);
-        feeds[0] = FeedConfig({priceId: bytes32(uint256(1)), maxAge: 300});
+        feeds[0] = FeedConfig({priceId: priceId, maxAge: maxAge});
 
-        // Should not revert with MultiPythBeaconSetDeployerNotSet
-        // (will revert for other reasons since feed ID is fake, but that's fine)
-        try deployer.newMultiOracleAndProtocolAdapters(address(1), feeds, registry, _emptyPauseConfig()) {} catch {}
+        // Etch + mock the three sub-deployers at their LibProdDeploy
+        // addresses. The new*Adapter calls inside the unified deployer route
+        // here, so mocks decide the returned adapter addresses.
+        vm.etch(
+            LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER,
+            vm.getCode("MultiPythOracleAdapterBeaconSetDeployer")
+        );
+        vm.mockCall(
+            LibProdDeploy.MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER,
+            abi.encodeWithSelector(MultiPythOracleAdapterBeaconSetDeployer.newMultiPythOracleAdapter.selector),
+            abi.encode(oracleAdapter)
+        );
+        vm.etch(
+            LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER,
+            vm.getCode("MorphoProtocolAdapterBeaconSetDeployer")
+        );
+        vm.mockCall(
+            LibProdDeploy.MORPHO_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER,
+            abi.encodeWithSelector(
+                MorphoProtocolAdapterBeaconSetDeployer.newMorphoProtocolAdapter.selector, registry, vault, address(this)
+            ),
+            abi.encode(morphoAdapter)
+        );
+        vm.etch(
+            LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER,
+            vm.getCode("PassthroughProtocolAdapterBeaconSetDeployer")
+        );
+        vm.mockCall(
+            LibProdDeploy.PASSTHROUGH_PROTOCOL_ADAPTER_BEACON_SET_DEPLOYER,
+            abi.encodeWithSelector(
+                PassthroughProtocolAdapterBeaconSetDeployer.newPassthroughProtocolAdapter.selector,
+                registry,
+                vault,
+                address(this)
+            ),
+            abi.encode(passthroughAdapter)
+        );
+
+        vm.expectEmit();
+        emit MultiOracleUnifiedDeployer.Deployment(address(this), oracleAdapter, morphoAdapter, passthroughAdapter);
+        unified.newMultiOracleAndProtocolAdapters(vault, feeds, registry, _emptyPauseConfig());
     }
 }

@@ -10,12 +10,14 @@ import {
     OnlyAdmin,
     OraclePausedManual,
     ZeroAdmin,
+    BasePythOracleAdapter,
     CorporateActionPauseConfig
 } from "src/abstract/BasePythOracleAdapter.sol";
 import {
     MultiPythOracleAdapter,
     MultiPythOracleAdapterConfig,
     FeedConfig,
+    ZeroPriceId,
     ZeroMaxAge,
     ZeroFeeds,
     TooManyFeeds,
@@ -119,12 +121,127 @@ contract MultiPythOracleAdapterAdminTest is Test {
         assertTrue(adapter.paused());
     }
 
+    /// `setAdmin` must emit `AdminSet(old, new)` indexed on both addresses.
+    /// Closes audit #50.
+    function testSetAdminEmitsEvent() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        address newAdmin = address(0xBEEF);
+
+        vm.expectEmit(true, true, true, true);
+        emit BasePythOracleAdapter.AdminSet(address(this), newAdmin);
+        adapter.setAdmin(newAdmin);
+    }
+
+    /// `setAdmin` from a non-admin caller must revert with `OnlyAdmin`. Closes
+    /// audit #50.
+    function testSetAdminRevertsNonAdmin() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+
+        vm.prank(address(0xdead));
+        vm.expectRevert(abi.encodeWithSelector(OnlyAdmin.selector));
+        adapter.setAdmin(address(0xBEEF));
+    }
+
     /// Test setAdmin reverts with zero address.
     function testSetAdminRevertsZero() external {
         MultiPythOracleAdapter adapter = _deployAdapter();
 
         vm.expectRevert(abi.encodeWithSelector(ZeroAdmin.selector));
         adapter.setAdmin(address(0));
+    }
+
+    /// `setFeeds` must emit `FeedsSet(feeds)` with the full new feed list.
+    /// Closes audit #60.
+    function testSetFeedsEmitsEvent() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+
+        FeedConfig[] memory newFeeds = new FeedConfig[](2);
+        newFeeds[0] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        newFeeds[1] = FeedConfig({priceId: FEED_TSLA, maxAge: 600});
+
+        vm.expectEmit();
+        emit MultiPythOracleAdapter.FeedsSet(newFeeds);
+        adapter.setFeeds(newFeeds);
+    }
+
+    /// `setFeeds` must revert `ZeroPriceId(i)` when any entry has a zero
+    /// priceId, reporting the offending index. Closes audit #60.
+    function testSetFeedsRevertsZeroPriceIdInList() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        FeedConfig[] memory feeds = new FeedConfig[](2);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
+        feeds[1] = FeedConfig({priceId: bytes32(0), maxAge: 300});
+        vm.expectRevert(abi.encodeWithSelector(ZeroPriceId.selector, uint256(1)));
+        adapter.setFeeds(feeds);
+    }
+
+    /// `setFeeds` must revert `ZeroMaxAge(i)` when any entry has a zero
+    /// maxAge, reporting the offending index. Closes audit #60.
+    function testSetFeedsRevertsZeroMaxAgeInList() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        FeedConfig[] memory feeds = new FeedConfig[](2);
+        feeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
+        feeds[1] = FeedConfig({priceId: FEED_COIN, maxAge: 0});
+        vm.expectRevert(abi.encodeWithSelector(ZeroMaxAge.selector, uint256(1)));
+        adapter.setFeeds(feeds);
+    }
+
+    /// `setMaxAge` must emit `FeedMaxAgeSet(index, maxAge)`. Closes audit #60.
+    function testSetMaxAgeEmitsEvent() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        vm.expectEmit();
+        emit MultiPythOracleAdapter.FeedMaxAgeSet(0, 600);
+        adapter.setMaxAge(0, 600);
+    }
+
+    /// `_setFeeds` must clear the underlying storage slot when shrinking. Set
+    /// 3 feeds, shrink to 1, then grow back to 3 with new values — the
+    /// expanded slots must reflect the new values, not stale data from the
+    /// first call. Closes audit #60.
+    function testSetFeedsShrinkClearsUnderlyingSlot() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        FeedConfig[] memory threeFeeds = new FeedConfig[](3);
+        threeFeeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
+        threeFeeds[1] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        threeFeeds[2] = FeedConfig({priceId: FEED_TSLA, maxAge: 600});
+        adapter.setFeeds(threeFeeds);
+
+        FeedConfig[] memory oneFeed = new FeedConfig[](1);
+        oneFeed[0] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        adapter.setFeeds(oneFeed);
+
+        // Expand back to 3 feeds — slots 1 and 2 should reflect the new
+        // entries, not whatever was at those positions before.
+        FeedConfig[] memory threeAgain = new FeedConfig[](3);
+        threeAgain[0] = FeedConfig({priceId: FEED_COIN, maxAge: 100});
+        threeAgain[1] = FeedConfig({priceId: FEED_COIN, maxAge: 200});
+        threeAgain[2] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        adapter.setFeeds(threeAgain);
+
+        assertEq(adapter.getFeed(1).priceId, FEED_COIN);
+        assertEq(adapter.getFeed(1).maxAge, 200);
+        assertEq(adapter.getFeed(2).priceId, FEED_COIN);
+        assertEq(adapter.getFeed(2).maxAge, 300);
+    }
+
+    /// `getFeeds()` must return exactly the live feed array after a shrink —
+    /// no trailing stale entries. Closes audit #60.
+    function testGetFeedsAfterShrink() external {
+        MultiPythOracleAdapter adapter = _deployAdapter();
+        FeedConfig[] memory threeFeeds = new FeedConfig[](3);
+        threeFeeds[0] = FeedConfig({priceId: FEED_TSLA, maxAge: 300});
+        threeFeeds[1] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        threeFeeds[2] = FeedConfig({priceId: FEED_TSLA, maxAge: 600});
+        adapter.setFeeds(threeFeeds);
+
+        FeedConfig[] memory oneFeed = new FeedConfig[](1);
+        oneFeed[0] = FeedConfig({priceId: FEED_COIN, maxAge: 300});
+        adapter.setFeeds(oneFeed);
+
+        FeedConfig[] memory all = adapter.getFeeds();
+        assertEq(all.length, 1);
+        assertEq(all[0].priceId, FEED_COIN);
+        assertEq(all[0].maxAge, 300);
     }
 
     /// Test setFeeds works.
