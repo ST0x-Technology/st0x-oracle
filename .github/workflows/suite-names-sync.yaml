@@ -1,0 +1,61 @@
+name: Suite names sync
+
+# Fails CI if the deployment-suite enum in
+# .github/workflows/manual-sol-artifacts.yaml diverges from the keccak256
+# preimages in script/Deploy.sol. The two lists must stay in sync because
+# manual-sol-artifacts.yaml passes the dropdown choice to forge as
+# DEPLOYMENT_SUITE, and Deploy.run() dispatches by keccak256 of that string.
+# A typo / reordering / missing entry on either side silently routes to a
+# `revert("Unknown deployment suite")` or (worse) to the wrong handler.
+#
+# Closes: hazard-surface finding #214 (HAZARD-CROSS-FILE-SYNC).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  suite-names-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare suite names between Deploy.sol and manual-sol-artifacts.yaml
+        run: |
+          set -euo pipefail
+
+          # Canonical source: keccak256("...") preimages in script/Deploy.sol.
+          grep -oE 'keccak256\("[a-z0-9-]+"\)' script/Deploy.sol \
+            | sed -E 's/keccak256\("(.*)"\)/\1/' \
+            | sort -u > /tmp/suites-from-sol.txt
+
+          # Mirror: options: block under the `suite` workflow_dispatch input
+          # in .github/workflows/manual-sol-artifacts.yaml.
+          awk '
+            /^      suite:/ { in_suite=1; next }
+            in_suite && /^      [a-zA-Z_]+:/ { in_suite=0 }
+            in_suite && /^[a-z]/ { in_suite=0 }
+            in_suite && /^          - / { gsub(/^          - /,""); print }
+          ' .github/workflows/manual-sol-artifacts.yaml \
+            | sort -u > /tmp/suites-from-yaml.txt
+
+          echo "Suite names declared in script/Deploy.sol:"
+          cat /tmp/suites-from-sol.txt
+          echo
+          echo "Suite names offered by .github/workflows/manual-sol-artifacts.yaml:"
+          cat /tmp/suites-from-yaml.txt
+          echo
+
+          if ! diff -u /tmp/suites-from-sol.txt /tmp/suites-from-yaml.txt; then
+            echo
+            echo "ERROR: deployment-suite enum has drifted between"
+            echo "  script/Deploy.sol (canonical, via keccak256 preimages)"
+            echo "  .github/workflows/manual-sol-artifacts.yaml (operator dropdown)"
+            echo
+            echo "Update the dropdown 'options:' list in manual-sol-artifacts.yaml"
+            echo "to exactly match the keccak256(\"...\") arguments in Deploy.sol,"
+            echo "or add the missing keccak256(\"...\") branch in Deploy.sol."
+            exit 1
+          fi
+
+          echo "OK: suite names are in sync."
