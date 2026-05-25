@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
+import {PythErrors} from "pyth-sdk/PythErrors.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {ZeroVaultSupply, ZeroVaultSharePrice, NonPositivePrice} from "src/abstract/BasePythOracleAdapter.sol";
 import {
@@ -65,8 +66,31 @@ contract MultiPythOracleAdapterFuzzTest is Test {
     /// @dev Mock Pyth to revert (stale) for the given feed.
     function _mockStaleFeed(bytes32 feedId, uint256 maxAge) internal {
         vm.mockCallRevert(
-            PYTH_BASE, abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, feedId, maxAge), "stale"
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, feedId, maxAge),
+            abi.encodeWithSelector(PythErrors.StalePrice.selector)
         );
+    }
+
+    function testNonStalePythRevertBubbles() external {
+        address mockVault = address(uint160(uint256(keccak256("v.non-stale-revert"))));
+        _mockVault(mockVault, 1000e18, 1000e18);
+
+        FeedConfig[] memory feeds = new FeedConfig[](1);
+        feeds[0] = FeedConfig({priceId: MOCK_FEED, maxAge: 300});
+
+        MultiPythOracleAdapter adapter = I_DEPLOYER.newMultiPythOracleAdapter(
+            MultiPythOracleAdapterConfig({vault: mockVault, feeds: feeds, admin: address(this)})
+        );
+
+        vm.mockCallRevert(
+            PYTH_BASE,
+            abi.encodeWithSelector(IPyth.getPriceNoOlderThan.selector, MOCK_FEED, uint256(300)),
+            abi.encodeWithSelector(PythErrors.PriceFeedNotFound.selector)
+        );
+
+        vm.expectRevert(PythErrors.PriceFeedNotFound.selector);
+        adapter.latestAnswer();
     }
 
     /// @notice Fuzz vault ratio: for any valid totalAssets/totalSupply,

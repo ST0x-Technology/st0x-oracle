@@ -4,6 +4,7 @@ pragma solidity =0.8.25;
 
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
+import {PythErrors} from "pyth-sdk/PythErrors.sol";
 import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
@@ -174,9 +175,27 @@ contract MultiPythOracleAdapter is BasePythOracleAdapter, ICloneableV2, Initiali
     {
         try pyth.getPriceNoOlderThan(feedPriceId, feedMaxAge) returns (PythStructs.Price memory p) {
             return (true, p);
-        } catch {
-            return (false, price);
+        } catch (bytes memory err) {
+            if (_isStalePrice(err)) {
+                return (false, price);
+            }
+
+            assembly ("memory-safe") {
+                revert(add(err, 0x20), mload(err))
+            }
         }
+    }
+
+    function _isStalePrice(bytes memory err) internal pure returns (bool) {
+        if (err.length < 4) {
+            return false;
+        }
+
+        bytes4 selector;
+        assembly ("memory-safe") {
+            selector := mload(add(err, 0x20))
+        }
+        return selector == PythErrors.StalePrice.selector;
     }
 
     /// @dev Internal feed setter. Validates and stores feeds.
