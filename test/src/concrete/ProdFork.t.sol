@@ -58,12 +58,17 @@ library LibProdOracles {
 ///
 /// To run: forge test --match-contract ProdForkTest --fork-url $RPC_URL_BASE_FORK
 ///
-/// NOTE: Tests will be skipped (pass vacuously) until oracle addresses are
-/// set in LibProdOracles. This allows the PR to merge before deployment.
+/// NOTE: Tests depending on a not-yet-deployed address are explicitly skipped
+/// unless REQUIRE_PROD_DEPLOYED=1 is set, in which case they fail fast.
 contract ProdForkTest is Test {
+    error MissingForkRpc();
+    error MissingForkBlock();
+    error ProdDeploymentMissing(string name);
+    error ProdDeploymentMissingOnFork(string name, address deployed);
+
     /// @dev Skip modifier for oracle-only tests.
     modifier onlyIfOracleDeployed() {
-        if (LibProdOracles.WTCOIN_ORACLE == address(0)) {
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_ORACLE, "WTCOIN_ORACLE")) {
             return;
         }
         _;
@@ -71,7 +76,7 @@ contract ProdForkTest is Test {
 
     /// @dev Skip modifier for Morpho adapter tests.
     modifier onlyIfMorphoDeployed() {
-        if (LibProdOracles.WTCOIN_MORPHO == address(0)) {
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_MORPHO, "WTCOIN_MORPHO")) {
             return;
         }
         _;
@@ -79,7 +84,7 @@ contract ProdForkTest is Test {
 
     /// @dev Skip modifier for Passthrough adapter tests.
     modifier onlyIfPassthroughDeployed() {
-        if (LibProdOracles.WTCOIN_PASSTHROUGH == address(0)) {
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_PASSTHROUGH, "WTCOIN_PASSTHROUGH")) {
             return;
         }
         _;
@@ -87,7 +92,7 @@ contract ProdForkTest is Test {
 
     /// @dev Skip modifier for registry tests.
     modifier onlyIfRegistryDeployed() {
-        if (LibProdOracles.ORACLE_REGISTRY == address(0)) {
+        if (!_deployedOrSkip(LibProdOracles.ORACLE_REGISTRY, "ORACLE_REGISTRY")) {
             return;
         }
         _;
@@ -95,21 +100,44 @@ contract ProdForkTest is Test {
 
     /// @dev Skip modifier for tests that require all three deployed.
     modifier onlyIfAllDeployed() {
-        if (
-            LibProdOracles.WTCOIN_ORACLE == address(0) || LibProdOracles.WTCOIN_MORPHO == address(0)
-                || LibProdOracles.WTCOIN_PASSTHROUGH == address(0)
-        ) {
-            return;
-        }
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_ORACLE, "WTCOIN_ORACLE")) return;
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_MORPHO, "WTCOIN_MORPHO")) return;
+        if (!_deployedOrSkip(LibProdOracles.WTCOIN_PASSTHROUGH, "WTCOIN_PASSTHROUGH")) return;
         _;
     }
 
     /// @dev Fork Base at a specific block. Use FORK_BLOCK_BASE env var to pin
     /// to a block during NYSE market hours (required for COIN/USD Pyth feed).
     function _forkBase() internal {
-        string memory rpc = vm.envString("RPC_URL_BASE_FORK");
-        uint256 blockNumber = vm.envUint("FORK_BLOCK_BASE");
+        string memory rpc = vm.envOr("RPC_URL_BASE_FORK", string(""));
+        uint256 blockNumber = vm.envOr("FORK_BLOCK_BASE", uint256(0));
+
+        if (bytes(rpc).length == 0) revert MissingForkRpc();
+        if (blockNumber == 0) revert MissingForkBlock();
+
         vm.createSelectFork(rpc, blockNumber);
+    }
+
+    function _requireProdDeployed() internal view returns (bool) {
+        return vm.envOr("REQUIRE_PROD_DEPLOYED", false);
+    }
+
+    function _deployedOrSkip(address deployed, string memory name) internal returns (bool) {
+        if (deployed != address(0)) return true;
+
+        if (_requireProdDeployed()) revert ProdDeploymentMissing(name);
+
+        vm.skip(true, string.concat(name, " not configured"));
+        return false;
+    }
+
+    function _existsOrSkipOnFork(address deployed, string memory name) internal returns (bool) {
+        if (_existsOnFork(deployed)) return true;
+
+        if (_requireProdDeployed()) revert ProdDeploymentMissingOnFork(name, deployed);
+
+        vm.skip(true, string.concat(name, " not deployed on selected fork"));
+        return false;
     }
 
     // =========================================================================
@@ -523,7 +551,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle returns a positive price.
     function testProdWtcoinMultiOracleLatestAnswer() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         int256 answer = oracle.latestAnswer();
@@ -535,7 +563,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle returns valid latestRoundData.
     function testProdWtcoinMultiOracleLatestRoundData() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
@@ -552,7 +580,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle reports 8 decimals.
     function testProdWtcoinMultiOracleDecimals() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         assertEq(oracle.decimals(), 8);
@@ -561,7 +589,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle config: vault, feed count, not paused.
     function testProdWtcoinMultiOracleConfig() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         assertEq(oracle.vault(), LibProdOracles.WTCOIN_VAULT, "Wrong vault");
@@ -572,7 +600,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle reverts when paused.
     function testProdWtcoinMultiOracleRevertsWhenPaused() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         address oracleAdmin = oracle.admin();
@@ -593,7 +621,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed Morpho adapter returns price scaled to 36 decimals.
     function testProdWtcoinMultiMorphoPrice() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO, "WTCOIN_MULTI_MORPHO")) return;
 
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
         uint256 morphoPrice = morpho.price();
@@ -605,7 +633,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed passthrough returns same answer as multi-feed oracle.
     function testProdWtcoinMultiPassthroughAnswer() external {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH, "WTCOIN_MULTI_PASSTHROUGH")) return;
 
         PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH);
         int256 answer = passthrough.latestAnswer();
@@ -617,10 +645,9 @@ contract ProdForkTest is Test {
     /// @notice All three multi-feed contracts return consistent prices.
     function testProdWtcoinMultiPriceConsistency() external {
         _forkBase();
-        if (
-            !_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE) || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)
-                || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)
-        ) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO, "WTCOIN_MULTI_MORPHO")) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH, "WTCOIN_MULTI_PASSTHROUGH")) return;
 
         MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
         MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
@@ -637,7 +664,7 @@ contract ProdForkTest is Test {
     /// @notice Multi-feed oracle registered in registry matches expected address.
     function testProdRegistryHasWtcoinMultiOracle() external onlyIfRegistryDeployed {
         _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
+        if (!_existsOrSkipOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE, "WTCOIN_MULTI_ORACLE")) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
         AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
