@@ -10,7 +10,7 @@ import {
     ZeroPriceId,
     ZeroMaxAge
 } from "src/concrete/oracle/PythOracleAdapter.sol";
-import {Vm} from "forge-std/Test.sol";
+import {Vm} from "forge-std-1.16.1/src/Test.sol";
 
 contract PythOracleAdapterInitializeTest is PythOracleAdapterTest {
     /// Test that zero vault address reverts.

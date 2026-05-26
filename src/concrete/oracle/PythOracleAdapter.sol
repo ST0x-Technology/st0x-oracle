@@ -4,9 +4,9 @@ pragma solidity =0.8.25;
 
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
-import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
-import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
-import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
+import {LibPyth} from "rain-pyth-0.0.0-git/src/lib/pyth/LibPyth.sol";
+import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
+import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {BasePythOracleAdapter, ZeroVault, ZeroAdmin} from "src/abstract/BasePythOracleAdapter.sol";
 
 /// @dev Error raised when a zero price ID is provided.
