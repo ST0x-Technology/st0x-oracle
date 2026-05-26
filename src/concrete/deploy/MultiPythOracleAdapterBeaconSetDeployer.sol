@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {IBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/IBeacon.sol";
-import {UpgradeableBeacon} from "openzeppelin-contracts/contracts/proxy/beacon/UpgradeableBeacon.sol";
-import {BeaconProxy} from "openzeppelin-contracts/contracts/proxy/beacon/BeaconProxy.sol";
-import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
+import {IBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/IBeacon.sol";
+import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
+import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProxy.sol";
+import {ICLONEABLE_V2_SUCCESS} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {MultiPythOracleAdapter, MultiPythOracleAdapterConfig} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain.factory/interface/ICloneableV2.sol";
-import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
+import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
+import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
 

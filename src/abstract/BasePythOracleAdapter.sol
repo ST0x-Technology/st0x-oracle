@@ -3,8 +3,8 @@
 pragma solidity =0.8.25;
 
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
-import {LibDecimalFloat, Float} from "rain.math.float/lib/LibDecimalFloat.sol";
-import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
+import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
+import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 
 /// @dev Error raised when the oracle is paused.

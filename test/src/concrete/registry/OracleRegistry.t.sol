@@ -12,9 +12,9 @@ import {
     ZeroOracle,
     ArrayLengthMismatch
 } from "src/concrete/registry/OracleRegistry.sol";
-import {ICLONEABLE_V2_SUCCESS} from "rain.factory/interface/ICloneableV2.sol";
+import {ICLONEABLE_V2_SUCCESS} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
-import {Vm} from "forge-std/Test.sol";
+import {Vm} from "forge-std-1.16.1/src/Test.sol";
 
 contract OracleRegistryInitializeTest is OracleRegistryTest {
     /// Test that deployer sets msg.sender as admin.
