@@ -6,19 +6,11 @@ import {
   AdminSet,
 } from "../generated/OracleRegistry/OracleRegistry";
 import { Deployment as SingleDeploymentEvent } from "../generated/OracleUnifiedDeployer/OracleUnifiedDeployer";
-import { Deployment as MultiDeploymentEvent } from "../generated/MultiOracleUnifiedDeployer/MultiOracleUnifiedDeployer";
 import {
   PythOracleAdapterInitialized,
   PauseSet as PythPauseSet,
   AdminSet as PythAdminSet,
 } from "../generated/templates/PythOracleAdapterTemplate/PythOracleAdapter";
-import {
-  MultiPythOracleAdapterInitialized,
-  FeedsSet,
-  FeedMaxAgeSet,
-  PauseSet as MultiPauseSet,
-  AdminSet as MultiAdminSet,
-} from "../generated/templates/MultiPythOracleAdapterTemplate/MultiPythOracleAdapter";
 import {
   MorphoProtocolAdapterInitialized,
   AdminSet as MorphoAdminSet,
@@ -158,48 +150,6 @@ export function createSingleDeploymentEvent(
   return event;
 }
 
-export function createMultiDeploymentEvent(
-  sender: Address,
-  multiPythOracleAdapter: Address,
-  morphoProtocolAdapter: Address,
-  passthroughProtocolAdapter: Address
-): MultiDeploymentEvent {
-  let mockEvent = newMockEvent();
-  let event = new MultiDeploymentEvent(
-    mockEvent.address,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-  event.parameters.push(
-    new ethereum.EventParam("sender", ethereum.Value.fromAddress(sender))
-  );
-  event.parameters.push(
-    new ethereum.EventParam(
-      "multiPythOracleAdapter",
-      ethereum.Value.fromAddress(multiPythOracleAdapter)
-    )
-  );
-  event.parameters.push(
-    new ethereum.EventParam(
-      "morphoProtocolAdapter",
-      ethereum.Value.fromAddress(morphoProtocolAdapter)
-    )
-  );
-  event.parameters.push(
-    new ethereum.EventParam(
-      "passthroughProtocolAdapter",
-      ethereum.Value.fromAddress(passthroughProtocolAdapter)
-    )
-  );
-  return event;
-}
-
 // --- Single Pyth Oracle Adapter ---
 
 export function createPythOracleAdapterInitializedEvent(
@@ -265,155 +215,6 @@ export function createPythAdminSetEvent(
 ): PythAdminSet {
   let mockEvent = newMockEvent();
   let event = new PythAdminSet(
-    contractAddress,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-  event.parameters.push(
-    new ethereum.EventParam("oldAdmin", ethereum.Value.fromAddress(oldAdmin))
-  );
-  event.parameters.push(
-    new ethereum.EventParam("newAdmin", ethereum.Value.fromAddress(newAdmin))
-  );
-  return event;
-}
-
-// --- Multi Pyth Oracle Adapter ---
-
-export function createMultiPythOracleAdapterInitializedEvent(
-  contractAddress: Address,
-  sender: Address,
-  vault: Address,
-  feedPriceIds: Bytes[],
-  feedMaxAges: BigInt[],
-  admin: Address
-): MultiPythOracleAdapterInitialized {
-  let mockEvent = newMockEvent();
-  let event = new MultiPythOracleAdapterInitialized(
-    contractAddress,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-  event.parameters.push(
-    new ethereum.EventParam("sender", ethereum.Value.fromAddress(sender))
-  );
-
-  let feedTuples = new Array<ethereum.Value>();
-  for (let i = 0; i < feedPriceIds.length; i++) {
-    let feedTuple = new ethereum.Tuple();
-    feedTuple.push(ethereum.Value.fromFixedBytes(feedPriceIds[i]));
-    feedTuple.push(ethereum.Value.fromUnsignedBigInt(feedMaxAges[i]));
-    feedTuples.push(ethereum.Value.fromTuple(feedTuple));
-  }
-
-  let configTuple = new ethereum.Tuple();
-  configTuple.push(ethereum.Value.fromAddress(vault));
-  configTuple.push(ethereum.Value.fromArray(feedTuples));
-  configTuple.push(ethereum.Value.fromAddress(admin));
-  event.parameters.push(
-    new ethereum.EventParam("config", ethereum.Value.fromTuple(configTuple))
-  );
-  return event;
-}
-
-export function createFeedsSetEvent(
-  contractAddress: Address,
-  feedPriceIds: Bytes[],
-  feedMaxAges: BigInt[]
-): FeedsSet {
-  let mockEvent = newMockEvent();
-  let event = new FeedsSet(
-    contractAddress,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-
-  let feedTuples = new Array<ethereum.Value>();
-  for (let i = 0; i < feedPriceIds.length; i++) {
-    let feedTuple = new ethereum.Tuple();
-    feedTuple.push(ethereum.Value.fromFixedBytes(feedPriceIds[i]));
-    feedTuple.push(ethereum.Value.fromUnsignedBigInt(feedMaxAges[i]));
-    feedTuples.push(ethereum.Value.fromTuple(feedTuple));
-  }
-  event.parameters.push(
-    new ethereum.EventParam("feeds", ethereum.Value.fromArray(feedTuples))
-  );
-  return event;
-}
-
-export function createFeedMaxAgeSetEvent(
-  contractAddress: Address,
-  index: BigInt,
-  maxAge: BigInt
-): FeedMaxAgeSet {
-  let mockEvent = newMockEvent();
-  let event = new FeedMaxAgeSet(
-    contractAddress,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-  event.parameters.push(
-    new ethereum.EventParam("index", ethereum.Value.fromUnsignedBigInt(index))
-  );
-  event.parameters.push(
-    new ethereum.EventParam("maxAge", ethereum.Value.fromUnsignedBigInt(maxAge))
-  );
-  return event;
-}
-
-export function createMultiPauseSetEvent(
-  contractAddress: Address,
-  isPaused: boolean
-): MultiPauseSet {
-  let mockEvent = newMockEvent();
-  let event = new MultiPauseSet(
-    contractAddress,
-    mockEvent.logIndex,
-    mockEvent.transactionLogIndex,
-    mockEvent.logType,
-    mockEvent.block,
-    mockEvent.transaction,
-    mockEvent.parameters,
-    null
-  );
-  event.parameters = new Array();
-  event.parameters.push(
-    new ethereum.EventParam("isPaused", ethereum.Value.fromBoolean(isPaused))
-  );
-  return event;
-}
-
-export function createMultiAdminSetEvent(
-  contractAddress: Address,
-  oldAdmin: Address,
-  newAdmin: Address
-): MultiAdminSet {
-  let mockEvent = newMockEvent();
-  let event = new MultiAdminSet(
     contractAddress,
     mockEvent.logIndex,
     mockEvent.transactionLogIndex,

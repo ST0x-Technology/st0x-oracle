@@ -77,38 +77,6 @@ type PythOracleAdapter @entity {
   createdTransaction: Transaction!
 }
 
-"A multi-feed Pyth oracle adapter (tries feeds in order)"
-type MultiPythOracleAdapter @entity {
-  id: Bytes!
-  "The vault this oracle prices"
-  vault: Bytes!
-  "Admin address"
-  admin: Bytes!
-  "Whether the oracle is paused"
-  isPaused: Boolean!
-  "Number of configured feeds"
-  feedCount: BigInt!
-  "Ordered feed configurations"
-  feeds: [FeedConfig!]! @derivedFrom(field: "adapter")
-  "Block timestamp of initialization"
-  createdAt: BigInt!
-  "The transaction that created this adapter"
-  createdTransaction: Transaction!
-}
-
-"A feed configuration within a MultiPythOracleAdapter"
-type FeedConfig @entity {
-  id: Bytes!
-  "The multi-feed adapter this belongs to"
-  adapter: MultiPythOracleAdapter!
-  "Index position in the feed order"
-  index: BigInt!
-  "Pyth price feed ID"
-  priceId: Bytes!
-  "Maximum acceptable price age in seconds"
-  maxAge: BigInt!
-}
-
 # --- Protocol Adapters ---
 
 "A Morpho protocol adapter"
@@ -146,8 +114,6 @@ type PassthroughProtocolAdapter @entity {
 "A unified deployment (oracle + morpho + passthrough for a vault)"
 type UnifiedDeployment @entity(immutable: true) {
   id: Bytes!
-  "Deployer type: single or multi"
-  kind: String!
   "The sender who triggered the deployment"
   sender: Bytes!
   "The oracle adapter address"

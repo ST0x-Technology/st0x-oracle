@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
-import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
-import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
+import {IERC20} from "@openzeppelin-contracts-5.6.1/token/ERC20/IERC20.sol";
 import {IPyth} from "pyth-sdk/IPyth.sol";
 import {PythStructs} from "pyth-sdk/PythStructs.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
-import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x.deploy/src/interface/ICorporateActionsV1.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.0/src/interface/ICorporateActionsV1.sol";
 import {
     CorporateActionPauseConfig,
     OraclePausedCorporateAction,

@@ -24,13 +24,6 @@ library LibProdDeploy {
     /// Deployed to Base 2026-02-13. Run: 21984615902.
     address constant ORACLE_REGISTRY_BEACON_SET_DEPLOYER = 0x3B8E2056Dce6E6847e853c3FEdda379802cD07d3;
 
-    /// Deployed to Base 2026-02-17. Run: 22098089152.
-    address constant MULTI_PYTH_ORACLE_ADAPTER_BEACON_SET_DEPLOYER = 0xDc555fb8043b50d449667eE718527eCad2A267ad;
-
-    /// Deployed to Base 2026-02-17. Run: 22098092240.
-    /// Re-deployed to Base 2026-02-18 with updated constants. Run: 22101213391.
-    address constant MULTI_ORACLE_UNIFIED_DEPLOYER = 0x4fcef5a7B3059586ad7A9552aCA0a60d075CB74c;
-
     /// Deployed to Base 2026-02-13.
     address constant ORACLE_REGISTRY = 0x36a14d00a8597731fb6dB1e0e7EeA0BB81ffD156;
 }
