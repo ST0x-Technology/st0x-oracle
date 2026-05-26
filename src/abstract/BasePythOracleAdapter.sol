@@ -106,6 +106,11 @@ abstract contract BasePythOracleAdapter is AggregatorV3Interface {
     /// pausing. Immutable.
     uint64 public pauseTimeAfter;
 
+    /// @dev Reserved storage to avoid shifting subclass slot positions when
+    /// new base-class state is introduced in future versions. Decrement
+    /// `__gap.length` by 1 for each `uint256`-equivalent slot added above.
+    uint256[50] private __gap;
+
     /// @dev Emitted when the manual pause state changes.
     event PauseSet(bool isPaused);
     /// @dev Emitted when the admin is changed.

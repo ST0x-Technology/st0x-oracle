@@ -5,7 +5,6 @@ pragma solidity =0.8.25;
 import {Test, Vm} from "forge-std-1.16.1/src/Test.sol";
 import {AggregatorV3Interface} from "src/interface/IAggregatorV3.sol";
 import {PythOracleAdapter} from "src/concrete/oracle/PythOracleAdapter.sol";
-import {MultiPythOracleAdapter} from "src/concrete/oracle/MultiPythOracleAdapter.sol";
 import {MorphoProtocolAdapter} from "src/concrete/protocol/MorphoProtocolAdapter.sol";
 import {PassthroughProtocolAdapter} from "src/concrete/protocol/PassthroughProtocolAdapter.sol";
 import {OracleRegistry} from "src/concrete/registry/OracleRegistry.sol";
@@ -37,18 +36,6 @@ library LibProdOracles {
     /// COIN/USD Pyth price feed ID.
     /// https://www.pyth.network/developers/price-feed-ids
     bytes32 constant COIN_PRICE_ID = 0xfee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245;
-
-    /// wtCOIN multi-feed oracle adapter (MultiPythOracleAdapter proxy).
-    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
-    address constant WTCOIN_MULTI_ORACLE = 0x1C63889a9FAd36C6a4422B3dAFCD57b11deC73d8;
-
-    /// wtCOIN multi-feed Morpho protocol adapter.
-    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
-    address constant WTCOIN_MULTI_MORPHO = 0x9e775f2aB11E49E18924379A31502A8B593bBec7;
-
-    /// wtCOIN multi-feed passthrough protocol adapter.
-    /// Deployed to Base 2026-02-19. Tx: 0xd2c62b2a.
-    address constant WTCOIN_MULTI_PASSTHROUGH = 0x2F179Ee0F7ec2767C48e6c43fb6f0C7c715b5880;
 }
 
 /// @title ProdForkTest
@@ -293,8 +280,6 @@ contract ProdForkTest is Test {
     /// @notice Registry has wtCOIN oracle registered.
     function testProdRegistryHasWtcoinOracle() external onlyIfRegistryDeployed onlyIfOracleDeployed {
         _forkBase();
-        // Registry now points to multi oracle after swap; skip on post-swap fork blocks.
-        if (_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
 
         OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
         AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
@@ -508,140 +493,5 @@ contract ProdForkTest is Test {
         // Still works after re-setting
         int256 answerAfter = passthrough.latestAnswer();
         assertEq(answerAfter, answer);
-    }
-
-    // =========================================================================
-    // MultiPythOracleAdapter prod tests
-    // =========================================================================
-
-    /// @dev Checks if a multi-feed address exists on the fork. Fork block may
-    /// predate deployment, so we check code length after forking.
-    function _existsOnFork(address addr) internal view returns (bool) {
-        return addr != address(0) && addr.code.length > 0;
-    }
-
-    /// @notice Multi-feed oracle returns a positive price.
-    function testProdWtcoinMultiOracleLatestAnswer() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        int256 answer = oracle.latestAnswer();
-
-        assertGt(answer, 1e9, "Price too low (< $10)");
-        assertLt(answer, 1e12, "Price too high (> $10,000)");
-    }
-
-    /// @notice Multi-feed oracle returns valid latestRoundData.
-    function testProdWtcoinMultiOracleLatestRoundData() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
-            oracle.latestRoundData();
-
-        assertEq(roundId, 1);
-        assertEq(answeredInRound, 1);
-        assertGt(answer, 0, "Answer must be positive");
-        assertGt(updatedAt, 0, "updatedAt must be set");
-        assertGt(updatedAt, block.timestamp - 600, "Price too stale");
-        assertEq(startedAt, updatedAt, "startedAt should equal updatedAt");
-    }
-
-    /// @notice Multi-feed oracle reports 8 decimals.
-    function testProdWtcoinMultiOracleDecimals() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        assertEq(oracle.decimals(), 8);
-    }
-
-    /// @notice Multi-feed oracle config: vault, feed count, not paused.
-    function testProdWtcoinMultiOracleConfig() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        assertEq(oracle.vault(), LibProdOracles.WTCOIN_VAULT, "Wrong vault");
-        assertGt(oracle.feedCount(), 1, "Should have multiple feeds");
-        assertFalse(oracle.paused(), "Should not be paused");
-    }
-
-    /// @notice Multi-feed oracle reverts when paused.
-    function testProdWtcoinMultiOracleRevertsWhenPaused() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        address oracleAdmin = oracle.admin();
-
-        vm.prank(oracleAdmin);
-        oracle.setPaused(true);
-
-        vm.expectRevert();
-        oracle.latestAnswer();
-
-        vm.prank(oracleAdmin);
-        oracle.setPaused(false);
-
-        int256 answer = oracle.latestAnswer();
-        assertGt(answer, 0);
-    }
-
-    /// @notice Multi-feed Morpho adapter returns price scaled to 36 decimals.
-    function testProdWtcoinMultiMorphoPrice() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)) return;
-
-        MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
-        uint256 morphoPrice = morpho.price();
-
-        assertGt(morphoPrice, 1e37, "Morpho price too low");
-        assertLt(morphoPrice, 1e40, "Morpho price too high");
-    }
-
-    /// @notice Multi-feed passthrough returns same answer as multi-feed oracle.
-    function testProdWtcoinMultiPassthroughAnswer() external {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)) return;
-
-        PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH);
-        int256 answer = passthrough.latestAnswer();
-
-        assertGt(answer, 1e9, "Price too low");
-        assertLt(answer, 1e12, "Price too high");
-    }
-
-    /// @notice All three multi-feed contracts return consistent prices.
-    function testProdWtcoinMultiPriceConsistency() external {
-        _forkBase();
-        if (
-            !_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE) || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_MORPHO)
-                || !_existsOnFork(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH)
-        ) return;
-
-        MultiPythOracleAdapter oracle = MultiPythOracleAdapter(LibProdOracles.WTCOIN_MULTI_ORACLE);
-        MorphoProtocolAdapter morpho = MorphoProtocolAdapter(LibProdOracles.WTCOIN_MULTI_MORPHO);
-        PassthroughProtocolAdapter passthrough = PassthroughProtocolAdapter(LibProdOracles.WTCOIN_MULTI_PASSTHROUGH);
-
-        int256 oraclePrice = oracle.latestAnswer();
-        int256 passthroughPrice = passthrough.latestAnswer();
-        uint256 morphoPrice = morpho.price();
-
-        assertEq(passthroughPrice, oraclePrice, "Passthrough != Oracle");
-        assertEq(morphoPrice, uint256(oraclePrice) * 1e28, "Morpho != Oracle * 1e28");
-    }
-
-    /// @notice Multi-feed oracle registered in registry matches expected address.
-    function testProdRegistryHasWtcoinMultiOracle() external onlyIfRegistryDeployed {
-        _forkBase();
-        if (!_existsOnFork(LibProdOracles.WTCOIN_MULTI_ORACLE)) return;
-
-        OracleRegistry registry = OracleRegistry(LibProdOracles.ORACLE_REGISTRY);
-        AggregatorV3Interface oracle = registry.getOracle(LibProdOracles.WTCOIN_VAULT);
-        // After multi-feed deployment, registry should point to the multi oracle.
-        assertEq(address(oracle), LibProdOracles.WTCOIN_MULTI_ORACLE, "Registry should map to multi oracle");
     }
 }
