@@ -3,6 +3,5 @@ forge-std-1.16.1/=dependencies/forge-std-1.16.1/
 rain-factory-0.1.1/=dependencies/rain-factory-0.1.1/
 rain-intorastring-0.1.0/=dependencies/rain-intorastring-0.1.0/
 rain-math-float-0.1.1/=dependencies/rain-math-float-0.1.1/
-rain-pyth-0.0.0-git/=dependencies/rain-pyth-0.0.0-git/
 rain-vats-0.1.5/=dependencies/rain-vats-0.1.5/
 st0x-deploy-0.1.1/=dependencies/st0x-deploy-0.1.1/

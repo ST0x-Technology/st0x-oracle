@@ -34,12 +34,6 @@ jobs:
           gc-max-store-size-linux: 1G
 
       - run: nix develop -c forge soldeer install
-      # rain.pyth is consumed as a soldeer git-source dep (not yet on the
-      # soldeer registry) and itself uses git submodules for the Pyth SDK.
-      # Soldeer doesn't recursively init nested submodules, so we do it
-      # manually for the one path we actually need (pyth-crosschain, which
-      # the `pyth-sdk/` remapping in foundry.toml points into).
-      - run: git -C dependencies/rain-pyth-0.0.0-git submodule update --init lib/pyth-crosschain
       - run: nix develop -c rainix-sol-prelude
       - name: Run ${{ matrix.task }}
         env:
