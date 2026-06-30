@@ -1,6 +1,6 @@
 # st0x.oracle
 
-Chronicle-backed oracle stack for pricing ST0x `wtStock` ERC-4626 vault
+DIA-backed oracle stack for pricing ST0x `wtStock` ERC-4626 vault
 shares inside DeFi lending protocols (Euler, Aave V3, Compound V3, any
 Chainlink-compatible market). Exposes a single proxy address per vault
 behind `AggregatorV2V3Interface`.
@@ -8,15 +8,16 @@ behind `AggregatorV2V3Interface`.
 ## Architecture
 
 Two layers, separated by intent. The **adapter**
-(`ChronicleVaultOracle`) does pure price math: reads the underlying-asset
-price from a Chronicle Protocol feed, multiplies by the vault's
-`totalAssets / totalSupply` ratio, returns an 8-decimal `int256`. The
-**wrapper** (`PausableOracleWrapper`) is a shape-preserving decorator that
-adds operational pause semantics on top of any `AggregatorV2V3Interface`
-source — a manual admin emergency pause and an automatic corporate-action
-pause driven by `ICorporateActionsV1` via `LibCorporateActionsPause`.
-Consumers target the wrapper proxy; the wrapper's `upstream` slot is
-immutable.
+(`DIAVaultOracle`) does pure price math: reads the underlying-asset
+price from a DIA Data Association feed (keyed by bare symbol —
+`"COIN"`, `"AMZN"`, `"TSLA"`, not a pair string), multiplies by the
+vault's `totalAssets / totalSupply` ratio, returns an 8-decimal `int256`.
+The **wrapper** (`PausableOracleWrapper`) is a shape-preserving decorator
+that adds operational pause semantics on top of any
+`AggregatorV2V3Interface` source — a manual admin emergency pause and an
+automatic corporate-action pause driven by `ICorporateActionsV1` via
+`LibCorporateActionsPause`. Consumers target the wrapper proxy; the
+wrapper's `upstream` slot is immutable.
 
 ```
                 ┌───────────────────────────────┐
@@ -27,8 +28,8 @@ immutable.
                                 │ upstream (immutable)
                                 ▼
                 ┌───────────────────────────────┐
-                │     ChronicleVaultOracle      │
-                │     chronicle.read() ×        │
+                │        DIAVaultOracle         │
+                │   diaOracle.getValue(symbol)× │
                 │       totalAssets / totalSupply│
                 └───────────────────────────────┘
 ```
@@ -47,6 +48,16 @@ immutable.
   `tStock` vault flow through to the share price automatically on the
   first read after the pause window closes — no oracle-side intervention.
 
+**DIA freshness model:** DIA pushes a new value whenever **either** 0.1%
+deviation OR 1 hour elapsed (whichever first). Volatile periods get
+pushes every few minutes; the 1-hour heartbeat is the dead-market floor.
+Recommended `maxAge = 2 hours` (one missed heartbeat tolerance).
+
+**DIA on Base mainnet:** the canonical oracle contract is
+`0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol feeds are all
+served from this single contract via `getValue(string key)` and the key
+is the bare symbol (e.g. `"COIN"`).
+
 See `SPEC.md` for the full specification.
 
 ## Integrator Quickstart
@@ -54,12 +65,13 @@ See `SPEC.md` for the full specification.
 Deploy a paired `(oracle, wrapper)` for a new vault in one transaction:
 
 ```solidity
-ChronicleOracleUnifiedDeployConfig memory config = ChronicleOracleUnifiedDeployConfig({
+DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
     admin: governanceMultisig,
-    oracleConfig: ChronicleVaultOracleConfig({
-        chronicle: IChronicle(chronicleFeed),
+    oracleConfig: DIAVaultOracleConfig({
+        diaOracle: IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+        symbol:    "COIN",
         vault:     wtStockVault,
-        maxAge:    60
+        maxAge:    2 hours
     }),
     pauseConfig: CorporateActionPauseConfig({
         corporateActionsVault: corporateActionsVault,
@@ -69,7 +81,7 @@ ChronicleOracleUnifiedDeployConfig memory config = ChronicleOracleUnifiedDeployC
     })
 });
 
-(ChronicleVaultOracle oracle, PausableOracleWrapper wrapper) =
+(DIAVaultOracle oracle, PausableOracleWrapper wrapper) =
     unifiedDeployer.newOracleWithWrapper(config);
 ```
 
@@ -83,13 +95,13 @@ Anything that wraps reads in `try / catch` (Aave-style consumers) must respect
 two constraints, or the pause feature is silently defeated:
 
 1. **No fallback oracle on the same priced asset.** A fallback that catches
-   our pause revert and serves a raw Chronicle / raw Pyth / raw anything
+   our pause revert and serves a raw DIA / raw Chainlink / raw anything
    price masks the exact failure mode the auto-pause exists to surface.
    The pause must reach the protocol as `OraclePriceNotFound` or
    equivalent, never get swallowed.
 2. **Consumer's `maxPriceAge` ≥ adapter's `maxAge`.** Otherwise the
    consumer's staleness check rejects the read before our internal
-   `ChroniclePriceStale(age)` revert can surface, and the deployment
+   `DIAPriceStale(timestamp)` revert can surface, and the deployment
    loses the layered staleness signal. Set consumer staleness as a strict
    upper bound on adapter staleness.
 
@@ -116,15 +128,15 @@ forge fmt --check        # check formatting
 src/
 ├── concrete/
 │   ├── oracle/
-│   │   └── ChronicleVaultOracle.sol
+│   │   └── DIAVaultOracle.sol
 │   ├── wrapper/
 │   │   └── PausableOracleWrapper.sol
 │   └── deploy/
-│       ├── ChronicleVaultOracleBeaconSetDeployer.sol
+│       ├── DIAVaultOracleBeaconSetDeployer.sol
 │       ├── PausableOracleWrapperBeaconSetDeployer.sol
-│       └── ChronicleOracleUnifiedDeployer.sol
+│       └── DIAOracleUnifiedDeployer.sol
 ├── interface/
-│   ├── IChronicle.sol           (vendored from chronicleprotocol/chronicle-std, MIT)
+│   ├── IDIAOracleV2.sol         (vendored DIA Data Association's published interface)
 │   └── IAggregatorV2V3.sol      (vendored Chainlink shape)
 └── lib/
     └── LibCorporateActionsPause.sol
@@ -138,7 +150,7 @@ test/
 
 ## Dependencies
 
-- [chronicle-std](https://github.com/chronicleprotocol/chronicle-std) -- `IChronicle` interface, vendored locally (MIT)
+- DIA Data Association's published `IDIAOracleV2` interface — vendored locally
 - [st0x.deploy](https://github.com/S01-Issuer/st0x.deploy) -- `ICorporateActionsV1`, BeaconSetDeployer pattern, `ICloneableV2`
 - [rain-math-float](https://github.com/rainlanguage/rain.math.float) -- decimal-float arithmetic for the share-price computation
 - [openzeppelin-contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) -- `UpgradeableBeacon`, `BeaconProxy`, `Initializable`, `IERC4626`

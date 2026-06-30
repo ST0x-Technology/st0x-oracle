@@ -3,7 +3,7 @@
 **Repository:** `st0x.oracle`
 **Version:** 3.0
 **Status:** Draft
-**Date:** 2026-06-26
+**Date:** 2026-06-30
 
 ---
 
@@ -28,7 +28,7 @@ oracle stack's job is to expose a single proxy address per vault that:
    corporate-action machinery.
 
 The previous architecture (Pyth + per-protocol adapters + a registry indirection
-layer) has been replaced. Chronicle Protocol now supplies the underlying price,
+layer) has been replaced. DIA Data Association now supplies the underlying price,
 all protocol-specific adapter shims are gone (consumers target
 `AggregatorV2V3Interface` directly), and the registry indirection has been
 removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
@@ -49,11 +49,11 @@ removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
                                      │ upstream (immutable)
                                      ▼
                     ┌──────────────────────────────────────┐
-                    │         ChronicleVaultOracle         │
+                    │           DIAVaultOracle             │
                     │                                      │
                     │   AggregatorV2V3Interface (8 dec)    │
                     │                                      │
-                    │   price = chronicle.read()           │
+                    │   price = diaOracle.getValue(symbol) │
                     │         × vault.totalAssets()        │
                     │         / vault.totalSupply()        │
                     └────────────────┬─────────────────────┘
@@ -61,9 +61,9 @@ removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
                 ┌────────────────────┴────────────────────┐
                 ▼                                         ▼
        ┌─────────────────┐                    ┌──────────────────┐
-       │   IChronicle    │                    │  ERC-4626 vault  │
+       │  IDIAOracleV2   │                    │  ERC-4626 vault  │
        │  (off-chain     │                    │   (wtStock)      │
-       │   poked price)  │                    │                  │
+       │   pushed price) │                    │                  │
        └─────────────────┘                    └──────────────────┘
                                                        ▲
                                                        │ ICorporateActionsV1
@@ -78,7 +78,7 @@ removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
 
 **Two layers, separated by intent:**
 
-- **Adapter layer** — `ChronicleVaultOracle`. Pure price math. Reads Chronicle
+- **Adapter layer** — `DIAVaultOracle`. Pure price math. Reads DIA
   for the underlying, multiplies by the vault's assets-per-share ratio, scales
   to 8 decimals. No admin, no pause flag, nothing operational. Replaceable by
   a different price-source adapter without touching the wrapper.
@@ -95,36 +95,42 @@ not be exposed to integrators after deploy time.
 
 ---
 
-## 3. `ChronicleVaultOracle`
+## 3. `DIAVaultOracle`
 
-**Location:** `src/concrete/oracle/ChronicleVaultOracle.sol`
+**Location:** `src/concrete/oracle/DIAVaultOracle.sol`
 
-Prices ERC-4626 vault shares by combining the Chronicle Protocol price of the
-underlying asset with the vault's `totalAssets / totalSupply` ratio. Beacon-proxy
-clone via `ICloneableV2`. 8-decimal `AggregatorV2V3Interface` output.
+Prices ERC-4626 vault shares by combining the DIA Data Association price of
+the underlying asset with the vault's `totalAssets / totalSupply` ratio.
+Beacon-proxy clone via `ICloneableV2`. 8-decimal `AggregatorV2V3Interface`
+output.
 
 ### 3.1 Storage
 
 ```solidity
-IChronicle public chronicle;   // Chronicle feed for the underlying asset
-address    public vault;       // ERC-4626 vault whose shares are priced
-uint256    public maxAge;      // Max acceptable Chronicle reading age (seconds)
+IDIAOracleV2 public diaOracle;   // DIA oracle contract
+string       public symbol;      // Bare feed symbol e.g. "COIN", "AMZN", "TSLA"
+address      public vault;       // ERC-4626 vault whose shares are priced
+uint256      public maxAge;      // Max acceptable DIA reading age (seconds)
 ```
 
-All three are set once by `initialize(bytes calldata)` and never written again.
-There is no admin, no pause flag, no setter. To change any of them, deploy a
-fresh proxy and migrate consumers.
+All four are set once by `initialize(bytes calldata)` and never written
+again. There is no admin, no pause flag, no setter. To change any of them,
+deploy a fresh proxy and migrate consumers.
+
+The DIA feed key is the **bare symbol** (`"COIN"`, `"AMZN"`, `"TSLA"`), not
+a pair string like `"COIN/USD"`. The DIA oracle contract is queried with
+this string as the key argument to `getValue`.
 
 ### 3.2 Price Formula
 
 ```
-                       chroniclePrice × vault.totalAssets()
-   vaultSharePrice  =  ─────────────────────────────────────     (then 8dp)
+                       diaPrice × vault.totalAssets()
+   vaultSharePrice  =  ─────────────────────────────────     (then 8dp)
                               vault.totalSupply()
 ```
 
-- `chroniclePrice` is the 18-decimal `uint256` returned by
-  `IChronicle.readWithAge()`.
+- `diaPrice` is the 18-decimal `uint128` value returned by
+  `IDIAOracleV2.getValue(symbol)`.
 - The full computation is performed in Rain decimal-float space
   (`rain-math-float`), so neither operand can overflow `uint256` and decimal
   scaling is exact until the final reduction. The conversion to fixed-point
@@ -136,27 +142,30 @@ fresh proxy and migrate consumers.
 
 ### 3.3 Surface
 
-`ChronicleVaultOracle implements AggregatorV2V3Interface, ICloneableV2,
+`DIAVaultOracle implements AggregatorV2V3Interface, ICloneableV2,
 Initializable`:
 
 | Function | Behaviour |
 |----------|-----------|
 | `decimals()` | Returns `8`. Chainlink convention for USD-denominated price feeds. |
-| `description()` | Returns `""`. ST0x deployments do not rely on this string; consumers route by proxy address. |
+| `description()` | Returns the configured `symbol` (e.g. `"COIN"`). Lets consumers introspect what symbol the oracle wraps without an off-chain lookup. |
 | `version()` | Returns `1`. |
-| `latestAnswer()` | Reads Chronicle (checks `maxAge`), computes share price, returns `int256`. |
-| `latestRoundData()` | As above, with `roundId == answeredInRound == uint80(age)` and `startedAt == updatedAt == age`. Integrators that diff `roundId` see a new value whenever Chronicle has produced a new poke. |
-| `getRoundData(_roundId)` | Always reverts `HistoricalRoundDataUnsupported(_roundId)`. Chronicle exposes only its latest poke through this interface. |
+| `latestAnswer()` | Reads DIA via `getValue(symbol)` (checks `maxAge` and not-set), computes share price, returns `int256`. |
+| `latestRoundData()` | As above, with `roundId == answeredInRound == uint80(timestamp)` and `startedAt == updatedAt == timestamp`. Integrators that diff `roundId` see a new value whenever DIA has produced a new push. |
+| `getRoundData(_roundId)` | Always reverts `HistoricalRoundDataUnsupported(_roundId)`. DIA exposes only its latest push through this interface. |
 
 ### 3.4 Errors
 
-- `ZeroChronicle()` / `ZeroVault()` / `ZeroMaxAge()` — `initialize` rejects
-  zero values. `maxAge = 0` would make every read instantly stale; failing
+- `ZeroDIAOracle()` / `EmptySymbol()` / `ZeroVault()` / `ZeroMaxAge()` —
+  `initialize` rejects zero values. An empty symbol would key into an unset
+  DIA feed; `maxAge = 0` would make every read instantly stale; failing
   loud at init is preferable to minting a broken oracle.
-- `ChroniclePriceStale(uint256 age)` — `block.timestamp - age > maxAge`. The
-  oracle uses `readWithAge` (which itself reverts on no value), not
-  `tryReadWithAge` — a missing Chronicle value is always an oracle failure
-  that must surface, never be silently masked.
+- `DIAPriceNotSet()` — DIA's `getValue(symbol)` returned `(0, 0)`. DIA does
+  **not** revert for unset feeds — it silently returns zeros. The adapter
+  checks this explicitly and raises `DIAPriceNotSet()` rather than producing
+  a zero-value Chainlink answer, which would be silently catastrophic for
+  consumers that don't check for zero.
+- `DIAPriceStale(uint256 timestamp)` — `block.timestamp - timestamp > maxAge`.
 - `ZeroVaultSupply()` — `vault.totalSupply() == 0`. Pricing one share of a
   zero-supply vault is undefined.
 - `ZeroVaultSharePrice()` — computed price rounds to zero. A zero price is
@@ -167,9 +176,30 @@ Initializable`:
 
 ### 3.5 Events
 
-- `ChronicleVaultOracleInitialized(address indexed sender,
-  ChronicleVaultOracleConfig config)` — emitted exactly once. Single source
+- `DIAVaultOracleInitialized(address indexed sender,
+  DIAVaultOracleConfig config)` — emitted exactly once. Single source
   of truth for off-chain indexers; all immutable config lives in this event.
+
+### 3.6 DIA Freshness Policy
+
+DIA pushes a new value whenever **either** of two triggers fires, whichever
+happens first:
+
+- **Deviation trigger:** the off-chain price has moved by ≥ 0.1% since the
+  last on-chain push.
+- **Heartbeat trigger:** 1 hour has elapsed since the last push.
+
+So during volatile periods, pushes happen every few minutes; the 1-hour
+heartbeat is the dead-market floor. **Recommended `maxAge = 2 hours`** — one
+missed heartbeat tolerance, enough slack to absorb a single skipped push
+without false staleness reverts, but tight enough to surface a genuinely
+stalled feed quickly.
+
+### 3.7 Live DIA Contract on Base
+
+The canonical DIA oracle contract on Base mainnet is
+`0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol price feeds are all
+served by this single contract via `getValue(string key)`.
 
 ---
 
@@ -381,7 +411,7 @@ share-price invariant would no longer be guaranteed by construction.
 
 ## 7. Beacon-Proxy & Upgrade Model
 
-Both `ChronicleVaultOracle` and `PausableOracleWrapper` follow the standard
+Both `DIAVaultOracle` and `PausableOracleWrapper` follow the standard
 `st0x.deploy` BeaconSetDeployer pattern:
 
 - Each contract has a `BeaconSetDeployer` constructor that takes an
@@ -403,7 +433,8 @@ Both `ChronicleVaultOracle` and `PausableOracleWrapper` follow the standard
 - Change a proxy's `upstream` (it's immutable in the proxy's storage).
 - Change a proxy's `corporateActionsVault`, `actionTypeMask`,
   `pauseTimeBefore`, or `pauseTimeAfter`.
-- Change a `ChronicleVaultOracle` proxy's `chronicle`, `vault`, or `maxAge`.
+- Change a `DIAVaultOracle` proxy's `diaOracle`, `symbol`, `vault`, or
+  `maxAge`.
 
 These are immutable after init by design. A beacon upgrade can change
 behaviour but cannot redirect the priced source or weaken the pause windows.
@@ -419,19 +450,20 @@ intentional friction surface.
 
 | Contract | Purpose |
 |----------|---------|
-| `ChronicleVaultOracleBeaconSetDeployer` | Owns the `ChronicleVaultOracle` beacon. Exposes `newChronicleVaultOracle(config)` to mint a proxy. |
+| `DIAVaultOracleBeaconSetDeployer` | Owns the `DIAVaultOracle` beacon. Exposes `newDIAVaultOracle(config)` to mint a proxy. |
 | `PausableOracleWrapperBeaconSetDeployer` | Owns the `PausableOracleWrapper` beacon. Exposes `newPausableOracleWrapper(config)` to mint a proxy. |
-| `ChronicleOracleUnifiedDeployer` | One-shot. `newOracleWithWrapper(config)` mints both proxies in a single transaction and wires `wrapper.upstream = oracle`. |
+| `DIAOracleUnifiedDeployer` | One-shot. `newOracleWithWrapper(config)` mints both proxies in a single transaction and wires `wrapper.upstream = oracle`. |
 
 ### 8.1 Unified Deploy
 
 ```solidity
-ChronicleOracleUnifiedDeployConfig memory config = ChronicleOracleUnifiedDeployConfig({
+DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
     admin: governanceMultisig,
-    oracleConfig: ChronicleVaultOracleConfig({
-        chronicle: IChronicle(chronicleFeed),
+    oracleConfig: DIAVaultOracleConfig({
+        diaOracle: IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+        symbol:    "COIN",
         vault:     wtStockVault,
-        maxAge:    60
+        maxAge:    2 hours
     }),
     pauseConfig: CorporateActionPauseConfig({
         corporateActionsVault: corporateActionsVault,
@@ -441,7 +473,7 @@ ChronicleOracleUnifiedDeployConfig memory config = ChronicleOracleUnifiedDeployC
     })
 });
 
-(ChronicleVaultOracle oracle, PausableOracleWrapper wrapper) =
+(DIAVaultOracle oracle, PausableOracleWrapper wrapper) =
     unifiedDeployer.newOracleWithWrapper(config);
 
 // Hand `address(wrapper)` to consumers. Forget `address(oracle)`.
@@ -456,11 +488,11 @@ in the deployer's `Deployment(caller, oracle, wrapper)` event.
 
 ### 8.2 Per-Chain Deploy Sequence
 
-1. Deploy `ChronicleVaultOracle` implementation.
-2. Deploy `ChronicleVaultOracleBeaconSetDeployer` (it constructs its beacon).
+1. Deploy `DIAVaultOracle` implementation.
+2. Deploy `DIAVaultOracleBeaconSetDeployer` (it constructs its beacon).
 3. Deploy `PausableOracleWrapper` implementation.
 4. Deploy `PausableOracleWrapperBeaconSetDeployer` (it constructs its beacon).
-5. Deploy `ChronicleOracleUnifiedDeployer` wired to both BeaconSetDeployers.
+5. Deploy `DIAOracleUnifiedDeployer` wired to both BeaconSetDeployers.
 6. (Per vault) Call `unifiedDeployer.newOracleWithWrapper(...)`.
 
 Steps 1-5 happen once per chain. Step 6 is one transaction per vault.
@@ -474,14 +506,15 @@ Steps 1-5 happen once per chain. Step 6 is one transaction per vault.
 Two interfaces are vendored locally rather than pulled as soldeer or git
 dependencies:
 
-- **`IChronicle.sol`** — Chronicle Protocol's oracle interface
-  (`wat`, `read`, `readWithAge`, `tryRead`, `tryReadWithAge`). 18-decimal
-  `uint256` values. Hand-typed copy of
-  `chronicleprotocol/chronicle-std:src/IChronicle.sol` (MIT-licensed),
-  last synced 2026-06-26 against `main`. Vendored because the interface is
-  small, stable, and Chronicle does not currently publish `chronicle-std`
-  to soldeer. **No drift-detection test exists.** Re-sync on any upstream
-  bump.
+- **`IDIAOracleV2.sol`** — DIA Data Association's published oracle interface.
+  Single function: `getValue(string memory key) returns (uint128 value,
+  uint128 timestamp)`. `value` is the 18-decimal price for the symbol;
+  `timestamp` is the `block.timestamp` of the last on-chain push. **DIA does
+  not revert for unset feeds** — it returns `(0, 0)`. The adapter checks
+  this explicitly (see §3.4 `DIAPriceNotSet`). Vendored because the
+  interface is one function and stable; hand-typed against DIA Data
+  Association's published interface, last synced 2026-06-30. No
+  drift-detection test exists — re-sync on any upstream bump.
 
 - **`IAggregatorV2V3.sol`** — Hybrid of Chainlink's `AggregatorInterface`
   (v2 — `latestAnswer`) and `AggregatorV3Interface` (v3 — `latestRoundData`,
@@ -504,7 +537,7 @@ a Chainlink feed except that:
   must treat these reverts as "price unavailable", not "price is the last
   successful read".
 - `getRoundData(_roundId)` always reverts when the upstream is
-  `ChronicleVaultOracle`. Consumers should not rely on historical round
+  `DIAVaultOracle`. Consumers should not rely on historical round
   lookups against this stack.
 
 ### 10.1 Operational Preconditions
@@ -512,16 +545,16 @@ a Chainlink feed except that:
 For any consumer that wraps reads in `try / catch`:
 
 1. **Do not configure a fallback oracle on the same bToken that points at a
-   raw Chronicle feed (or a raw Pyth feed, or anything else).** A fallback
-   would silently mask the pause errors — exactly the failure mode the
-   auto-pause is supposed to make loud. A pause must surface to the
-   protocol as `OraclePriceNotFound` (or its equivalent), not get swallowed
-   by a fallback that wasn't aware the price was deliberately withheld.
+   raw DIA / raw Chainlink / raw anything feed.** A fallback would silently
+   mask the pause errors — exactly the failure mode the auto-pause is
+   supposed to make loud. A pause must surface to the protocol as
+   `OraclePriceNotFound` (or its equivalent), not get swallowed by a
+   fallback that wasn't aware the price was deliberately withheld.
 
 2. **The consumer's own `maxPriceAge` (or equivalent staleness threshold)
    must be greater than or equal to the adapter's `maxAge`.** Otherwise
    the consumer's check rejects the read before the adapter's internal
-   `ChroniclePriceStale(age)` revert can fire, and the deployment loses
+   `DIAPriceStale(timestamp)` revert can fire, and the deployment loses
    the layered staleness signal. Configure consumer staleness as a strict
    upper bound on adapter staleness.
 
@@ -534,22 +567,22 @@ st0x.oracle/
 ├── src/
 │   ├── concrete/
 │   │   ├── oracle/
-│   │   │   └── ChronicleVaultOracle.sol
+│   │   │   └── DIAVaultOracle.sol
 │   │   ├── wrapper/
 │   │   │   └── PausableOracleWrapper.sol
 │   │   └── deploy/
-│   │       ├── ChronicleVaultOracleBeaconSetDeployer.sol
+│   │       ├── DIAVaultOracleBeaconSetDeployer.sol
 │   │       ├── PausableOracleWrapperBeaconSetDeployer.sol
-│   │       └── ChronicleOracleUnifiedDeployer.sol
+│   │       └── DIAOracleUnifiedDeployer.sol
 │   ├── interface/
-│   │   ├── IChronicle.sol           ← vendored Chronicle (MIT)
+│   │   ├── IDIAOracleV2.sol         ← vendored DIA interface
 │   │   └── IAggregatorV2V3.sol      ← vendored Chainlink shape
 │   └── lib/
 │       └── LibCorporateActionsPause.sol
 └── test/
     ├── mocks/
     │   ├── MockAggregatorV2V3.sol
-    │   ├── MockChronicle.sol
+    │   ├── MockDIAOracleV2.sol
     │   ├── MockCorporateActions.sol
     │   └── MockERC4626.sol
     └── src/
@@ -559,48 +592,57 @@ st0x.oracle/
         │   └── deploy/
         ├── lib/
         └── e2e/
-            └── ChronicleStackE2E.t.sol
+            └── DIAStackE2E.t.sol
 ```
 
 ---
 
 ## 12. Security Considerations
 
-1. **Chronicle staleness must surface, not mask.** The adapter uses
-   `readWithAge` (reverts on no value), not `tryReadWithAge` (returns
-   `isValid=false`). A missing Chronicle value is always an oracle failure
-   that must reach the consumer.
-2. **`maxAge == 0` is rejected at init.** A zero `maxAge` would make every
+1. **DIA "not set" must surface, not mask.** DIA's `getValue` returns
+   `(0, 0)` for unset feeds rather than reverting. The adapter checks this
+   explicitly and raises `DIAPriceNotSet()`. A zero-value Chainlink answer
+   passed through to a consumer that does not check for zero would be
+   silently catastrophic.
+2. **DIA staleness must surface, not mask.** `block.timestamp - timestamp
+   > maxAge` reverts `DIAPriceStale(timestamp)`. A stalled feed is always
+   an oracle failure that must reach the consumer.
+3. **`maxAge == 0` is rejected at init.** A zero `maxAge` would make every
    read instantly stale; failing loud at init is preferable to minting an
-   always-reverting oracle.
-3. **Vault ratio is trusted.** `totalAssets / totalSupply` is taken at face
+   always-reverting oracle. Recommended value: `2 hours` (see §3.6).
+4. **Vault ratio is trusted.** `totalAssets / totalSupply` is taken at face
    value. The vault must be a known ST0x deployment; pricing a hostile
    ERC-4626 implementation is out of scope.
-4. **Zero vault supply reverts.** Pricing a share of a zero-supply vault
+5. **Zero vault supply reverts.** Pricing a share of a zero-supply vault
    is undefined; the adapter reverts `ZeroVaultSupply()`.
-5. **`NODE_NONE` is the no-match sentinel, not `0`.** See §5.4. Misreading
+6. **`NODE_NONE` is the no-match sentinel, not `0`.** See §5.4. Misreading
    this would treat the bootstrap node as a real corporate action.
-6. **Pending-wins overlap rule.** See §5.3. If a future change reverses
+7. **Pending-wins overlap rule.** See §5.3. If a future change reverses
    this, integrators reading the `effectiveTime` payload would see the
    wrong "next event" timestamp.
-7. **Wrapper `admin` is single-step and zero-rejected on transfer.** A
+8. **Wrapper `admin` is single-step and zero-rejected on transfer.** A
    misaddressed transfer permanently locks `setPaused`; use a multisig.
-8. **Upstream and pause config are immutable.** No admin path can redirect
+9. **Upstream and pause config are immutable.** No admin path can redirect
    the priced source or weaken pause windows; only redeploy + migration.
-9. **`getRoundData` reverts on Chronicle-backed deployments.** Consumers
-   that depend on historical round lookups will fail loudly, not get
-   wrong-but-plausible data.
-10. **Fallback oracles on the consumer side undermine the pause feature.**
+10. **`getRoundData` reverts on DIA-backed deployments.** Consumers
+    that depend on historical round lookups will fail loudly, not get
+    wrong-but-plausible data.
+11. **Fallback oracles on the consumer side undermine the pause feature.**
     See §10.1. The pause must reach the consumer; a fallback that hides it
     defeats the security property.
+12. **Bare-symbol key requirement.** DIA feeds are keyed by the bare ticker
+    (`"COIN"`, `"AMZN"`, `"TSLA"`), not a pair string. A wrong key returns
+    `(0, 0)` from DIA and is caught at the `DIAPriceNotSet()` boundary, but
+    deployers should still confirm the symbol matches the DIA registry on
+    the target chain before minting a proxy.
 
 ---
 
 ## 13. References
 
-- **Chronicle Protocol** — https://chroniclelabs.org/
-- **chronicle-std (`IChronicle` source of truth)** —
-  https://github.com/chronicleprotocol/chronicle-std
+- **DIA Data Association** — https://www.diadata.org/
+- **DIA oracle on Base mainnet** —
+  `0xCE521b52513242c5094bc56f57887BB2A05B8129`
 - **`st0x.deploy` (corporate actions, BeaconSetDeployer pattern,
   `ICloneableV2`)** — https://github.com/S01-Issuer/st0x.deploy
 - **`rain-math-float`** — https://github.com/rainlanguage/rain.math.float

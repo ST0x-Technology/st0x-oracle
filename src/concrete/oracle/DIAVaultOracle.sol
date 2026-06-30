@@ -2,26 +2,36 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {IChronicle} from "src/interface/IChronicle.sol";
+import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
 import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 
-/// @dev Error raised when a zero address is provided for the Chronicle feed.
-error ZeroChronicle();
+/// @dev Error raised when a zero address is provided for the DIA feed.
+error ZeroDIAOracle();
 
 /// @dev Error raised when a zero address is provided for the vault.
 error ZeroVault();
+
+/// @dev Error raised when an empty symbol is provided. DIA keys feeds by
+/// the bare symbol string (`"COIN"`, `"AMZN"`, ...) and an empty key is a
+/// configuration error that would silently return zero.
+error EmptySymbol();
 
 /// @dev Error raised when a zero max age is provided. Zero would mean every
 /// price read is instantly stale, which is never the desired configuration.
 error ZeroMaxAge();
 
-/// @dev Error raised when the Chronicle reading is older than `maxAge` seconds.
-/// @param age The `block.timestamp` of the stale Chronicle poke.
-error ChroniclePriceStale(uint256 age);
+/// @dev Error raised when the DIA feed has never been pushed (value or
+/// timestamp == 0). Distinct from `DIAPriceStale` so integrators can
+/// disambiguate "feed not yet active" from "feed active but late".
+error DIAPriceNotSet();
+
+/// @dev Error raised when the DIA reading is older than `maxAge` seconds.
+/// @param timestamp The `block.timestamp` of the stale DIA push.
+error DIAPriceStale(uint256 timestamp);
 
 /// @dev Error raised when the vault has zero total supply (no shares minted).
 /// Pricing one share of a zero-supply vault is undefined.
@@ -35,39 +45,43 @@ error ZeroVaultSharePrice();
 /// @param price8 The unsigned 8-decimal share price that wouldn't fit.
 error VaultSharePriceOverflow(uint256 price8);
 
-/// @dev Error raised when a caller requests historical round data. Chronicle
-/// exposes only the latest poke, so there is no per-round history here.
-/// Callers needing historical data should query an indexer or Chronicle's
-/// off-chain feed history directly.
+/// @dev Error raised when a caller requests historical round data. DIA
+/// exposes only the latest push, so there is no per-round history here.
+/// Callers needing historical data should query DIA's off-chain feed
+/// history or an indexer of DIA pushes directly.
 /// @param roundId The unsupported round id that was requested.
 error HistoricalRoundDataUnsupported(uint80 roundId);
 
-/// @title ChronicleVaultOracleConfig
-/// @notice Configuration for `ChronicleVaultOracle.initialize`.
-/// @param chronicle The Chronicle Protocol oracle (`IChronicle`) for the
+/// @title DIAVaultOracleConfig
+/// @notice Configuration for `DIAVaultOracle.initialize`.
+/// @param diaOracle The DIA Data Association V2 oracle contract holding the
 /// underlying asset price.
+/// @param symbol The DIA feed key (bare symbol, e.g. `"COIN"`). DIA keys
+/// feeds by the bare symbol, not the pair string.
 /// @param vault The ERC-4626 vault address whose shares we're pricing.
 /// `vault.totalAssets() / vault.totalSupply()` is the share-to-asset ratio
-/// applied on top of the Chronicle price. For a wtStock-style wrapper this
+/// applied on top of the DIA price. For a wtStock-style wrapper this
 /// captures the post-corporate-action NAV bump.
-/// @param maxAge Maximum acceptable Chronicle reading age in seconds.
-/// `block.timestamp - age > maxAge` reverts `ChroniclePriceStale`. Immutable
+/// @param maxAge Maximum acceptable DIA push age in seconds.
+/// `block.timestamp - timestamp > maxAge` reverts `DIAPriceStale`. Immutable
 /// after init — redeploy a fresh proxy to change.
-struct ChronicleVaultOracleConfig {
-    IChronicle chronicle;
+struct DIAVaultOracleConfig {
+    IDIAOracleV2 diaOracle;
+    string symbol;
     address vault;
     uint256 maxAge;
 }
 
-/// @title ChronicleVaultOracle
+/// @title DIAVaultOracle
 /// @notice Prices ERC-4626 vault shares by reading the underlying asset price
-/// from a Chronicle Protocol feed and multiplying by the vault's
+/// from a DIA Data Association feed and multiplying by the vault's
 /// assets-per-share ratio. Exposes prices via Chainlink's
-/// `AggregatorV2V3Interface` so consumers (Euler, Aave-style lending protocols)
-/// can target the same surface they already use for Chainlink feeds.
+/// `AggregatorV2V3Interface` so consumers (Euler, Aave-style lending
+/// protocols) can target the same surface they already use for Chainlink
+/// feeds.
 ///
-/// Math: `vaultSharePrice = chroniclePrice * totalAssets / totalSupply`
-/// scaled to 8 decimals. Performed in Rain float space throughout so neither
+/// Math: `vaultSharePrice = diaPrice * totalAssets / totalSupply` scaled
+/// to 8 decimals. Performed in Rain float space throughout so neither
 /// operand can overflow uint256 — the conversion to fixed-point 8dp happens
 /// only at the final return.
 ///
@@ -78,21 +92,24 @@ struct ChronicleVaultOracleConfig {
 /// oracle provider.
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
-contract ChronicleVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
-    /// @dev The Chronicle Protocol feed for the underlying asset.
-    IChronicle public chronicle;
+contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
+    /// @dev The DIA Data Association V2 oracle feed for the underlying asset.
+    IDIAOracleV2 public diaOracle;
+
+    /// @dev The DIA feed key (bare symbol, e.g. `"COIN"`).
+    string public symbol;
 
     /// @dev The ERC-4626 vault this oracle prices shares for.
     address public vault;
 
-    /// @dev Maximum acceptable Chronicle reading age in seconds.
+    /// @dev Maximum acceptable DIA push age in seconds.
     uint256 public maxAge;
 
     /// @notice Emitted when the oracle is initialized. Single source of
     /// truth for off-chain indexers — all immutable config in one event.
     /// @param sender The caller that initialized the proxy.
     /// @param config The initialization configuration.
-    event ChronicleVaultOracleInitialized(address indexed sender, ChronicleVaultOracleConfig config);
+    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
 
     constructor() {
         _disableInitializers();
@@ -104,31 +121,33 @@ contract ChronicleVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initiali
     /// @dev Always reverts with `InitializeSignatureFn`.
     /// @param config The initialization configuration. Ignored.
     /// @return Never returns; included only for the function signature.
-    function initialize(ChronicleVaultOracleConfig memory config) external pure returns (bytes32) {
+    function initialize(DIAVaultOracleConfig memory config) external pure returns (bytes32) {
         (config);
         revert InitializeSignatureFn();
     }
 
     /// @inheritdoc ICloneableV2
     function initialize(bytes calldata data) external initializer returns (bytes32) {
-        ChronicleVaultOracleConfig memory config = abi.decode(data, (ChronicleVaultOracleConfig));
+        DIAVaultOracleConfig memory config = abi.decode(data, (DIAVaultOracleConfig));
 
-        if (address(config.chronicle) == address(0)) revert ZeroChronicle();
+        if (address(config.diaOracle) == address(0)) revert ZeroDIAOracle();
+        if (bytes(config.symbol).length == 0) revert EmptySymbol();
         if (config.vault == address(0)) revert ZeroVault();
         if (config.maxAge == 0) revert ZeroMaxAge();
 
-        chronicle = config.chronicle;
+        diaOracle = config.diaOracle;
+        symbol = config.symbol;
         vault = config.vault;
         maxAge = config.maxAge;
 
-        emit ChronicleVaultOracleInitialized(msg.sender, config);
+        emit DIAVaultOracleInitialized(msg.sender, config);
 
         return ICLONEABLE_V2_SUCCESS;
     }
 
     /// @inheritdoc AggregatorV2V3Interface
-    function description() external pure override returns (string memory) {
-        return "";
+    function description() external view override returns (string memory) {
+        return symbol;
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -143,16 +162,16 @@ contract ChronicleVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initiali
 
     /// @inheritdoc AggregatorV2V3Interface
     function latestAnswer() external view override returns (int256) {
-        (uint256 chroniclePrice,) = _readChronicleChecked();
-        return _vaultSharePrice(chroniclePrice);
+        (uint128 diaPrice,) = _readDIAChecked();
+        return _vaultSharePrice(diaPrice);
     }
 
     /// @inheritdoc AggregatorV2V3Interface
-    /// @dev `roundId` and `answeredInRound` are derived from the Chronicle
-    /// `age` (truncated to `uint80`) so they advance monotonically per
+    /// @dev `roundId` and `answeredInRound` are derived from the DIA push
+    /// `timestamp` (truncated to `uint80`) so they advance monotonically per
     /// Chainlink convention without adding storage. Integrators that diff
     /// `roundId` between calls to detect a fresh update will see a different
-    /// value whenever Chronicle has produced a new poke. The `uint80` window
+    /// value whenever DIA has produced a new push. The `uint80` window
     /// covers every plausible deployment lifetime.
     function latestRoundData()
         external
@@ -160,43 +179,41 @@ contract ChronicleVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initiali
         override
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
-        (uint256 chroniclePrice, uint256 age) = _readChronicleChecked();
-        int256 scaledPrice = _vaultSharePrice(chroniclePrice);
+        (uint128 diaPrice, uint128 timestamp) = _readDIAChecked();
+        int256 scaledPrice = _vaultSharePrice(diaPrice);
 
-        uint80 ageRound = uint80(age);
-        return (ageRound, scaledPrice, age, age, ageRound);
+        uint80 round = uint80(timestamp);
+        return (round, scaledPrice, timestamp, timestamp, round);
     }
 
     /// @inheritdoc AggregatorV2V3Interface
-    /// @dev Chronicle exposes only its latest value — no per-round history
-    /// through this interface. Every call reverts with
+    /// @dev DIA exposes only its latest value — no per-round history through
+    /// this interface. Every call reverts with
     /// `HistoricalRoundDataUnsupported(_roundId)`. Callers needing
-    /// point-in-time data should query Chronicle's off-chain feed history
-    /// or an indexer of Chronicle pokes directly.
+    /// point-in-time data should query DIA's off-chain feed history or an
+    /// indexer of DIA pushes directly.
     function getRoundData(uint80 _roundId) external pure override returns (uint80, int256, uint256, uint256, uint80) {
         revert HistoricalRoundDataUnsupported(_roundId);
     }
 
-    /// @dev Read Chronicle and revert if the reading is stale. We use
-    /// `readWithAge` (which reverts on no value) rather than `tryReadWithAge`
-    /// (which returns isValid=false) — a missing Chronicle value is always
-    /// an oracle failure that must surface, not be silently masked.
-    function _readChronicleChecked() internal view returns (uint256 value, uint256 age) {
-        // slither-disable-next-line chronicle-unchecked-price
-        (value, age) = chronicle.readWithAge();
+    /// @dev Read DIA and revert on either "never pushed" (DIAPriceNotSet) or
+    /// "too old" (DIAPriceStale). DIA's `getValue` returns `(0, 0)` for an
+    /// unset feed rather than reverting — we must check explicitly.
+    function _readDIAChecked() internal view returns (uint128 value, uint128 timestamp) {
+        (value, timestamp) = diaOracle.getValue(symbol);
+        if (value == 0 || timestamp == 0) revert DIAPriceNotSet();
         // slither-disable-next-line timestamp
-        if (block.timestamp - age > maxAge) revert ChroniclePriceStale(age);
+        if (block.timestamp - uint256(timestamp) > maxAge) revert DIAPriceStale(uint256(timestamp));
     }
 
-    /// @dev Compute vault share price from a Chronicle reading via Rain float
-    /// math so neither operand can overflow uint256. Chronicle prices are
-    /// 18-decimal `uint256` (Chronicle convention). The vault ratio is
-    /// `totalAssets / totalSupply`. Output is 8-decimal `int256` per Chainlink
-    /// `latestAnswer` convention.
-    function _vaultSharePrice(uint256 chroniclePrice) internal view returns (int256) {
-        // Chronicle's value is 18-decimal uint256 — pack as a float with
-        // exponent -18 to recover the natural quantity.
-        Float priceFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(chroniclePrice, 18);
+    /// @dev Compute vault share price from a DIA reading via Rain float math
+    /// so neither operand can overflow uint256. DIA prices are 18-decimal
+    /// `uint128`. The vault ratio is `totalAssets / totalSupply`. Output is
+    /// 8-decimal `int256` per Chainlink `latestAnswer` convention.
+    function _vaultSharePrice(uint128 diaPrice) internal view returns (int256) {
+        // DIA's value is 18-decimal uint128 — pack as a float with decimal
+        // count 18 to recover the natural quantity.
+        Float priceFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(uint256(diaPrice), 18);
 
         IERC4626 vaultContract = IERC4626(vault);
         uint256 totalAssets = vaultContract.totalAssets();

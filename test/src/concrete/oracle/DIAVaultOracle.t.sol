@@ -17,95 +17,110 @@ contract TestERC1967Proxy is ERC1967Proxy {
         return true;
     }
 }
+
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {IChronicle} from "src/interface/IChronicle.sol";
+import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
 import {
-    ChronicleVaultOracle,
-    ChronicleVaultOracleConfig,
-    ZeroChronicle,
+    DIAVaultOracle,
+    DIAVaultOracleConfig,
+    ZeroDIAOracle,
     ZeroVault,
     ZeroMaxAge,
-    ChroniclePriceStale,
+    EmptySymbol,
+    DIAPriceNotSet,
+    DIAPriceStale,
     ZeroVaultSupply,
     ZeroVaultSharePrice,
     HistoricalRoundDataUnsupported
-} from "src/concrete/oracle/ChronicleVaultOracle.sol";
-import {MockChronicle} from "test/mocks/MockChronicle.sol";
+} from "src/concrete/oracle/DIAVaultOracle.sol";
+import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
 import {MockERC4626} from "test/mocks/MockERC4626.sol";
 
-contract ChronicleVaultOracleTest is Test {
-    ChronicleVaultOracle internal implementation;
-    MockChronicle internal chronicle;
+contract DIAVaultOracleTest is Test {
+    DIAVaultOracle internal implementation;
+    MockDIAOracle internal diaOracle;
     MockERC4626 internal vault;
+    string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 1 hours;
 
-    event ChronicleVaultOracleInitialized(address indexed sender, ChronicleVaultOracleConfig config);
+    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
 
     function setUp() public {
-        implementation = new ChronicleVaultOracle();
-        chronicle = new MockChronicle();
+        implementation = new DIAVaultOracle();
+        diaOracle = new MockDIAOracle();
         vault = new MockERC4626();
-        // Warp far enough in that `block.timestamp - age` doesn't underflow.
+        // Warp far enough in that `block.timestamp - maxAge` doesn't underflow.
         vm.warp(1_000_000);
     }
 
-    function _deployUninit() internal returns (ChronicleVaultOracle) {
+    function _deployUninit() internal returns (DIAVaultOracle) {
         // Bare ERC1967 proxy is enough — beacon semantics are irrelevant for
         // unit tests of the implementation surface.
         TestERC1967Proxy proxy = new TestERC1967Proxy(address(implementation));
-        return ChronicleVaultOracle(address(proxy));
+        return DIAVaultOracle(address(proxy));
     }
 
-    function _deployProxy(ChronicleVaultOracleConfig memory config) internal returns (ChronicleVaultOracle) {
-        ChronicleVaultOracle oracle = _deployUninit();
+    function _deployProxy(DIAVaultOracleConfig memory config) internal returns (DIAVaultOracle) {
+        DIAVaultOracle oracle = _deployUninit();
         bytes32 ok = oracle.initialize(abi.encode(config));
         assertEq(ok, ICLONEABLE_V2_SUCCESS);
         return oracle;
     }
 
-    function _defaultConfig() internal view returns (ChronicleVaultOracleConfig memory) {
-        return ChronicleVaultOracleConfig({chronicle: chronicle, vault: address(vault), maxAge: MAX_AGE});
+    function _defaultConfig() internal view returns (DIAVaultOracleConfig memory) {
+        return DIAVaultOracleConfig({
+            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: SYMBOL, vault: address(vault), maxAge: MAX_AGE
+        });
     }
 
     // -------- Init validation --------
 
-    function testInitRevertsZeroChronicle() external {
-        ChronicleVaultOracle oracle = _deployUninit();
-        ChronicleVaultOracleConfig memory config =
-            ChronicleVaultOracleConfig({chronicle: IChronicle(address(0)), vault: address(vault), maxAge: MAX_AGE});
-        vm.expectRevert(ZeroChronicle.selector);
+    function testInitRevertsZeroDIAOracle() external {
+        DIAVaultOracle oracle = _deployUninit();
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.diaOracle = IDIAOracleV2(address(0));
+        vm.expectRevert(ZeroDIAOracle.selector);
         oracle.initialize(abi.encode(config));
     }
 
     function testInitRevertsZeroVault() external {
-        ChronicleVaultOracle oracle = _deployUninit();
-        ChronicleVaultOracleConfig memory config =
-            ChronicleVaultOracleConfig({chronicle: chronicle, vault: address(0), maxAge: MAX_AGE});
+        DIAVaultOracle oracle = _deployUninit();
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(0);
         vm.expectRevert(ZeroVault.selector);
         oracle.initialize(abi.encode(config));
     }
 
     function testInitRevertsZeroMaxAge() external {
-        ChronicleVaultOracle oracle = _deployUninit();
-        ChronicleVaultOracleConfig memory config =
-            ChronicleVaultOracleConfig({chronicle: chronicle, vault: address(vault), maxAge: 0});
+        DIAVaultOracle oracle = _deployUninit();
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 0;
         vm.expectRevert(ZeroMaxAge.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    function testInitRevertsEmptySymbol() external {
+        DIAVaultOracle oracle = _deployUninit();
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.symbol = "";
+        vm.expectRevert(EmptySymbol.selector);
         oracle.initialize(abi.encode(config));
     }
 
     // -------- Init success --------
 
     function testInitSuccessSetsStorageEmitsAndReturnsSuccess() external {
-        ChronicleVaultOracle oracle = _deployUninit();
-        ChronicleVaultOracleConfig memory config = _defaultConfig();
+        DIAVaultOracle oracle = _deployUninit();
+        DIAVaultOracleConfig memory config = _defaultConfig();
 
         vm.expectEmit(true, false, false, true, address(oracle));
-        emit ChronicleVaultOracleInitialized(address(this), config);
+        emit DIAVaultOracleInitialized(address(this), config);
 
         bytes32 ok = oracle.initialize(abi.encode(config));
         assertEq(ok, ICLONEABLE_V2_SUCCESS);
-        assertEq(address(oracle.chronicle()), address(chronicle));
+        assertEq(address(oracle.diaOracle()), address(diaOracle));
+        assertEq(oracle.symbol(), SYMBOL);
         assertEq(oracle.vault(), address(vault));
         assertEq(oracle.maxAge(), MAX_AGE);
     }
@@ -116,7 +131,7 @@ contract ChronicleVaultOracleTest is Test {
         // The typed overload is `pure` and MUST always revert per
         // `ICloneableV2`. Call against the implementation directly so we
         // don't burn an initializer slot on a real proxy.
-        ChronicleVaultOracleConfig memory config = _defaultConfig();
+        DIAVaultOracleConfig memory config = _defaultConfig();
         vm.expectRevert(ICloneableV2.InitializeSignatureFn.selector);
         implementation.initialize(config);
     }
@@ -124,18 +139,18 @@ contract ChronicleVaultOracleTest is Test {
     // -------- Constants --------
 
     function testConstants() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         assertEq(oracle.decimals(), 8);
-        assertEq(oracle.description(), "");
+        assertEq(oracle.description(), SYMBOL);
         assertEq(oracle.version(), 1);
     }
 
     // -------- latestAnswer happy path --------
 
     function testLatestAnswerHappyPath() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        // Chronicle: $100 at 18dp.
-        chronicle.setReadWithAge(100e18, block.timestamp);
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        // DIA: $100 at 18dp.
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
         // Vault: 2 assets per share.
         vault.setTotalAssets(2e18);
         vault.setTotalSupply(1e18);
@@ -145,24 +160,36 @@ contract ChronicleVaultOracleTest is Test {
         assertEq(answer, int256(200e8));
     }
 
-    // -------- latestAnswer stale --------
+    // -------- latestAnswer DIA not set --------
 
-    function testLatestAnswerRevertsWhenStale() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        uint256 staleAge = block.timestamp - MAX_AGE - 1;
-        chronicle.setReadWithAge(100e18, staleAge);
+    function testLatestAnswerRevertsDIAPriceNotSet() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        // Mock returns (0, 0) for an unset key by default.
         vault.setTotalAssets(1e18);
         vault.setTotalSupply(1e18);
 
-        vm.expectRevert(abi.encodeWithSelector(ChroniclePriceStale.selector, staleAge));
+        vm.expectRevert(DIAPriceNotSet.selector);
+        oracle.latestAnswer();
+    }
+
+    // -------- latestAnswer stale --------
+
+    function testLatestAnswerRevertsWhenStale() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 staleTimestamp = uint128(block.timestamp - MAX_AGE - 1);
+        diaOracle.setValue(SYMBOL, 100e18, staleTimestamp);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(staleTimestamp)));
         oracle.latestAnswer();
     }
 
     function testLatestAnswerAtMaxAgeBoundaryNotStale() external {
-        // `block.timestamp - age > maxAge` reverts — equal is OK.
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        uint256 age = block.timestamp - MAX_AGE;
-        chronicle.setReadWithAge(100e18, age);
+        // `block.timestamp - timestamp > maxAge` reverts — equal is OK.
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 boundary = uint128(block.timestamp - MAX_AGE);
+        diaOracle.setValue(SYMBOL, 100e18, boundary);
         vault.setTotalAssets(1e18);
         vault.setTotalSupply(1e18);
 
@@ -173,8 +200,8 @@ contract ChronicleVaultOracleTest is Test {
     // -------- latestAnswer zero supply --------
 
     function testLatestAnswerRevertsZeroSupply() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        chronicle.setReadWithAge(100e18, block.timestamp);
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
         vault.setTotalAssets(2e18);
         vault.setTotalSupply(0);
 
@@ -185,11 +212,11 @@ contract ChronicleVaultOracleTest is Test {
     // -------- latestAnswer zero share price --------
 
     function testLatestAnswerRevertsZeroSharePrice() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        // chroniclePrice = 1 (raw uint with 18dp = 1e-18 USD).
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        // diaPrice = 1 (raw uint with 18dp = 1e-18 USD).
         // totalAssets = 1, totalSupply = 1e18 → ratio = 1e-18.
         // Final = 1e-18 * 1e-18 = 1e-36, scaled to 8dp -> 0.
-        chronicle.setReadWithAge(1, block.timestamp);
+        diaOracle.setValue(SYMBOL, 1, uint128(block.timestamp));
         vault.setTotalAssets(1);
         vault.setTotalSupply(1e18);
 
@@ -200,9 +227,9 @@ contract ChronicleVaultOracleTest is Test {
     // -------- latestRoundData --------
 
     function testLatestRoundData() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        uint256 age = block.timestamp - 5;
-        chronicle.setReadWithAge(100e18, age);
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 timestamp = uint128(block.timestamp - 5);
+        diaOracle.setValue(SYMBOL, 100e18, timestamp);
         vault.setTotalAssets(2e18);
         vault.setTotalSupply(1e18);
 
@@ -210,15 +237,15 @@ contract ChronicleVaultOracleTest is Test {
             oracle.latestRoundData();
 
         assertEq(answer, int256(200e8));
-        assertEq(uint256(roundId), age);
-        assertEq(uint256(answeredInRound), age);
-        assertEq(startedAt, age);
-        assertEq(updatedAt, age);
+        assertEq(uint256(roundId), uint256(timestamp));
+        assertEq(uint256(answeredInRound), uint256(timestamp));
+        assertEq(startedAt, uint256(timestamp));
+        assertEq(updatedAt, uint256(timestamp));
     }
 
     function testLatestRoundDataMatchesLatestAnswer() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        chronicle.setReadWithAge(123e18, block.timestamp);
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 123e18, uint128(block.timestamp));
         vault.setTotalAssets(7e18);
         vault.setTotalSupply(3e18);
 
@@ -230,21 +257,15 @@ contract ChronicleVaultOracleTest is Test {
     // -------- getRoundData always reverts --------
 
     function testGetRoundDataAlwaysReverts(uint80 roundId) external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         vm.expectRevert(abi.encodeWithSelector(HistoricalRoundDataUnsupported.selector, roundId));
         oracle.getRoundData(roundId);
-    }
-
-    function testGetRoundDataRevertsForZero() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
-        vm.expectRevert(abi.encodeWithSelector(HistoricalRoundDataUnsupported.selector, uint80(0)));
-        oracle.getRoundData(0);
     }
 
     // -------- initializer modifier --------
 
     function testCannotInitializeTwice() external {
-        ChronicleVaultOracle oracle = _deployProxy(_defaultConfig());
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         oracle.initialize(abi.encode(_defaultConfig()));
     }

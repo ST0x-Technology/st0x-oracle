@@ -3,12 +3,13 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {IChronicle} from "src/interface/IChronicle.sol";
+import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
 import {
-    ChronicleVaultOracle,
-    ChronicleVaultOracleConfig,
-    ChroniclePriceStale
-} from "src/concrete/oracle/ChronicleVaultOracle.sol";
+    DIAVaultOracle,
+    DIAVaultOracleConfig,
+    DIAPriceNotSet,
+    DIAPriceStale
+} from "src/concrete/oracle/DIAVaultOracle.sol";
 import {
     PausableOracleWrapper,
     CorporateActionPauseConfig,
@@ -16,54 +17,54 @@ import {
     OraclePausedCorporateAction
 } from "src/concrete/wrapper/PausableOracleWrapper.sol";
 import {
-    ChronicleVaultOracleBeaconSetDeployer,
-    ChronicleVaultOracleBeaconSetDeployerConfig
-} from "src/concrete/deploy/ChronicleVaultOracleBeaconSetDeployer.sol";
+    DIAVaultOracleBeaconSetDeployer,
+    DIAVaultOracleBeaconSetDeployerConfig
+} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {
     PausableOracleWrapperBeaconSetDeployer,
     PausableOracleWrapperBeaconSetDeployerConfig
 } from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
 import {
-    ChronicleOracleUnifiedDeployer,
-    ChronicleOracleUnifiedDeployerConstructorConfig,
-    ChronicleOracleUnifiedDeployConfig
-} from "src/concrete/deploy/ChronicleOracleUnifiedDeployer.sol";
-import {MockChronicle} from "test/mocks/MockChronicle.sol";
+    DIAOracleUnifiedDeployer,
+    DIAOracleUnifiedDeployerConstructorConfig,
+    DIAOracleUnifiedDeployConfig
+} from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
 import {MockERC4626} from "test/mocks/MockERC4626.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 
-/// @title ChronicleStackE2ETest
+/// @title DIAStackE2ETest
 /// @notice End-to-end happy-path + pause-path exercise of the production
-/// deploy graph for the Chronicle oracle stack. Mints a `(oracle, wrapper)`
-/// pair through `ChronicleOracleUnifiedDeployer` (composed over the two
-/// beacon-set deployers) and drives scenarios entirely through the wrapper
-/// surface — no shortcut into manually-constructed wrappers or oracles.
+/// deploy graph for the DIA oracle stack. Mints a `(oracle, wrapper)` pair
+/// through `DIAOracleUnifiedDeployer` (composed over the two beacon-set
+/// deployers) and drives scenarios entirely through the wrapper surface —
+/// no shortcut into manually-constructed wrappers or oracles.
 ///
 /// Complements the per-component unit tests under
 /// `test/src/concrete/{oracle,wrapper,deploy}/` by proving the full graph
 /// wires up correctly and behaves as a coherent whole.
-contract ChronicleStackE2ETest is Test {
-    MockChronicle internal chronicle;
+contract DIAStackE2ETest is Test {
+    MockDIAOracle internal diaOracle;
     MockERC4626 internal vault;
     MockCorporateActions internal corporateActions;
-    ChronicleVaultOracle internal oracle;
+    DIAVaultOracle internal oracle;
     PausableOracleWrapper internal wrapper;
     address internal admin = address(0xA11CE);
 
-    uint256 internal constant MAX_AGE = 1 hours;
+    string internal constant SYMBOL = "COIN";
+    uint256 internal constant MAX_AGE = 2 hours;
     uint64 internal constant PAUSE_BEFORE = 1 hours;
     uint64 internal constant PAUSE_AFTER = 1 hours;
 
     function setUp() public {
-        chronicle = new MockChronicle();
+        diaOracle = new MockDIAOracle();
         vault = new MockERC4626();
         corporateActions = new MockCorporateActions();
 
-        ChronicleVaultOracleBeaconSetDeployer oracleBSD = new ChronicleVaultOracleBeaconSetDeployer(
-            ChronicleVaultOracleBeaconSetDeployerConfig({
-                initialOwner: address(this),
-                initialChronicleVaultOracleImplementation: address(new ChronicleVaultOracle())
+        DIAVaultOracleBeaconSetDeployer oracleBSD = new DIAVaultOracleBeaconSetDeployer(
+            DIAVaultOracleBeaconSetDeployerConfig({
+                initialOwner: address(this), initialDIAVaultOracleImplementation: address(new DIAVaultOracle())
             })
         );
         PausableOracleWrapperBeaconSetDeployer wrapperBSD = new PausableOracleWrapperBeaconSetDeployer(
@@ -72,9 +73,9 @@ contract ChronicleStackE2ETest is Test {
                 initialPausableOracleWrapperImplementation: address(new PausableOracleWrapper())
             })
         );
-        ChronicleOracleUnifiedDeployer unifiedDeployer = new ChronicleOracleUnifiedDeployer(
-            ChronicleOracleUnifiedDeployerConstructorConfig({
-                chronicleVaultOracleBeaconSetDeployer: oracleBSD, pausableOracleWrapperBeaconSetDeployer: wrapperBSD
+        DIAOracleUnifiedDeployer unifiedDeployer = new DIAOracleUnifiedDeployer(
+            DIAOracleUnifiedDeployerConstructorConfig({
+                diaVaultOracleBeaconSetDeployer: oracleBSD, pausableOracleWrapperBeaconSetDeployer: wrapperBSD
             })
         );
 
@@ -83,10 +84,10 @@ contract ChronicleStackE2ETest is Test {
         vm.warp(1_000_000);
 
         (oracle, wrapper) = unifiedDeployer.newOracleWithWrapper(
-            ChronicleOracleUnifiedDeployConfig({
+            DIAOracleUnifiedDeployConfig({
                 admin: admin,
-                oracleConfig: ChronicleVaultOracleConfig({
-                    chronicle: IChronicle(address(chronicle)), vault: address(vault), maxAge: MAX_AGE
+                oracleConfig: DIAVaultOracleConfig({
+                    diaOracle: IDIAOracleV2(address(diaOracle)), symbol: SYMBOL, vault: address(vault), maxAge: MAX_AGE
                 }),
                 pauseConfig: CorporateActionPauseConfig({
                     corporateActionsVault: address(corporateActions),
@@ -98,13 +99,13 @@ contract ChronicleStackE2ETest is Test {
         );
     }
 
-    /// @dev Scripts Chronicle to a fresh $100 reading at the current block.
-    function _freshChronicleAt100() internal {
-        chronicle.setReadWithAge(100e18, block.timestamp);
+    /// @dev Scripts DIA to a fresh $100 reading at the current block.
+    function _freshDIAAt100() internal {
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
     }
 
     /// @dev Vault with 1:1 assets-per-share — `latestAnswer` mirrors the
-    /// Chronicle price scaled to 8 decimals.
+    /// DIA price scaled to 8 decimals.
     function _flatVault() internal {
         vault.setTotalAssets(1e18);
         vault.setTotalSupply(1e18);
@@ -113,19 +114,19 @@ contract ChronicleStackE2ETest is Test {
     // -------- Scenario 1: happy path single price read --------
 
     function testHappyPathSinglePriceRead() external {
-        _freshChronicleAt100();
+        _freshDIAAt100();
         _flatVault();
 
         assertEq(wrapper.latestAnswer(), int256(100e8), "wrapper latestAnswer");
         assertEq(wrapper.decimals(), uint8(8), "wrapper decimals delegated from oracle");
-        assertEq(wrapper.description(), "", "wrapper description delegated from oracle");
+        assertEq(wrapper.description(), SYMBOL, "wrapper description delegated from oracle (DIA symbol)");
         assertEq(wrapper.version(), uint256(1), "wrapper version delegated from oracle");
     }
 
     // -------- Scenario 2: wtStock NAV bump propagates --------
 
     function testWtStockNavBumpPropagates() external {
-        _freshChronicleAt100();
+        _freshDIAAt100();
         _flatVault();
 
         // Baseline read: $100 underlying * 1.0 assets-per-share = $100.
@@ -139,31 +140,31 @@ contract ChronicleStackE2ETest is Test {
         assertEq(wrapper.latestAnswer(), int256(200e8), "post-bump");
     }
 
-    // -------- Scenario 3: Chronicle age appears in roundData --------
+    // -------- Scenario 3: DIA timestamp appears in roundData --------
 
-    function testChronicleAgeAppearsInRoundData() external {
-        // Pick a wall-clock and a slightly older Chronicle poke; `age` must
+    function testDIATimestampAppearsInRoundData() external {
+        // Pick a wall-clock and a slightly older DIA push; the timestamp must
         // surface through every relevant field of `latestRoundData`.
         uint256 t = 2_000_000;
         vm.warp(t);
-        uint256 age = t - 100;
-        chronicle.setReadWithAge(100e18, age);
+        uint128 diaTs = uint128(t - 100);
+        diaOracle.setValue(SYMBOL, 100e18, diaTs);
         _flatVault();
 
         (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
             wrapper.latestRoundData();
 
-        assertEq(roundId, uint80(age), "roundId == age");
+        assertEq(roundId, uint80(diaTs), "roundId == timestamp");
         assertEq(answer, int256(100e8), "answer");
-        assertEq(startedAt, age, "startedAt == age");
-        assertEq(updatedAt, age, "updatedAt == age");
-        assertEq(answeredInRound, uint80(age), "answeredInRound == age");
+        assertEq(startedAt, uint256(diaTs), "startedAt == timestamp");
+        assertEq(updatedAt, uint256(diaTs), "updatedAt == timestamp");
+        assertEq(answeredInRound, uint80(diaTs), "answeredInRound == timestamp");
     }
 
     // -------- Scenario 4: manual pause blocks reads, unpause restores --------
 
     function testManualPauseBlocksReadsAndUnpauseRestores() external {
-        _freshChronicleAt100();
+        _freshDIAAt100();
         _flatVault();
 
         // Sanity: reads work before pause.
@@ -190,7 +191,7 @@ contract ChronicleStackE2ETest is Test {
     // -------- Scenario 5: corporate-action auto-pause propagates --------
 
     function testCorporateActionAutoPausePropagatesFullStack() external {
-        _freshChronicleAt100();
+        _freshDIAAt100();
         _flatVault();
 
         // No scheduled action — reads work cleanly.
@@ -209,9 +210,9 @@ contract ChronicleStackE2ETest is Test {
         // what the real corporate-actions vault would do once the action's
         // effective time passes and the operator marks it complete.
         vm.warp(uint256(effectiveTime) + 15 minutes);
-        // Keep Chronicle fresh against the new wall-clock so a staleness
-        // revert can't mask the pause-window assertion below.
-        _freshChronicleAt100();
+        // Keep DIA fresh against the new wall-clock so a staleness revert
+        // can't mask the pause-window assertion below.
+        _freshDIAAt100();
         corporateActions.setEarliestPending(NODE_NONE, 0, 0);
         corporateActions.setLatestCompleted(1, type(uint256).max, effectiveTime);
 
@@ -220,7 +221,7 @@ contract ChronicleStackE2ETest is Test {
 
         // Warp past the 1-hour post-window. Reads work again.
         vm.warp(uint256(effectiveTime) + uint256(PAUSE_AFTER) + 1);
-        _freshChronicleAt100();
+        _freshDIAAt100();
 
         assertEq(wrapper.latestAnswer(), int256(100e8), "post-window reads restored");
     }
@@ -228,7 +229,7 @@ contract ChronicleStackE2ETest is Test {
     // -------- Scenario 6: manual pause takes precedence over corp action --------
 
     function testManualPauseTakesPrecedenceOverCorporateAction() external {
-        _freshChronicleAt100();
+        _freshDIAAt100();
         _flatVault();
 
         uint64 effectiveTime = uint64(block.timestamp + 30 minutes);
@@ -244,18 +245,30 @@ contract ChronicleStackE2ETest is Test {
         wrapper.latestAnswer();
     }
 
-    // -------- Scenario 7: stale Chronicle propagates through wrapper --------
+    // -------- Scenario 7a: DIA never pushed propagates --------
 
-    function testStaleChroniclePropagatesToCaller() external {
+    function testDIAPriceNotSetPropagates() external {
         _flatVault();
 
-        // Chronicle was last poked just over `maxAge` ago — the adapter's
+        // DIA was never poked for SYMBOL — the mock returns (0, 0) and the
+        // adapter's never-pushed check fires. Wrapper passes the revert
+        // straight through without catching.
+        vm.expectRevert(DIAPriceNotSet.selector);
+        wrapper.latestAnswer();
+    }
+
+    // -------- Scenario 7b: stale DIA propagates through wrapper --------
+
+    function testStaleDIAPropagatesToCaller() external {
+        _flatVault();
+
+        // DIA was last pushed just over `maxAge` ago — the adapter's
         // staleness check fires and the wrapper passes the revert straight
         // through without catching.
-        uint256 staleAge = block.timestamp - MAX_AGE - 1;
-        chronicle.setReadWithAge(100e18, staleAge);
+        uint128 staleTimestamp = uint128(block.timestamp - MAX_AGE - 1);
+        diaOracle.setValue(SYMBOL, 100e18, staleTimestamp);
 
-        vm.expectRevert(abi.encodeWithSelector(ChroniclePriceStale.selector, staleAge));
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(staleTimestamp)));
         wrapper.latestAnswer();
     }
 }
