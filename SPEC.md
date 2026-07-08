@@ -1,414 +1,562 @@
-# 🔮 ST0x Oracle Adapters Specification
+# ST0x Oracle Stack Specification
 
 **Repository:** `st0x.oracle`
-**Version:** 2.0
+**Version:** 3.0
 **Status:** Draft
-**Date:** 2026-02-06
+**Date:** 2026-06-30
 
 ---
 
 ## 1. Problem Statement
 
-ST0x wrapped tokenized equities (ERC-4626 vault shares) need to integrate with DeFi lending protocols (Morpho Blue, Aave V3, Compound V3, and future protocols) to enable borrowing against tokenized stock collateral. The oracle prices vault shares by combining the Pyth price of the underlying equity with the vault's assets-per-share ratio. Each protocol has its own oracle interface requirements:
+ST0x issues wrapped tokenized equities — `wtStock` ERC-4626 vaults wrapping
+`tStock` rebasing-receipt vaults — that need to be priced inside DeFi lending
+protocols (Euler, Aave V3, Compound V3, future Chainlink-compatible
+markets). Consumers already speak Chainlink's `AggregatorV2V3Interface`; the
+oracle stack's job is to expose a single proxy address per vault that:
 
-- **Morpho Blue**: Expects `IOracle.price()` returning a `uint256` scaled to 1e36
-- **Aave V3**: Expects Chainlink's `AggregatorV3Interface` with `latestAnswer()` and `latestRoundData()`
-- **Compound V3 (Comet)**: Expects Chainlink's `AggregatorV3Interface` with 8 decimal precision
+1. Returns an 8-decimal `int256` price for one share of the vault, denominated
+   in USD, drawn from a market-grade off-chain feed for the underlying equity.
+2. Tracks the vault's `totalAssets / totalSupply` ratio so the share price
+   moves with any NAV change — most importantly the post-stock-split rebalance
+   inside the underlying `tStock` vault.
+3. Refuses to serve a price during scheduled corporate actions (splits,
+   dividend distributions), so downstream lending markets can't liquidate or
+   borrow against a stale-by-construction share price while the vault NAV is
+   mid-rebalance.
+4. Gives ST0x governance a manual emergency pause independent of the
+   corporate-action machinery.
 
-The underlying price source is **Pyth Network**, which provides NBBO pricing for equities.
-
-**Key challenges:**
-
-1. Different protocols expect different interfaces and scaling
-2. Oracle addresses are often immutable once set in lending markets (especially Morpho)
-3. Corporate actions (splits, dividends) require pausing price feeds temporarily
-4. Upgrades to one layer shouldn't require upgrades to another
-5. Swapping oracles requires updating multiple protocol adapters individually
-
----
-
-## 2. Goals
-
-1. **True onchain modularity**: Oracle adapters and protocol adapters are separate deployments
-2. **Industry standard interface**: Use Chainlink's `AggregatorV3Interface` as the contract boundary
-3. **Swappable sources**: Protocol adapters can point to any oracle (Pyth today, Chainlink tomorrow)
-4. **Independent upgrade paths**: Fix bugs in Pyth parsing without touching protocol adapters
-5. **Beacon proxy pattern**: All layers use beacon proxies per `st0x.deploy` patterns
-6. **Centralized oracle management**: Single registry update propagates to all protocol adapters
-
-### 2.1 Relationship to rain.pyth
-
-| Aspect | rain.pyth | st0x.oracle |
-|--------|-----------|-------------|
-| Purpose | Rain interpreter word | DeFi protocol integration |
-| Interface | Returns `Float` (Rain format) | Returns `int256` (8 decimals) |
-| Lookup | Runtime symbol lookup | Per-token deployed proxy |
-| Pattern | Direct deployment | BeaconSetDeployer pattern |
-| Governance | None (stateless) | Admin controls (pause, setPriceId) |
-
-**What we reuse from rain.pyth:**
-
-- `LibPyth.getPriceFeedContract(block.chainid)` - derives Pyth contract address at runtime (audited code)
-- Price feed ID constants for all supported equities
+The previous architecture (Pyth + per-protocol adapters + a registry indirection
+layer) has been replaced. DIA Data Association now supplies the underlying price,
+all protocol-specific adapter shims are gone (consumers target
+`AggregatorV2V3Interface` directly), and the registry indirection has been
+removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
 
 ---
 
-## 3. Architecture Overview
+## 2. Architecture Overview
 
 ```
-PROTOCOL ADAPTERS
-(indirection layer - looks up oracle from registry)
-
-┌─────────────────┐  ┌────────────────────────────────────┐
-│ MorphoAdapter   │  │ PassthroughAdapter                 │
-│                 │  │ (multiple instances: Aave,         │
-│ IOracle         │  │  Compound, future protocols)       │
-│ (8→36 dec)      │  │ AggregatorV3 (passthrough)         │
-│                 │  │                                    │
-│ stores:         │  │ stores:                            │
-│  - registry     │  │  - registry                        │
-│  - vault        │  │  - vault                           │
-└───────┬─────────┘  └───────────────┬────────────────────┘
-        │                            │
-        └────────────┬───────────────┘
-                     ▼
-           ┌─────────────────────────┐
-           │     OracleRegistry      │  ← centralized vault→oracle mapping
-           │                         │
-           │  getOracle(vault)       │
-           │  setOracle(vault, oracle)│
-           │  setOracleBulk(...)     │
-           └───────────┬─────────────┘
-                       │
-                       ▼
-           ┌─────────────────────────┐
-           │  AggregatorV3Interface  │  ← industry standard
-           └─────────────────────────┘
-                     ▲
-          ┌──────────┴───────────────┐
-          │       implements         │
-          ▼                          ▼
-┌─────────────────────┐    ┌─────────────────────┐
-│ PythOracleAdapter   │    │ ChainlinkOracle     │
-│                     │    │ Adapter (future)    │
-│ Governance:         │    │                     │
-│  - set priceId      │    │                     │
-│  - set maxAge       │    │                     │
-│  - pause/unpause    │    │                     │
-└─────────────────────┘    └─────────────────────┘
-
-ORACLE ADAPTERS
-(canonical oracle per asset, all governance here)
+                    ┌──────────────────────────────────────┐
+   consumers ──────▶│        PausableOracleWrapper         │   ← canonical
+   (Euler, Aave,    │                                      │     consumer-facing
+    Compound,       │   AggregatorV2V3Interface            │     address
+    other lending)  │                                      │
+                    │   + OraclePausedManual()             │
+                    │   + OraclePausedCorporateAction(t)   │
+                    └────────────────┬─────────────────────┘
+                                     │ upstream (immutable)
+                                     ▼
+                    ┌──────────────────────────────────────┐
+                    │           DIAVaultOracle             │
+                    │                                      │
+                    │   AggregatorV2V3Interface (8 dec)    │
+                    │                                      │
+                    │   price = diaOracle.getValue(symbol) │
+                    │         × vault.totalAssets()        │
+                    │         / vault.totalSupply()        │
+                    └────────────────┬─────────────────────┘
+                                     │
+                ┌────────────────────┴────────────────────┐
+                ▼                                         ▼
+       ┌─────────────────┐                    ┌──────────────────┐
+       │  IDIAOracleV2   │                    │  ERC-4626 vault  │
+       │  (off-chain     │                    │   (wtStock)      │
+       │   pushed price) │                    │                  │
+       └─────────────────┘                    └──────────────────┘
+                                                       ▲
+                                                       │ ICorporateActionsV1
+                                                       │ (consulted by wrapper
+                                                       │  on every read)
+                                                       │
+                                              ┌──────────────────┐
+                                              │  corporateActions│
+                                              │      Vault       │
+                                              └──────────────────┘
 ```
 
-**Why a registry layer:**
+**Two layers, separated by intent:**
 
-Without registry:
-- Each protocol adapter stores its own oracle reference
-- Pyth dies → Need to call `setOracle()` on every protocol adapter individually
-- N vaults × M protocols = N×M `setOracle()` calls
+- **Adapter layer** — `DIAVaultOracle`. Pure price math. Reads DIA
+  for the underlying, multiplies by the vault's assets-per-share ratio, scales
+  to 8 decimals. No admin, no pause flag, nothing operational. Replaceable by
+  a different price-source adapter without touching the wrapper.
+- **Wrapper layer** — `PausableOracleWrapper`. Pure decorator. Adds pause
+  semantics (manual + corporate-action-aware) on top of any
+  `AggregatorV2V3Interface`. Shape-preserving — `decimals`, `description`,
+  `version` are delegated. The same wrapper implementation will decorate a
+  Chainlink-direct adapter, a different vendor adapter, or anything else
+  satisfying the interface, with zero changes.
 
-With registry:
-- Protocol adapters look up oracle from registry at runtime
-- Pyth dies → Call `registry.setOracle(vault, chainlinkOracle)` once
-- N vaults = N `setOracle()` calls (regardless of protocol count)
-
-**Why protocol adapters still exist (even with registry):**
-
-Without protocol adapter:
-- Aave/Compound points directly to `PythOracleAdapter`
-- Pyth dies → Need Aave/Compound governance to update their oracle registry
-- ST0x has no control over the switch
-
-With protocol adapter:
-- Aave/Compound points to `PassthroughProtocolAdapter`
-- Pyth dies → ST0x calls `registry.setOracle(vault, chainlinkOracleAdapter)`
-- Protocol is unaware, no governance action needed on their side
+The wrapper proxy is the canonical consumer-facing address. The adapter
+proxy's address is an internal implementation detail of the wrapper and need
+not be exposed to integrators after deploy time.
 
 ---
 
-## 4. OracleRegistry Implementation
+## 3. `DIAVaultOracle`
 
-Centralized vault→oracle mapping. Beacon proxy pattern.
+**Location:** `src/concrete/oracle/DIAVaultOracle.sol`
 
-**Storage:**
+Prices ERC-4626 vault shares by combining the DIA Data Association price of
+the underlying asset with the vault's `totalAssets / totalSupply` ratio.
+Beacon-proxy clone via `ICloneableV2`. 8-decimal `AggregatorV2V3Interface`
+output.
 
-```solidity
-address public admin;
-mapping(address vault => AggregatorV3Interface oracle) internal _oracles;
-```
-
-**Functions:**
+### 3.1 Storage
 
 ```solidity
-/// @notice Set or update the oracle for a vault. Admin only.
-/// @dev Upsert semantics - works for both new registration and updates.
-function setOracle(address vault, AggregatorV3Interface oracle) external onlyAdmin;
-
-/// @notice Bulk set or update oracles for multiple vaults. Admin only.
-function setOracleBulk(address[] calldata vaults, AggregatorV3Interface[] calldata oracles) external onlyAdmin;
-
-/// @notice Get the oracle for a vault.
-/// @return The oracle adapter, or address(0) if not registered.
-function getOracle(address vault) external view returns (AggregatorV3Interface);
+IDIAOracleV2 public diaOracle;   // DIA oracle contract
+string       public symbol;      // Bare feed symbol e.g. "COIN", "AMZN", "TSLA"
+address      public vault;       // ERC-4626 vault whose shares are priced
+uint256      public maxAge;      // Max acceptable DIA reading age (seconds)
 ```
 
-**Events:**
+All four are set once by `initialize(bytes calldata)` and never written
+again. There is no admin, no pause flag, no setter. To change any of them,
+deploy a fresh proxy and migrate consumers.
 
-- `OracleRegistryInitialized(address indexed sender, OracleRegistryConfig config)`
-- `OracleSet(address indexed vault, address indexed oldOracle, address indexed newOracle)` — `oldOracle` is `address(0)` for new registrations
+The DIA feed key is the **bare symbol** (`"COIN"`, `"AMZN"`, `"TSLA"`), not
+a pair string like `"COIN/USD"`. The DIA oracle contract is queried with
+this string as the key argument to `getValue`.
 
-**Errors:**
+### 3.2 Price Formula
 
-- `OnlyAdmin()` — caller is not admin
-- `ZeroAdmin()` — zero admin address in config
-- `ZeroVault()` — zero vault address
-- `ZeroOracle()` — zero oracle address
-- `ArrayLengthMismatch()` — vaults and oracles arrays have different lengths
+```
+                       diaPrice × vault.totalAssets()
+   vaultSharePrice  =  ─────────────────────────────────     (then 8dp)
+                              vault.totalSupply()
+```
+
+- `diaPrice` is the 18-decimal `uint128` value returned by
+  `IDIAOracleV2.getValue(symbol)`.
+- The full computation is performed in Rain decimal-float space
+  (`rain-math-float`), so neither operand can overflow `uint256` and decimal
+  scaling is exact until the final reduction. The conversion to fixed-point
+  8 decimals happens only at the return boundary.
+- The vault ratio `totalAssets / totalSupply` is exactly what an ERC-4626
+  `convertToAssets(1 share)` would compute, so the price tracks any NAV
+  change inside the vault — most importantly the post-split balance bump
+  applied to the underlying `tStock` vault. See §6.2.
+
+### 3.3 Surface
+
+`DIAVaultOracle implements AggregatorV2V3Interface, ICloneableV2,
+Initializable`:
+
+| Function | Behaviour |
+|----------|-----------|
+| `decimals()` | Returns `8`. Chainlink convention for USD-denominated price feeds. |
+| `description()` | Returns the configured `symbol` (e.g. `"COIN"`). Lets consumers introspect what symbol the oracle wraps without an off-chain lookup. |
+| `version()` | Returns `1`. |
+| `latestAnswer()` | Reads DIA via `getValue(symbol)` (checks `maxAge` and not-set), computes share price, returns `int256`. |
+| `latestRoundData()` | As above, with `roundId == answeredInRound == uint80(timestamp)` and `startedAt == updatedAt == timestamp`. Integrators that diff `roundId` see a new value whenever DIA has produced a new push. |
+| `getRoundData(_roundId)` | Always reverts `HistoricalRoundDataUnsupported(_roundId)`. DIA exposes only its latest push through this interface. |
+
+### 3.4 Errors
+
+- `ZeroDIAOracle()` / `EmptySymbol()` / `ZeroVault()` / `ZeroMaxAge()` —
+  `initialize` rejects zero values. An empty symbol would key into an unset
+  DIA feed; `maxAge = 0` would make every read instantly stale; failing
+  loud at init is preferable to minting a broken oracle.
+- `DIAPriceNotSet()` — DIA's `getValue(symbol)` returned `(0, 0)`. DIA does
+  **not** revert for unset feeds — it silently returns zeros. The adapter
+  checks this explicitly and raises `DIAPriceNotSet()` rather than producing
+  a zero-value Chainlink answer, which would be silently catastrophic for
+  consumers that don't check for zero.
+- `DIAPriceStale(uint256 timestamp)` — `block.timestamp - timestamp > maxAge`.
+- `ZeroVaultSupply()` — `vault.totalSupply() == 0`. Pricing one share of a
+  zero-supply vault is undefined.
+- `ZeroVaultSharePrice()` — computed price rounds to zero. A zero price is
+  never a valid Chainlink-compatible answer.
+- `VaultSharePriceOverflow(uint256 price8)` — result wouldn't fit in `int256`.
+- `HistoricalRoundDataUnsupported(uint80 roundId)` — `getRoundData` is not
+  supported.
+
+### 3.5 Events
+
+- `DIAVaultOracleInitialized(address indexed sender,
+  DIAVaultOracleConfig config)` — emitted exactly once. Single source
+  of truth for off-chain indexers; all immutable config lives in this event.
+
+### 3.6 DIA Freshness Policy
+
+DIA pushes a new value whenever **either** of two triggers fires, whichever
+happens first:
+
+- **Deviation trigger:** the off-chain price has moved by ≥ 0.1% since the
+  last on-chain push.
+- **Heartbeat trigger:** 1 hour has elapsed since the last push.
+
+So during volatile periods, pushes happen every few minutes; the 1-hour
+heartbeat is the dead-market floor. **Recommended `maxAge = 2 hours`** — one
+missed heartbeat tolerance, enough slack to absorb a single skipped push
+without false staleness reverts, but tight enough to surface a genuinely
+stalled feed quickly.
+
+### 3.7 Live DIA Contract on Base
+
+The canonical DIA oracle contract on Base mainnet is
+`0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol price feeds are all
+served by this single contract via `getValue(string key)`.
 
 ---
 
-## 5. Protocol Adapter Types
+## 4. `PausableOracleWrapper`
 
-| Protocol | Interface | Adapter Type |
-|----------|-----------|-------------|
-| Morpho Blue | `IOracle.price()` (36 dec) | `MorphoProtocolAdapter` • scales 8→36 |
-| Aave V3 | `AggregatorV3Interface` (8 dec) | `PassthroughProtocolAdapter` instance |
-| Compound V3 | `AggregatorV3Interface` (8 dec) | `PassthroughProtocolAdapter` instance |
-| Future Chainlink-compatible | `AggregatorV3Interface` (8 dec) | `PassthroughProtocolAdapter` instance |
+**Location:** `src/concrete/wrapper/PausableOracleWrapper.sol`
 
-**Two adapter contracts (not three):**
+A pure-decorator wrapper that adds operational pause semantics on top of any
+`AggregatorV2V3Interface` upstream. Beacon-proxy clone via `ICloneableV2`.
 
-- `MorphoProtocolAdapter` - scales 8→36 decimals
-- `PassthroughProtocolAdapter` - used by Aave, Compound, any Chainlink-compatible protocol
+### 4.1 Storage
 
-Deploy multiple proxy *instances* from the same beacon for different protocols.
+```solidity
+address                 public admin;                  // governance
+bool                    public paused;                 // manual emergency flag
+AggregatorV2V3Interface public upstream;               // wrapped oracle (immutable)
+address                 public corporateActionsVault;  // ICorporateActionsV1, immutable
+uint256                 public actionTypeMask;         // bitmap, immutable
+uint64                  public pauseTimeBefore;        // pre-window (s), immutable
+uint64                  public pauseTimeAfter;         // post-window (s), immutable
+```
+
+`admin` and `paused` are the only mutable slots after `initialize`. `upstream`
+and the entire `CorporateActionPauseConfig` block are immutable — there is no
+admin upgrade path that could swap the priced source. Swapping the priced
+source means redeploying the wrapper and migrating consumers, which is by
+design (see §7).
+
+### 4.2 Pause Semantics
+
+Reads (`latestAnswer`, `latestRoundData`, `getRoundData`) revert if **either**
+of two independent conditions is true:
+
+1. **Manual pause.** `paused == true`, set by `admin` via `setPaused(bool)`.
+   Reverts `OraclePausedManual()`. Persists until `setPaused(false)`.
+2. **Corporate-action auto-pause.** `LibCorporateActionsPause.inPauseWindow(...)`
+   returns `true` for the configured vault, mask, and pre/post windows.
+   Reverts `OraclePausedCorporateAction(uint64 effectiveTime)`. The
+   `effectiveTime` payload disambiguates which scheduled or completed action
+   triggered the pause. See §5 for the windowing semantics.
+
+The two conditions are OR'd. The manual check runs first (cheaper — single
+`SLOAD`) so that when an admin has explicitly set the manual flag, integrators
+see `OraclePausedManual()` rather than a coincidental
+`OraclePausedCorporateAction(t)`.
+
+The error selectors are distinct so a consumer doing `try / catch` introspection
+can disambiguate "ops paused us" from "scheduled event in window" if they wish.
+For the simple case — a consumer that catches any revert and falls back to
+"no price available" — no disambiguation is needed.
+
+### 4.3 Shape Preservation
+
+`decimals()`, `description()`, and `version()` are delegated straight to
+`upstream`. The wrapper does not modify any value; it only adds revert
+conditions. A consumer dropping in a `PausableOracleWrapper` proxy where it
+would have used the underlying adapter sees identical shape and identical
+price behaviour outside pause windows.
+
+### 4.4 Admin Surface
+
+| Function | Behaviour |
+|----------|-----------|
+| `setPaused(bool isPaused)` | `onlyAdmin`. Toggles the manual flag. Emits `PauseSet(isPaused)`. |
+| `setAdmin(address newAdmin)` | `onlyAdmin`. One-step transfer; new admin takes effect immediately. Rejects zero. A misaddressed transfer permanently locks governance — use a multisig. Emits `AdminSet(oldAdmin, newAdmin)`. |
+
+### 4.5 Errors
+
+- `ZeroUpstream()` / `ZeroAdmin()` — `initialize` and `setAdmin` reject zero
+  values. A zero admin permanently locks `setPaused`; a zero upstream mints
+  a wrapper that always reverts.
+- `OnlyAdmin()` — caller is not `admin`.
+- `OraclePausedManual()` — manual pause is set.
+- `OraclePausedCorporateAction(uint64 effectiveTime)` — auto-pause window is
+  open. `effectiveTime` is the action whose window contains `now`.
+
+### 4.6 Events
+
+- `PausableOracleWrapperInitialized(address indexed sender,
+  PausableOracleWrapperConfig config)` — once on init.
+- `PauseSet(bool isPaused)`
+- `AdminSet(address indexed oldAdmin, address indexed newAdmin)`
 
 ---
 
-## 6. PythOracleAdapter Implementation
+## 5. `LibCorporateActionsPause`
 
-**Storage:**
+**Location:** `src/lib/LibCorporateActionsPause.sol`
 
-```solidity
-address public vault;            // ERC-4626 vault, set once, no setter
-bytes32 public priceId;          // Pyth feed ID for underlying asset
-uint256 public maxAge;           // Max acceptable price age
-bool public paused;              // Emergency pause
-address public admin;            // Admin for governance
-```
+Stateless, view-only helper. Consults an `ICorporateActionsV1` vault and
+decides whether the current block falls inside a configured pause window
+around any matching scheduled or completed action.
 
-Note: No `pyth` address storage - derived from `LibPyth.getPriceFeedContract(block.chainid)` at runtime.
+### 5.1 Window Semantics
 
-**Price Formula:**
+The library checks two windows independently and pauses if either is open.
+
+**Pre-window** (earliest pending action `A` matching the mask):
 
 ```
-vaultSharePrice = pythPrice * vault.totalAssets() / vault.totalSupply()
+   effectiveTime(A) - pauseTimeBefore  ≤  block.timestamp  <  effectiveTime(A)
 ```
 
-The oracle prices ERC-4626 vault shares by combining the Pyth price of the underlying equity with the vault's assets-per-share ratio. This correctly handles stock splits (totalAssets increases), dividend reinvestment (totalAssets increases), and the wrapped token premium/discount.
+Querying the earliest pending action is sufficient: pending effective-times
+are strictly increasing in their list traversal, so if the closest one's
+pre-window has not yet opened, no later one's has either.
 
-**Implementation:**
+**Post-window** (latest completed action `A` matching the mask):
 
-```solidity
-import {LibPyth} from "rain.pyth/src/lib/pyth/LibPyth.sol";
-import {IERC4626} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
-
-function latestAnswer() external view override returns (int256) {
-    _validateNotPaused();
-
-    IPyth pyth = LibPyth.getPriceFeedContract(block.chainid);
-    PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(priceId, maxAge);
-
-    return _vaultSharePrice(priceData);
-}
-
-function _vaultSharePrice(PythStructs.Price memory priceData) internal view returns (int256) {
-    int256 price8 = _conservativeScaledPrice(priceData);
-
-    IERC4626 vaultContract = IERC4626(vault);
-    uint256 totalAssets = vaultContract.totalAssets();
-    uint256 totalSupply = vaultContract.totalSupply();
-
-    if (totalSupply == 0) revert ZeroVaultSupply();
-
-    return int256(uint256(price8) * totalAssets / totalSupply);
-}
 ```
+   effectiveTime(A)  ≤  block.timestamp  ≤  effectiveTime(A) + pauseTimeAfter
+```
+
+Querying the latest completed action is sufficient: completed effective-times
+are strictly decreasing in their list traversal, so if the most recent one's
+post-window has closed, no earlier one's is open.
+
+Cancelled action nodes are unlinked from `ICorporateActionsV1`'s traversal
+API and so are excluded automatically — no explicit filter required here.
+
+Each call is at most two view calls into the vault.
+
+### 5.2 Mask
+
+`actionTypeMask` is a bitmap matching `ICorporateActionsV1`'s action-type
+encoding:
+
+- `ACTION_TYPE_STOCK_SPLIT_V1 = 1 << 1`
+- `ACTION_TYPE_STABLES_DIVIDEND_V1 = 1 << 2`
+- `type(uint256).max` matches every present and future action type.
+
+A `mask == 0` short-circuits to "not paused" — no action types match anything.
+A zero `corporateActionsVault` also short-circuits to "not paused" and
+disables auto-pause for the life of the wrapper proxy.
+
+### 5.3 Overlap Resolution: Pending Wins
+
+When both a pending pre-window and a completed post-window contain `now`
+(e.g. a back-to-back schedule where one action just completed and the next
+is about to fire), the **pending** action's `effectiveTime` is the one
+returned in `OraclePausedCorporateAction(effectiveTime)`. Rationale:
+integrators reading the revert payload care more about the next event coming
+than the last one done — the upcoming `effectiveTime` is what tells them when
+to expect the pause window to slide.
+
+This is implemented by checking the pending window first and short-circuiting
+the return.
+
+### 5.4 Audit Note: `NODE_NONE` Sentinel
+
+`ICorporateActionsV1` uses linked-list traversal with node ids; `cursor == 0`
+is a real bootstrap node (the `ACTION_TYPE_INIT_V1` entry). The no-match
+sentinel is `NODE_NONE = type(uint256).max`. An earlier draft of this
+library used `cursor != 0` as the "match found" check, which would have
+silently treated the bootstrap node as a real corporate action. The current
+implementation uses `cursor != NODE_NONE`. This is load-bearing — do not
+weaken it during future refactors.
 
 ---
 
-## 7. PassthroughProtocolAdapter Implementation
+## 6. Flagship Features
 
-For protocols using `AggregatorV3Interface` (Aave V3, Compound V3, future Chainlink-compatible protocols):
+The wrapper/adapter split surfaces two core ST0x security properties that
+downstream lending markets get for free.
 
-```solidity
-contract PassthroughProtocolAdapter is ICloneableV2, Initializable {
-    OracleRegistry public registry;   // Registry for oracle lookup
-    address public vault;             // Vault this adapter serves
-    address public admin;             // Admin for governance
+### 6.1 Corporate-Action Auto-Pause
 
-    function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
-        if (address(newRegistry) == address(0)) revert ZeroRegistry();
-        emit RegistrySet(address(registry), address(newRegistry));
-        registry = newRegistry;
-    }
+Lending markets must not service borrows, repayments, or liquidations against
+a vault whose NAV is about to discontinuously change. A stock split inside
+the underlying `tStock` vault rebalances every receipt holder's balance at
+the split's `effectiveTime`; until that rebalance is reflected in
+`vault.totalAssets()`, the oracle's share price is correct-as-of-old-shares
+but the market sees new shares. Anyone trading across that boundary captures
+free value at the expense of slower participants.
 
-    function _getOracle() internal view returns (AggregatorV3Interface) {
-        AggregatorV3Interface oracle = registry.getOracle(vault);
-        if (address(oracle) == address(0)) revert OracleNotFound();
-        return oracle;
-    }
+The wrapper's corporate-action auto-pause closes the boundary: from
+`effectiveTime - pauseTimeBefore` through `effectiveTime + pauseTimeAfter`,
+every price read reverts `OraclePausedCorporateAction(effectiveTime)`.
+Lending markets that catch the revert (Aave-style `try/catch` consumers)
+treat the price as unavailable for the window — no new borrows, no liquidations.
 
-    function decimals() external view returns (uint8) {
-        return _getOracle().decimals();
-    }
+The auto-pause is consulted on every price read against the live
+`ICorporateActionsV1` state. There is no off-chain process to nudge, no
+scheduled job, no admin action required around the event. ST0x governance
+remains the keeper-of-record on the corporate-actions vault, but the
+oracle's reaction to that schedule is fully on-chain and deterministic.
 
-    function latestAnswer() external view returns (int256) {
-        return _getOracle().latestAnswer();
-    }
+### 6.2 `wtStock` NAV Tracking via `convertToAssets`
 
-    function latestRoundData() external view returns (
-        uint80 roundId,
-        int256 answer,
-        uint256 startedAt,
-        uint256 updatedAt,
-        uint80 answeredInRound
-    ) {
-        return _getOracle().latestRoundData();
-    }
-}
-```
+The vault under price is an ERC-4626 `wtStock` wrapper. Its
+`vault.totalAssets() / vault.totalSupply()` ratio is exactly what
+`convertToAssets(1 share)` would return, and is the canonical handle on any
+NAV bump the underlying `tStock` vault has applied. After a stock split, the
+underlying receipt vault's balances rebalance, `wtStock.totalAssets()` rises
+proportionally, and the next post-pause price read picks up the new ratio
+without any oracle-side intervention.
 
-**Usage:**
+This is intentional: the oracle does not encode split ratios, dividend
+amounts, or any action-specific math. All accounting lives in the vault;
+the oracle just multiplies. The auto-pause window covers the period where
+the rebalance is still settling and the ratio is mid-transition. After the
+post-window closes, reads resume against the updated ratio.
 
-- Deploy one proxy instance for Aave (AAPL)
-- Deploy another proxy instance for Compound (AAPL)
-- Both share the same beacon and implementation
-- Both point to the same registry and look up oracle for their vault
-- Changing the oracle in the registry updates both adapters
+This is also why the wrapper does not allow swapping `upstream`: if a future
+admin could redirect to a different priced source, the (paused-correctly)
+share-price invariant would no longer be guaranteed by construction.
 
 ---
 
-## 8. MorphoProtocolAdapter Implementation
+## 7. Beacon-Proxy & Upgrade Model
 
-Morpho Blue requires `IOracle.price()` returning 36-decimal scaled price:
+Both `DIAVaultOracle` and `PausableOracleWrapper` follow the standard
+`st0x.deploy` BeaconSetDeployer pattern:
 
-```solidity
-contract MorphoProtocolAdapter is IOracle, ICloneableV2, Initializable {
-    OracleRegistry public registry;   // Registry for oracle lookup
-    address public vault;             // Vault this adapter serves
-    address public admin;             // Admin for governance
+- Each contract has a `BeaconSetDeployer` constructor that takes an
+  implementation address and an initial beacon owner, then constructs a
+  fresh `UpgradeableBeacon` internally and holds it as an `immutable`.
+- Proxies (`BeaconProxy`) are minted via the deployer's `new...()` method
+  and initialized through `ICloneableV2.initialize(bytes)`. Init returning
+  anything other than `ICLONEABLE_V2_SUCCESS` reverts the deploy.
+- After construction, the deployer retains no authority over the beacon.
+  Implementation upgrades and beacon-owner rotations are handled externally
+  by whoever the beacon's `Ownable` owner is (ST0x governance multisig).
 
-    function setRegistry(OracleRegistry newRegistry) external onlyAdmin {
-        if (address(newRegistry) == address(0)) revert ZeroRegistry();
-        emit RegistrySet(address(registry), address(newRegistry));
-        registry = newRegistry;
-    }
+**What the beacon owner can do:**
 
-    function price() external view override returns (uint256) {
-        AggregatorV3Interface oracle = registry.getOracle(vault);
-        if (address(oracle) == address(0)) revert OracleNotFound();
+- Swap the implementation behind the beacon (bug fixes, gas optimisations).
 
-        int256 answer = oracle.latestAnswer();
-        if (answer <= 0) revert NonPositivePrice();
+**What the beacon owner cannot do:**
 
-        // Scale from 8 decimals to 36 decimals
-        return uint256(answer) * 1e28;
-    }
-}
-```
+- Change a proxy's `upstream` (it's immutable in the proxy's storage).
+- Change a proxy's `corporateActionsVault`, `actionTypeMask`,
+  `pauseTimeBefore`, or `pauseTimeAfter`.
+- Change a `DIAVaultOracle` proxy's `diaOracle`, `symbol`, `vault`, or
+  `maxAge`.
 
----
-
-## 9. BeaconSetDeployer Pattern
-
-Following `st0x.deploy` patterns:
-
-**Oracle Registry:**
-
-```solidity
-contract OracleRegistryBeaconSetDeployer {
-    IBeacon public immutable I_ORACLE_REGISTRY_BEACON;
-
-    function newOracleRegistry(OracleRegistryConfig memory config)
-        external returns (OracleRegistry);
-}
-```
-
-**Oracle Adapter Layer:**
-
-```solidity
-contract PythOracleAdapterBeaconSetDeployer {
-    IBeacon public immutable I_PYTH_ORACLE_ADAPTER_BEACON;
-
-    function newPythOracleAdapter(PythOracleAdapterConfig memory config)
-        external returns (PythOracleAdapter);
-}
-```
-
-**Protocol Adapter Layer:**
-
-```solidity
-contract PassthroughProtocolAdapterBeaconSetDeployer {
-    IBeacon public immutable I_PASSTHROUGH_PROTOCOL_ADAPTER_BEACON;
-
-    function newPassthroughProtocolAdapter(
-        OracleRegistry registry,
-        address vault,
-        address admin
-    ) external returns (PassthroughProtocolAdapter);
-}
-
-contract MorphoProtocolAdapterBeaconSetDeployer {
-    IBeacon public immutable I_MORPHO_PROTOCOL_ADAPTER_BEACON;
-
-    function newMorphoProtocolAdapter(
-        OracleRegistry registry,
-        address vault,
-        address admin
-    ) external returns (MorphoProtocolAdapter);
-}
-```
+These are immutable after init by design. A beacon upgrade can change
+behaviour but cannot redirect the priced source or weaken the pause windows.
+The only way to change a vault's priced source is to redeploy a fresh
+adapter and a fresh wrapper, then migrate consumers — which is, again, an
+intentional friction surface.
 
 ---
 
-## 10. Deployment Flow
+## 8. Deployers
 
-**Initial deployment (once per chain):**
+**Location:** `src/concrete/deploy/`
 
-1. Deploy OracleRegistryV1 implementation
-2. Deploy OracleRegistryBeaconSetDeployer (creates beacon internally)
-3. Deploy the canonical OracleRegistry proxy
-4. Deploy PythOracleAdapterV1 implementation
-5. Deploy PythOracleAdapterBeaconSetDeployer
-6. Deploy MorphoProtocolAdapterV1 implementation
-7. Deploy MorphoProtocolAdapterBeaconSetDeployer
-8. Deploy PassthroughProtocolAdapterV1 implementation
-9. Deploy PassthroughProtocolAdapterBeaconSetDeployer
-10. Deploy OracleUnifiedDeployer
+| Contract | Purpose |
+|----------|---------|
+| `DIAVaultOracleBeaconSetDeployer` | Owns the `DIAVaultOracle` beacon. Exposes `newDIAVaultOracle(config)` to mint a proxy. |
+| `PausableOracleWrapperBeaconSetDeployer` | Owns the `PausableOracleWrapper` beacon. Exposes `newPausableOracleWrapper(config)` to mint a proxy. |
+| `DIAOracleUnifiedDeployer` | One-shot. `newOracleWithWrapper(config)` mints both proxies in a single transaction and wires `wrapper.upstream = oracle`. |
 
-**For a new vault (e.g., wrapped AAPL):**
+### 8.1 Unified Deploy
 
 ```solidity
-// Step 1: Deploy oracle + protocol adapters
-OracleUnifiedDeployer.newOracleAndProtocolAdapters(
-    vault,          // Wrapped AAPL ERC-4626 vault address
-    priceId,        // AAPL/USD feed ID (from LibPyth constants)
-    60,             // maxAge in seconds
-    registry        // The canonical OracleRegistry
-);
-// Returns oracleAdapter, morphoAdapter, passthroughAdapter addresses
+DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
+    admin: governanceMultisig,
+    oracleConfig: DIAVaultOracleConfig({
+        diaOracle: IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+        symbol:    "COIN",
+        vault:     wtStockVault,
+        maxAge:    2 hours
+    }),
+    pauseConfig: CorporateActionPauseConfig({
+        corporateActionsVault: corporateActionsVault,
+        actionTypeMask:        type(uint256).max,
+        pauseTimeBefore:       1 hours,
+        pauseTimeAfter:        2 hours
+    })
+});
 
-// Step 2: Register oracle in registry (admin action, separate tx)
-registry.setOracle(vault, oracleAdapter);
+(DIAVaultOracle oracle, PausableOracleWrapper wrapper) =
+    unifiedDeployer.newOracleWithWrapper(config);
+
+// Hand `address(wrapper)` to consumers. Forget `address(oracle)`.
 ```
 
-**Why two-step deployment:**
+Atomicity is the point: a two-step deploy-then-wire-up flow opens a window
+for misaddressing the adapter, which would silently mint a wrapper around
+the wrong priced source. The unified deployer closes that window — the
+wrapper's `upstream` slot is set to the freshly-deployed adapter inside the
+same transaction that created the adapter, and both addresses are emitted
+in the deployer's `Deployment(caller, oracle, wrapper)` event.
 
-- `OracleUnifiedDeployer` can be called by anyone to deploy adapters
-- Only registry admin can register oracles
-- Separation prevents unauthorized oracle registration
+### 8.2 Per-Chain Deploy Sequence
+
+1. Deploy `DIAVaultOracle` implementation.
+2. Deploy `DIAVaultOracleBeaconSetDeployer` (it constructs its beacon).
+3. Deploy `PausableOracleWrapper` implementation.
+4. Deploy `PausableOracleWrapperBeaconSetDeployer` (it constructs its beacon).
+5. Deploy `DIAOracleUnifiedDeployer` wired to both BeaconSetDeployers.
+6. (Per vault) Call `unifiedDeployer.newOracleWithWrapper(...)`.
+
+Steps 1-5 happen once per chain. Step 6 is one transaction per vault.
+
+---
+
+## 9. Vendored Interfaces
+
+**Location:** `src/interface/`
+
+Two interfaces are vendored locally rather than pulled as soldeer or git
+dependencies:
+
+- **`IDIAOracleV2.sol`** — DIA Data Association's published oracle interface.
+  Single function: `getValue(string memory key) returns (uint128 value,
+  uint128 timestamp)`. `value` is the 18-decimal price for the symbol;
+  `timestamp` is the `block.timestamp` of the last on-chain push. **DIA does
+  not revert for unset feeds** — it returns `(0, 0)`. The adapter checks
+  this explicitly (see §3.4 `DIAPriceNotSet`). Vendored because the
+  interface is one function and stable; hand-typed against DIA Data
+  Association's published interface, last synced 2026-06-30. No
+  drift-detection test exists — re-sync on any upstream bump.
+
+- **`IAggregatorV2V3.sol`** — Hybrid of Chainlink's `AggregatorInterface`
+  (v2 — `latestAnswer`) and `AggregatorV3Interface` (v3 — `latestRoundData`,
+  `getRoundData`). Vendored to avoid taking a Chainlink dependency for an
+  interface this small. The deprecated `latestAnswer()` is intentionally
+  retained because Aave V3 and Compound V3 still call it; new consumers
+  should prefer `latestRoundData()` and honour `updatedAt`.
+
+---
+
+## 10. Integrator Model
+
+Consumers (Euler, Aave V3, Compound V3, future Chainlink-compatible
+markets) target the `PausableOracleWrapper` proxy address at the
+`AggregatorV2V3Interface` they already use for Chainlink feeds. No
+protocol-specific shim is involved. The wrapper looks indistinguishable from
+a Chainlink feed except that:
+
+- `latestAnswer` / `latestRoundData` revert during pause windows. Consumers
+  must treat these reverts as "price unavailable", not "price is the last
+  successful read".
+- `getRoundData(_roundId)` always reverts when the upstream is
+  `DIAVaultOracle`. Consumers should not rely on historical round
+  lookups against this stack.
+
+### 10.1 Operational Preconditions
+
+For any consumer that wraps reads in `try / catch`:
+
+1. **Do not configure a fallback oracle on the same bToken that points at a
+   raw DIA / raw Chainlink / raw anything feed.** A fallback would silently
+   mask the pause errors — exactly the failure mode the auto-pause is
+   supposed to make loud. A pause must surface to the protocol as
+   `OraclePriceNotFound` (or its equivalent), not get swallowed by a
+   fallback that wasn't aware the price was deliberately withheld.
+
+2. **The consumer's own `maxPriceAge` (or equivalent staleness threshold)
+   must be greater than or equal to the adapter's `maxAge`.** Otherwise
+   the consumer's check rejects the read before the adapter's internal
+   `DIAPriceStale(timestamp)` revert can fire, and the deployment loses
+   the layered staleness signal. Configure consumer staleness as a strict
+   upper bound on adapter staleness.
 
 ---
 
@@ -416,98 +564,87 @@ registry.setOracle(vault, oracleAdapter);
 
 ```
 st0x.oracle/
-├── lib/
-│   ├── rain.pyth/                              # For LibPyth
-│   └── pyth-sdk-solidity/                      # Pyth structs
 ├── src/
 │   ├── concrete/
 │   │   ├── oracle/
-│   │   │   └── PythOracleAdapter.sol
-│   │   ├── registry/
-│   │   │   └── OracleRegistry.sol              # Centralized vault→oracle mapping
-│   │   ├── protocol/
-│   │   │   ├── MorphoProtocolAdapter.sol       # Scales 8→36, uses registry
-│   │   │   └── PassthroughProtocolAdapter.sol  # For Aave, Compound, uses registry
+│   │   │   └── DIAVaultOracle.sol
+│   │   ├── wrapper/
+│   │   │   └── PausableOracleWrapper.sol
 │   │   └── deploy/
-│   │       ├── OracleRegistryBeaconSetDeployer.sol
-│   │       ├── PythOracleAdapterBeaconSetDeployer.sol
-│   │       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
-│   │       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
-│   │       └── OracleUnifiedDeployer.sol
+│   │       ├── DIAVaultOracleBeaconSetDeployer.sol
+│   │       ├── PausableOracleWrapperBeaconSetDeployer.sol
+│   │       └── DIAOracleUnifiedDeployer.sol
+│   ├── interface/
+│   │   ├── IDIAOracleV2.sol         ← vendored DIA interface
+│   │   └── IAggregatorV2V3.sol      ← vendored Chainlink shape
 │   └── lib/
-│       └── LibProdDeploy.sol
+│       └── LibCorporateActionsPause.sol
 └── test/
+    ├── mocks/
+    │   ├── MockAggregatorV2V3.sol
+    │   ├── MockDIAOracleV2.sol
+    │   ├── MockCorporateActions.sol
+    │   └── MockERC4626.sol
+    └── src/
+        ├── concrete/
+        │   ├── oracle/
+        │   ├── wrapper/
+        │   └── deploy/
+        ├── lib/
+        └── e2e/
+            └── DIAStackE2E.t.sol
 ```
 
 ---
 
-## 12. LibPyth Usage
+## 12. Security Considerations
 
-**Runtime (in PythOracleAdapter):**
-
-```solidity
-// No pyth address stored - derived at runtime from audited code
-IPyth pyth = LibPyth.getPriceFeedContract(block.chainid);
-```
-
-**Constants (for deployment):**
-
-```solidity
-// From LibPyth.sol - already mapped
-bytes32 constant PRICE_FEED_ID_EQUITY_US_AAPL_USD = 0x49f6b65cb1de6b10eaf75e7c03ca029c306d0357e91b5311b175084a5ad55688;
-bytes32 constant PRICE_FEED_ID_EQUITY_US_TSLA_USD = 0x16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1;
-bytes32 constant PRICE_FEED_ID_EQUITY_US_NVDA_USD = 0xb1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593;
-// ... GOOG, AMZN, MSFT, META, GME, MSTR, COIN, etc.
-
-// Chain ID → Pyth contract
-IPyth constant PRICE_FEED_CONTRACT_BASE = IPyth(0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a);
-```
-
----
-
-## 13. Governance
-
-All admin roles held by founder multisig:
-
-- **Beacon Owner**: Can upgrade implementation
-- **Registry Admin**: Can register/update vault→oracle mappings
-- **Oracle Admin**: Can update priceId, maxAge, pause/unpause
-- **Protocol Adapter Admin**: Can update registry reference (opt-out mechanism)
-
-No separation of roles.
-
----
-
-## 14. Upgrade & Migration Scenarios
-
-| Scenario | Action | Unchanged |
-|----------|--------|-----------|
-| Bug in Pyth price parsing | Upgrade PythOracleBeacon implementation | Registry, all protocol adapters |
-| Bug in Morpho scaling | Upgrade MorphoAdapterBeacon implementation | Registry, all oracle adapters |
-| Add Aave support | Deploy PassthroughAdapter proxy pointing to existing registry | Everything else |
-| Pyth dies, switch to Chainlink | Deploy ChainlinkOracleAdapter, call `registry.setOracle(vault, chainlinkOracle)` | Protocol adapters automatically use new oracle |
-| Corporate action (AAPL split) | Pause PythOracleAdapter, execute split, unpause | Protocol adapters unaware |
-| Bulk oracle update (10 vaults) | `registry.setOracleBulk(vaults, oracles)` | Single tx updates all |
-| Protocol adapter wants different registry | `adapter.setRegistry(alternativeRegistry)` | Other adapters unaffected |
+1. **DIA "not set" must surface, not mask.** DIA's `getValue` returns
+   `(0, 0)` for unset feeds rather than reverting. The adapter checks this
+   explicitly and raises `DIAPriceNotSet()`. A zero-value Chainlink answer
+   passed through to a consumer that does not check for zero would be
+   silently catastrophic.
+2. **DIA staleness must surface, not mask.** `block.timestamp - timestamp
+   > maxAge` reverts `DIAPriceStale(timestamp)`. A stalled feed is always
+   an oracle failure that must reach the consumer.
+3. **`maxAge == 0` is rejected at init.** A zero `maxAge` would make every
+   read instantly stale; failing loud at init is preferable to minting an
+   always-reverting oracle. Recommended value: `2 hours` (see §3.6).
+4. **Vault ratio is trusted.** `totalAssets / totalSupply` is taken at face
+   value. The vault must be a known ST0x deployment; pricing a hostile
+   ERC-4626 implementation is out of scope.
+5. **Zero vault supply reverts.** Pricing a share of a zero-supply vault
+   is undefined; the adapter reverts `ZeroVaultSupply()`.
+6. **`NODE_NONE` is the no-match sentinel, not `0`.** See §5.4. Misreading
+   this would treat the bootstrap node as a real corporate action.
+7. **Pending-wins overlap rule.** See §5.3. If a future change reverses
+   this, integrators reading the `effectiveTime` payload would see the
+   wrong "next event" timestamp.
+8. **Wrapper `admin` is single-step and zero-rejected on transfer.** A
+   misaddressed transfer permanently locks `setPaused`; use a multisig.
+9. **Upstream and pause config are immutable.** No admin path can redirect
+   the priced source or weaken pause windows; only redeploy + migration.
+10. **`getRoundData` reverts on DIA-backed deployments.** Consumers
+    that depend on historical round lookups will fail loudly, not get
+    wrong-but-plausible data.
+11. **Fallback oracles on the consumer side undermine the pause feature.**
+    See §10.1. The pause must reach the consumer; a fallback that hides it
+    defeats the security property.
+12. **Bare-symbol key requirement.** DIA feeds are keyed by the bare ticker
+    (`"COIN"`, `"AMZN"`, `"TSLA"`), not a pair string. A wrong key returns
+    `(0, 0)` from DIA and is caught at the `DIAPriceNotSet()` boundary, but
+    deployers should still confirm the symbol matches the DIA registry on
+    the target chain before minting a proxy.
 
 ---
 
-## 15. Security Considerations
+## 13. References
 
-1. **Negative prices**: Pyth prices can theoretically be negative; handle appropriately (revert)
-2. **Confidence intervals**: Pyth provides confidence data; consider rejecting wide confidence
-3. **Overflow**: Ensure scaling math cannot overflow (checked arithmetic in 0.8.25)
-4. **Corporate actions**: Pause mechanism exists to prevent trading during splits/dividends
-5. **Zero vault supply**: Revert when vault has no shares minted (no valid price)
-6. **Vault ratio manipulation**: Vault totalAssets/totalSupply is trusted — vault must be a known st0x deployment
-7. **Oracle not registered**: Protocol adapters revert with `OracleNotFound` if vault not in registry
-8. **Registry admin trust**: Registry admin can point any vault to any oracle — trust assumption
-
----
-
-## 16. References
-
-- **rain.pyth**: https://github.com/rainlanguage/rain.pyth
-- **st0x.deploy**: https://github.com/S01-Issuer/st0x.deploy
-- **Pyth Network**: https://docs.pyth.network/
-- **Chainlink AggregatorV3Interface**: https://github.com/smartcontractkit/chainlink
+- **DIA Data Association** — https://www.diadata.org/
+- **DIA oracle on Base mainnet** —
+  `0xCE521b52513242c5094bc56f57887BB2A05B8129`
+- **`st0x.deploy` (corporate actions, BeaconSetDeployer pattern,
+  `ICloneableV2`)** — https://github.com/S01-Issuer/st0x.deploy
+- **`rain-math-float`** — https://github.com/rainlanguage/rain.math.float
+- **Chainlink `AggregatorV2V3Interface`** — https://github.com/smartcontractkit/chainlink
+- **ERC-4626 Tokenized Vault Standard** — https://eips.ethereum.org/EIPS/eip-4626

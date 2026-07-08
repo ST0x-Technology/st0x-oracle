@@ -1,5 +1,0 @@
-services:
-  matchstick:
-    image: rainprotocol/matchstick:main
-    volumes:
-      - ..:/matchstick

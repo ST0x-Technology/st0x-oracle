@@ -34,12 +34,6 @@ checksum = "322956f272ae3073ee02b0e7301b8834f08f2de62bcd6c309c44e946d7cd7056"
 integrity = "dccdd4406a37db6af690872b805084a7dbe5211c57961a61ef083a7912ddbdc9"
 
 [[dependencies]]
-name = "rain-pyth"
-version = "0.0.0-git"
-git = "https://github.com/rainlanguage/rain.pyth"
-rev = "e7a45068d5aac93e92aec55d7bf1f58e66319a53"
-
-[[dependencies]]
 name = "rain-vats"
 version = "0.1.5"
 url = "https://soldeer-revisions.s3.amazonaws.com/rain-vats/0_1_5_20-05-2026_14:20:38_rain.zip"
