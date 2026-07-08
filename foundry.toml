@@ -13,24 +13,11 @@ bytecode_hash = "none"
 cbor_metadata = false
 
 remappings = [
-  # rain.pyth is consumed as a git source dep (not on soldeer); its own
-  # sources import the Pyth Ethereum SDK via the unversioned `pyth-sdk/`
-  # prefix, and they don't get their own remappings.txt resolved by us.
-  # Bridge to its vendored pyth-crosschain submodule so the transitive
-  # resolution works.
-  "pyth-sdk/=dependencies/rain-pyth-0.0.0-git/lib/pyth-crosschain/target_chains/ethereum/sdk/solidity/",
   # Some upstream OpenZeppelin-consuming deps use the unversioned
   # `@openzeppelin/contracts/` import prefix; bridge to the soldeer-pinned
   # install location so transitive resolution works. Same pattern as
   # st0x.deploy's foundry.toml.
   "@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.6.1/",
-  # rain.pyth's source still uses the unversioned `rain.math.float/` and
-  # `rain.intorastring/` import prefixes (since rain.pyth itself hasn't
-  # migrated to soldeer yet). Its own remappings.txt points into its
-  # submodule tree which we don't init. Bridge directly to the soldeer-pinned
-  # packages instead so transitive resolution works without nested submodules.
-  "rain.math.float/=dependencies/rain-math-float-0.1.1/src/",
-  "rain.intorastring/=dependencies/rain-intorastring-0.1.0/src/",
 ]
 
 [dependencies]
@@ -41,14 +28,9 @@ forge-std = "1.16.1"
 "rain-intorastring" = "0.1.0"
 "st0x-deploy" = "0.1.1"
 "rain-vats" = "0.1.5"
-
-[dependencies.rain-pyth]
-# rain-pyth is not yet published to soldeer; consume directly from git, pinned
-# to the SHA the previous git submodule pointed at. The `version` field is
-# mandatory but unused for git sources — it's just a label.
-version = "0.0.0-git"
-git = "https://github.com/rainlanguage/rain.pyth"
-rev = "e7a45068d5aac93e92aec55d7bf1f58e66319a53"
+# Transitive dep of st0x-deploy (LibStockSplit uses LibTOFUTokenDecimals).
+# `recursive_deps = false` means soldeer won't auto-pull it; declare explicit.
+"rain-tofu-erc20-decimals" = "0.1.1"
 
 [soldeer]
 recursive_deps = false
