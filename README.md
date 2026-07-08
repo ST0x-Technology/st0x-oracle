@@ -105,6 +105,24 @@ two constraints, or the pause feature is silently defeated:
    loses the layered staleness signal. Set consumer staleness as a strict
    upper bound on adapter staleness.
 
+## Signed-Price Stack
+
+Alongside the DIA stack, the repo ships a publisher-signed price stack for
+Morpho Blue markets:
+
+- **`ST0xPriceOracle`** — singleton multi-pair price store behind a beacon
+  proxy. Pair ids are deterministic (`keccak256(abi.encodePacked(base, quote))`,
+  no registration); values are opaque `uint256`s whose scaling belongs to the
+  publisher. `updatePrice` is permissionless — a global publisher's EIP-712
+  signature authorises each update, replay-protected by a strict per-pair
+  timestamp inequality (stale payloads no-op, future-dated payloads revert).
+  The EIP-712 domain deliberately binds name + version only, so one signed
+  payload serves every chain the oracle is deployed on. Global `signer` /
+  `timeout` rotate via `ORACLE_ADMIN_ROLE`-gated setters.
+- **`MorphoPairOracle`** — thin beacon-proxied adapter exposing one pair on
+  the central store through Morpho Blue's `IOracle.price()`; one shared
+  beacon upgrade retargets every deployed adapter at once.
+
 ## Setup
 
 This project uses Nix flakes for a reproducible toolchain.
@@ -128,7 +146,9 @@ forge fmt --check        # check formatting
 src/
 ├── concrete/
 │   ├── oracle/
-│   │   └── DIAVaultOracle.sol
+│   │   ├── DIAVaultOracle.sol
+│   │   ├── ST0xPriceOracle.sol
+│   │   └── MorphoPairOracle.sol
 │   ├── wrapper/
 │   │   └── PausableOracleWrapper.sol
 │   └── deploy/
@@ -137,7 +157,8 @@ src/
 │       └── DIAOracleUnifiedDeployer.sol
 ├── interface/
 │   ├── IDIAOracleV2.sol         (vendored DIA Data Association's published interface)
-│   └── IAggregatorV2V3.sol      (vendored Chainlink shape)
+│   ├── IAggregatorV2V3.sol      (vendored Chainlink shape)
+│   └── IOracle.sol              (vendored Morpho Blue oracle shape)
 └── lib/
     └── LibCorporateActionsPause.sol
 test/

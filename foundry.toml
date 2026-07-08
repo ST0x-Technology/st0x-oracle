@@ -23,6 +23,7 @@ remappings = [
 [dependencies]
 forge-std = "1.16.1"
 "@openzeppelin-contracts" = "5.6.1"
+"@openzeppelin-contracts-upgradeable" = "5.6.1"
 "rain-factory" = "0.1.1"
 "rain-math-float" = "0.1.1"
 "rain-intorastring" = "0.1.0"
