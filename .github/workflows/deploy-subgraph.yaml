@@ -18,7 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Free disk space
@@ -37,6 +36,9 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 1G
 
+      - run: nix develop -c forge soldeer install
+      # See rainix.yaml for why we manually init this submodule.
+      - run: git -C dependencies/rain-pyth-0.0.0-git submodule update --init lib/pyth-crosschain
       - run: nix develop -c rainix-sol-prelude
 
       - name: Install subgraph dependencies
