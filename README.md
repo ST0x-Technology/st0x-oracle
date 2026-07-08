@@ -1,60 +1,101 @@
 # st0x.oracle
 
-Oracle adapter system that bridges Pyth Network price feeds to DeFi lending protocols (Morpho Blue, Aave V3, Compound V3). Three-layer architecture: oracle adapters (price source), oracle registry (centralized vault→oracle mapping), and protocol adapters (protocol-specific interface). Allows independent upgrades, oracle swaps via single registry update, and protocol adapters that can opt-out to alternative registries.
+Chronicle-backed oracle stack for pricing ST0x `wtStock` ERC-4626 vault
+shares inside DeFi lending protocols (Euler, Aave V3, Compound V3, any
+Chainlink-compatible market). Exposes a single proxy address per vault
+behind `AggregatorV2V3Interface`.
 
 ## Architecture
 
+Two layers, separated by intent. The **adapter**
+(`ChronicleVaultOracle`) does pure price math: reads the underlying-asset
+price from a Chronicle Protocol feed, multiplies by the vault's
+`totalAssets / totalSupply` ratio, returns an 8-decimal `int256`. The
+**wrapper** (`PausableOracleWrapper`) is a shape-preserving decorator that
+adds operational pause semantics on top of any `AggregatorV2V3Interface`
+source — a manual admin emergency pause and an automatic corporate-action
+pause driven by `ICorporateActionsV1` via `LibCorporateActionsPause`.
+Consumers target the wrapper proxy; the wrapper's `upstream` slot is
+immutable.
+
 ```
-  PROTOCOL ADAPTERS (looks up oracle from registry)
-
-  ┌───────────────────────┐   ┌──────────────────────────────────────┐
-  │ MorphoProtocolAdapter │   │ PassthroughProtocolAdapter           │
-  │ IOracle (8→36 dec)    │   │ (instances: Aave, Compound, ...)     │
-  │                       │   │ AggregatorV3Interface passthrough    │
-  │ stores: registry,     │   │                                      │
-  │         vault         │   │ stores: registry, vault              │
-  └──────────┬────────────┘   └──────────────────┬───────────────────┘
-             │                                   │
-             └────────────────┬──────────────────┘
-                              │
-                              ▼
-                  ┌───────────────────────┐
-                  │    OracleRegistry     │  ← centralized vault→oracle mapping
-                  │                       │
-                  │  getOracle(vault)     │
-                  │  setOracle(vault, o)  │
-                  │  setOracleBulk(...)   │
-                  └───────────┬───────────┘
-                              │
-                              ▼
-                  ┌───────────────────────┐
-                  │ AggregatorV3Interface │  ← contract boundary
-                  └───────────────────────┘
-                              ▲
-                              │
-                    ┌─────────┴─────────┐
-                    │                   │
-                    ▼                   ▼
-  ┌──────────────────────┐   ┌──────────────────────┐
-  │ PythOracleAdapter    │   │ Future adapters      │
-  │ Pyth → 8 dec         │   │ (Chainlink etc)      │
-  │ pause, admin         │   │                      │
-  └──────────────────────┘   └──────────────────────┘
-
-  ORACLE ADAPTERS (canonical price source per asset)
+                ┌───────────────────────────────┐
+   consumers ──▶│     PausableOracleWrapper     │   ← canonical address
+                │     AggregatorV2V3Interface   │
+                │     + manual + auto pause     │
+                └───────────────┬───────────────┘
+                                │ upstream (immutable)
+                                ▼
+                ┌───────────────────────────────┐
+                │     ChronicleVaultOracle      │
+                │     chronicle.read() ×        │
+                │       totalAssets / totalSupply│
+                └───────────────────────────────┘
 ```
 
-**Oracle layer** -- one `PythOracleAdapter` per vault, implements `AggregatorV3Interface` at 8 decimals. Prices vault shares as `pythPrice * totalAssets / totalSupply`. Governance controls (pause for corporate actions) live here.
+**Flagship features:**
 
-**Registry layer** -- `OracleRegistry` maintains centralized `vault → oracle` mapping. Single `setOracle()` call updates the oracle for all protocol adapters serving that vault. Supports bulk updates via `setOracleBulk()`.
+- **Corporate-action auto-pause.** The wrapper consults
+  `ICorporateActionsV1` on every read. Inside a configured pre/post window
+  of any matching scheduled or completed action (stock splits, dividends,
+  ...), reads revert `OraclePausedCorporateAction(effectiveTime)`. Lending
+  markets that catch the revert treat the price as unavailable for the
+  window — no borrows, no liquidations across a NAV-rebalance boundary.
+- **`wtStock` NAV tracking via `convertToAssets`.** The adapter's
+  `totalAssets / totalSupply` factor is exactly ERC-4626
+  `convertToAssets(1 share)`. Post-split rebalances inside the underlying
+  `tStock` vault flow through to the share price automatically on the
+  first read after the pause window closes — no oracle-side intervention.
 
-**Protocol layer** -- `PassthroughProtocolAdapter` (Aave/Compound/any Chainlink-compatible) and `MorphoProtocolAdapter` (scales 8 to 36 decimals). Each stores `registry + vault` and looks up oracle at runtime. Can opt-out via `setRegistry()` to point to an alternative registry.
+See `SPEC.md` for the full specification.
 
-**Deployers** -- beacon proxy pattern via `st0x.deploy`. `OracleUnifiedDeployer` deploys an oracle adapter + all protocol adapters for a new vault. Admin must call `registry.setOracle()` separately to register the oracle.
+## Integrator Quickstart
+
+Deploy a paired `(oracle, wrapper)` for a new vault in one transaction:
+
+```solidity
+ChronicleOracleUnifiedDeployConfig memory config = ChronicleOracleUnifiedDeployConfig({
+    admin: governanceMultisig,
+    oracleConfig: ChronicleVaultOracleConfig({
+        chronicle: IChronicle(chronicleFeed),
+        vault:     wtStockVault,
+        maxAge:    60
+    }),
+    pauseConfig: CorporateActionPauseConfig({
+        corporateActionsVault: corporateActionsVault,
+        actionTypeMask:        type(uint256).max,
+        pauseTimeBefore:       1 hours,
+        pauseTimeAfter:        2 hours
+    })
+});
+
+(ChronicleVaultOracle oracle, PausableOracleWrapper wrapper) =
+    unifiedDeployer.newOracleWithWrapper(config);
+```
+
+Hand `address(wrapper)` to consumers as the `AggregatorV2V3Interface` source
+they already plug Chainlink feeds into. The adapter address is an internal
+detail.
+
+## Operational Preconditions for Consumers
+
+Anything that wraps reads in `try / catch` (Aave-style consumers) must respect
+two constraints, or the pause feature is silently defeated:
+
+1. **No fallback oracle on the same priced asset.** A fallback that catches
+   our pause revert and serves a raw Chronicle / raw Pyth / raw anything
+   price masks the exact failure mode the auto-pause exists to surface.
+   The pause must reach the protocol as `OraclePriceNotFound` or
+   equivalent, never get swallowed.
+2. **Consumer's `maxPriceAge` ≥ adapter's `maxAge`.** Otherwise the
+   consumer's staleness check rejects the read before our internal
+   `ChroniclePriceStale(age)` revert can surface, and the deployment
+   loses the layered staleness signal. Set consumer staleness as a strict
+   upper bound on adapter staleness.
 
 ## Setup
 
-This project uses Nix flakes for reproducible toolchain management.
+This project uses Nix flakes for a reproducible toolchain.
 
 ```bash
 nix develop
@@ -69,55 +110,38 @@ forge test -vvv          # verbose
 forge fmt --check        # check formatting
 ```
 
-Fork tests require a Base RPC URL:
-
-```bash
-export RPC_URL_BASE_FORK=<your-base-rpc-url>
-forge test
-```
-
 ## Repository Structure
 
 ```
 src/
 ├── concrete/
 │   ├── oracle/
-│   │   └── PythOracleAdapter.sol
-│   ├── registry/
-│   │   └── OracleRegistry.sol
-│   ├── protocol/
-│   │   ├── MorphoProtocolAdapter.sol
-│   │   └── PassthroughProtocolAdapter.sol
+│   │   └── ChronicleVaultOracle.sol
+│   ├── wrapper/
+│   │   └── PausableOracleWrapper.sol
 │   └── deploy/
-│       ├── PythOracleAdapterBeaconSetDeployer.sol
-│       ├── OracleRegistryBeaconSetDeployer.sol
-│       ├── MorphoProtocolAdapterBeaconSetDeployer.sol
-│       ├── PassthroughProtocolAdapterBeaconSetDeployer.sol
-│       └── OracleUnifiedDeployer.sol
+│       ├── ChronicleVaultOracleBeaconSetDeployer.sol
+│       ├── PausableOracleWrapperBeaconSetDeployer.sol
+│       └── ChronicleOracleUnifiedDeployer.sol
 ├── interface/
-│   └── IAggregatorV3.sol
+│   ├── IChronicle.sol           (vendored from chronicleprotocol/chronicle-std, MIT)
+│   └── IAggregatorV2V3.sol      (vendored Chainlink shape)
 └── lib/
-    └── LibProdDeploy.sol
+    └── LibCorporateActionsPause.sol
 test/
-├── abstract/
-│   ├── PythOracleAdapterTest.sol
-│   └── OracleRegistryTest.sol
-├── lib/
-│   └── LibFork.sol
+├── mocks/
 └── src/
-    └── concrete/
-        ├── deploy/
-        ├── oracle/
-        ├── registry/
-        └── protocol/
+    ├── concrete/{oracle,wrapper,deploy}/
+    ├── lib/
+    └── e2e/
 ```
 
 ## Dependencies
 
-- [rain.pyth](https://github.com/rainlanguage/rain.pyth) -- `LibPyth.getPriceFeedContract()` and price feed ID constants
-- [pyth-sdk-solidity](https://github.com/pyth-network/pyth-sdk-solidity) -- `IPyth`, `PythStructs`
-- [st0x.deploy](https://github.com/S01-Issuer/st0x.deploy) -- `BeaconSetDeployer` pattern, `ICloneableV2`
-- [openzeppelin-contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) -- `UpgradeableBeacon`, `BeaconProxy`, `Initializable`
+- [chronicle-std](https://github.com/chronicleprotocol/chronicle-std) -- `IChronicle` interface, vendored locally (MIT)
+- [st0x.deploy](https://github.com/S01-Issuer/st0x.deploy) -- `ICorporateActionsV1`, BeaconSetDeployer pattern, `ICloneableV2`
+- [rain-math-float](https://github.com/rainlanguage/rain.math.float) -- decimal-float arithmetic for the share-price computation
+- [openzeppelin-contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) -- `UpgradeableBeacon`, `BeaconProxy`, `Initializable`, `IERC4626`
 
 ## License
 
