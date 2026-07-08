@@ -3,21 +3,6 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin-contracts-5.6.1/proxy/ERC1967/ERC1967Proxy.sol";
-
-/// @dev OZ v5's `ERC1967Proxy` reverts in its constructor when `_data` is
-/// empty. Override `_unsafeAllowUninitialized` so the test harness can stand
-/// the proxy up first and call `initialize(bytes)` explicitly — that lets
-/// every init test go through the same path (`proxy.initialize(...)`) and
-/// keeps return-value assertions on the success hash straightforward.
-contract TestERC1967Proxy is ERC1967Proxy {
-    constructor(address impl) ERC1967Proxy(impl, "") {}
-
-    function _unsafeAllowUninitialized() internal pure override returns (bool) {
-        return true;
-    }
-}
-
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
@@ -36,6 +21,7 @@ import {
 } from "src/concrete/oracle/DIAVaultOracle.sol";
 import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
 import {MockERC4626} from "test/mocks/MockERC4626.sol";
+import {TestERC1967Proxy} from "test/mocks/TestERC1967Proxy.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;

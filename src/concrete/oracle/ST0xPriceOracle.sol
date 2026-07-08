@@ -96,11 +96,10 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     error PriceFuture(bytes32 pairId);
     error PriceUpdateInvalidSignature(bytes32 pairId);
 
-    event SignerSet(address signer);
+    event SignerSet(address indexed signer);
     event TimeoutSet(uint64 timeout);
     event PriceUpdated(bytes32 indexed pairId, uint256 price, uint256 timestamp);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }

@@ -11,20 +11,13 @@ on:
           - base_sepolia
           - ethereum
           - sepolia
-
       suite:
         description: 'Suite to deploy'
         required: true
         type: choice
         options:
-          - pyth-oracle-adapter-beacon-set
-          - morpho-protocol-adapter-beacon-set
-          - passthrough-protocol-adapter-beacon-set
-          - oracle-unified-deployer
-          - oracle-registry-beacon-set
-          - multi-pyth-oracle-adapter-beacon-set
-          - multi-oracle-unified-deployer
-
+          - dia-oracle-unified-deployer
+          - dia-stack-test-deploy
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -37,11 +30,9 @@ jobs:
           echo "verify_secret_name=CI_DEPLOY_${network^^}_VERIFY" >> $GITHUB_ENV
           echo "verifier_secret_name=CI_DEPLOY_${network^^}_VERIFIER" >> $GITHUB_ENV
           echo "verifier_url_secret_name=CI_DEPLOY_${network^^}_VERIFIER_URL" >> $GITHUB_ENV
-
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |
@@ -58,9 +49,7 @@ jobs:
           # before trying to save a new cache
           # 1G = 1073741824
           gc-max-store-size-linux: 1G
-
       - run: nix develop -c forge soldeer install
-
       - name: deploy to ${{ inputs.network }}
         run: nix develop -c rainix-sol-artifacts
         env:

@@ -3,7 +3,6 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin-contracts-5.6.1/proxy/ERC1967/ERC1967Proxy.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
 import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
@@ -20,19 +19,7 @@ import {
 import {MockAggregatorV2V3} from "test/mocks/MockAggregatorV2V3.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
-
-/// @dev OZ v5's `ERC1967Proxy` reverts in its constructor when `_data` is
-/// empty. Override `_unsafeAllowUninitialized` so the test harness can stand
-/// the proxy up first and call `initialize(bytes)` explicitly — that lets
-/// every init test go through the same path (`proxy.initialize(...)`) and
-/// keeps return-value assertions on the success hash straightforward.
-contract TestERC1967Proxy is ERC1967Proxy {
-    constructor(address impl) ERC1967Proxy(impl, "") {}
-
-    function _unsafeAllowUninitialized() internal pure override returns (bool) {
-        return true;
-    }
-}
+import {TestERC1967Proxy} from "test/mocks/TestERC1967Proxy.sol";
 
 contract PausableOracleWrapperTest is Test {
     PausableOracleWrapper internal implementation;

@@ -23,7 +23,6 @@ contract MorphoPairOracle is Initializable, IOracle {
     /// @notice The central multi-pair price store this adapter reads —
     /// chain-constant, shared by all beacon proxies, hence an
     /// implementation immutable.
-    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     ST0xPriceOracle public immutable iCentral;
 
     /// @notice The pair this adapter forwards, on `iCentral`'s canonical
@@ -32,7 +31,6 @@ contract MorphoPairOracle is Initializable, IOracle {
 
     error ZeroCentral();
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(ST0xPriceOracle central) {
         if (address(central) == address(0)) revert ZeroCentral();
         iCentral = central;
