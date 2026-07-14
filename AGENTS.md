@@ -87,26 +87,33 @@ locally. The workflow runs `rainix-sol-artifacts`, which executes
 
 - `dia-oracle-unified-deployer` — DIA stack infra: fresh implementations, both
   beacon-set deployers, and the `DIAOracleUnifiedDeployer` composing them. No
-  per-vault proxies are minted.
-- `dia-stack-test-deploy` — the infra suite PLUS a paired (`DIAVaultOracle`,
-  `PausableOracleWrapper`) minted for wtCOIN off DIA's COIN feed, auto-pause
-  disabled. Test deploys only.
+  per-vault proxies are minted; each vault's `(oracle, wrapper)` pair is minted
+  afterwards through the unified deployer with that vault's real
+  corporate-action pause config.
 
-Beacon ownership defaults to the deployer address; set the
-`BEACON_INITIAL_OWNER` env var to override.
+`BEACON_INITIAL_OWNER` is **required** and must differ from the deploy key: the
+beacon owner controls the implementation behind every proxy (every served
+price), so it must be governance — a multisig — never the hot CI deploy key. The
+workflow exposes it as a required dispatch input; a missing value fails the
+deploy loudly.
 
-1. Run the workflow with the target network and suite
+1. Run the workflow with the target network, suite, and beacon owner
 2. Parse deployed addresses from the workflow logs
 3. Use `cast send` with `--interactive` for any onchain calls that need a
    private key
 
 ### Secret Naming Convention
 
-Workflow secrets follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
+The deploy signing key is **not** per-network: `manual-sol-artifacts.yaml` uses
+`secrets.PRIVATE_KEY` for runs dispatched from `main` and
+`secrets.PRIVATE_KEY_DEV` for any other ref (see its `DEPLOYMENT_KEY` env line).
+
+Per-network secrets/vars follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
 
 - `CI_DEPLOY_BASE_RPC_URL`
-- `CI_DEPLOY_BASE_DEPLOYER_PRIVATE_KEY`
 - `CI_DEPLOY_BASE_ETHERSCAN_API_KEY`
+- `CI_DEPLOY_BASE_VERIFY`
+- `CI_DEPLOY_BASE_VERIFIER`
 - `CI_DEPLOY_BASE_VERIFIER_URL` (use
   `https://api.etherscan.io/v2/api?chainid=8453`)
 
