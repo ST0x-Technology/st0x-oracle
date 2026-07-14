@@ -60,6 +60,25 @@ contract DIAVaultOracleTest is Test {
         });
     }
 
+    // -------- ERC-7201 storage-layout pin (beacon-upgrade safety) --------
+
+    /// @notice The `MainStorage` slot constant is a hardcoded hex literal with
+    /// no getter. Pin it to the normative ERC-7201 derivation by proving
+    /// storage actually lands there: after `initialize`, the first field
+    /// (`diaOracle`) must be readable at the recomputed slot. If a future v2
+    /// re-namespaces or drifts the layout, this fails — do not "fix" the test,
+    /// fix the layout (a drift corrupts every live proxy on beacon upgrade).
+    function testMainStorageLocationMatchesErc7201Derivation() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        bytes32 derived =
+            keccak256(abi.encode(uint256(keccak256("st0x.diavaultoracle.main")) - 1)) & ~bytes32(uint256(0xff));
+        // diaOracle is the first member of MainStorage → sits exactly at the slot.
+        address storedDIAOracle = address(uint160(uint256(vm.load(address(oracle), derived))));
+        assertEq(
+            storedDIAOracle, address(oracle.diaOracle()), "MainStorage must be namespaced at the ERC-7201 derived slot"
+        );
+    }
+
     // -------- Init validation --------
 
     function testInitRevertsZeroDIAOracle() external {

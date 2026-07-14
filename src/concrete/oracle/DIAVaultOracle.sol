@@ -93,17 +93,26 @@ struct DIAVaultOracleConfig {
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
-    /// @dev The DIA Data Association V2 oracle feed for the underlying asset.
-    IDIAOracleV2 public diaOracle;
+    /// @custom:storage-location erc7201:st0x.diavaultoracle.main
+    struct MainStorage {
+        // The DIA Data Association V2 oracle feed for the underlying asset.
+        IDIAOracleV2 diaOracle;
+        // The DIA feed key (bare symbol, e.g. `"COIN"`).
+        string symbol;
+        // The ERC-4626 vault this oracle prices shares for.
+        address vault;
+        // Maximum acceptable DIA push age in seconds.
+        uint256 maxAge;
+    }
 
-    /// @dev The DIA feed key (bare symbol, e.g. `"COIN"`).
-    string public symbol;
+    // keccak256(abi.encode(uint256(keccak256("st0x.diavaultoracle.main")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant MAIN_STORAGE_LOCATION = 0xa6b686aa52190f2ecc306934b0149933ff4f6d9fe65f143c543f7c981a9b1200;
 
-    /// @dev The ERC-4626 vault this oracle prices shares for.
-    address public vault;
-
-    /// @dev Maximum acceptable DIA push age in seconds.
-    uint256 public maxAge;
+    function _main() private pure returns (MainStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := MAIN_STORAGE_LOCATION
+        }
+    }
 
     /// @notice Emitted when the oracle is initialized. Single source of
     /// truth for off-chain indexers — all immutable config in one event.
@@ -113,6 +122,26 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     constructor() {
         _disableInitializers();
+    }
+
+    /// @notice The DIA Data Association V2 oracle feed for the underlying asset.
+    function diaOracle() public view returns (IDIAOracleV2) {
+        return _main().diaOracle;
+    }
+
+    /// @notice The DIA feed key (bare symbol, e.g. `"COIN"`).
+    function symbol() public view returns (string memory) {
+        return _main().symbol;
+    }
+
+    /// @notice The ERC-4626 vault this oracle prices shares for.
+    function vault() public view returns (address) {
+        return _main().vault;
+    }
+
+    /// @notice Maximum acceptable DIA push age in seconds.
+    function maxAge() public view returns (uint256) {
+        return _main().maxAge;
     }
 
     /// @notice Documents the typed signature of the initialize function. Per
@@ -135,10 +164,11 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         if (config.vault == address(0)) revert ZeroVault();
         if (config.maxAge == 0) revert ZeroMaxAge();
 
-        diaOracle = config.diaOracle;
-        symbol = config.symbol;
-        vault = config.vault;
-        maxAge = config.maxAge;
+        MainStorage storage $ = _main();
+        $.diaOracle = config.diaOracle;
+        $.symbol = config.symbol;
+        $.vault = config.vault;
+        $.maxAge = config.maxAge;
 
         emit DIAVaultOracleInitialized(msg.sender, config);
 
@@ -147,7 +177,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     /// @inheritdoc AggregatorV2V3Interface
     function description() external view override returns (string memory) {
-        return symbol;
+        return _main().symbol;
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -200,10 +230,11 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
     /// "too old" (DIAPriceStale). DIA's `getValue` returns `(0, 0)` for an
     /// unset feed rather than reverting — we must check explicitly.
     function _readDIAChecked() internal view returns (uint128 value, uint128 timestamp) {
-        (value, timestamp) = diaOracle.getValue(symbol);
+        MainStorage storage $ = _main();
+        (value, timestamp) = $.diaOracle.getValue($.symbol);
         if (value == 0 || timestamp == 0) revert DIAPriceNotSet();
         // slither-disable-next-line timestamp
-        if (block.timestamp - uint256(timestamp) > maxAge) revert DIAPriceStale(uint256(timestamp));
+        if (block.timestamp - uint256(timestamp) > $.maxAge) revert DIAPriceStale(uint256(timestamp));
     }
 
     /// @dev Compute vault share price from a DIA reading via Rain float math
@@ -215,7 +246,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // count 18 to recover the natural quantity.
         Float priceFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(uint256(diaPrice), 18);
 
-        IERC4626 vaultContract = IERC4626(vault);
+        IERC4626 vaultContract = IERC4626(_main().vault);
         uint256 totalAssets = vaultContract.totalAssets();
         uint256 totalSupply = vaultContract.totalSupply();
 

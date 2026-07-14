@@ -85,6 +85,23 @@ contract PausableOracleWrapperTest is Test {
         });
     }
 
+    // -------- ERC-7201 storage-layout pin (beacon-upgrade safety) --------
+
+    /// @notice The `MainStorage` slot constant is a hardcoded hex literal with
+    /// no getter. Pin it to the normative ERC-7201 derivation by proving
+    /// storage actually lands there: after `initialize`, the first field
+    /// (`admin`) must be readable at the recomputed slot. If a future v2
+    /// re-namespaces or drifts the layout, this fails — do not "fix" the test,
+    /// fix the layout (a drift corrupts every live proxy on beacon upgrade).
+    function testMainStorageLocationMatchesErc7201Derivation() external {
+        PausableOracleWrapper wrapper = _deployProxy(_defaultConfig());
+        bytes32 derived =
+            keccak256(abi.encode(uint256(keccak256("st0x.pausableoraclewrapper.main")) - 1)) & ~bytes32(uint256(0xff));
+        // admin is the first member of MainStorage → sits exactly at the slot.
+        address storedAdmin = address(uint160(uint256(vm.load(address(wrapper), derived))));
+        assertEq(storedAdmin, wrapper.admin(), "MainStorage must be namespaced at the ERC-7201 derived slot");
+    }
+
     // -------- Init validation --------
 
     function testInitRevertsZeroAdmin() external {

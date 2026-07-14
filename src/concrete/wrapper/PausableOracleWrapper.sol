@@ -89,28 +89,36 @@ struct PausableOracleWrapperConfig {
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initializable {
-    /// @dev Governance address.
-    address public admin;
+    /// @custom:storage-location erc7201:st0x.pausableoraclewrapper.main
+    struct MainStorage {
+        // Governance address.
+        address admin;
+        // Manual emergency pause flag. Independent of corporate-action
+        // auto-pause — either condition causes price reads to revert.
+        bool paused;
+        // The wrapped oracle. Immutable after init.
+        AggregatorV2V3Interface upstream;
+        // Address implementing `ICorporateActionsV1` consulted on every price
+        // read for auto-pause. Zero address disables auto-pause. Immutable.
+        address corporateActionsVault;
+        // Bitmap of action types that trigger an auto-pause. Immutable.
+        uint256 actionTypeMask;
+        // Seconds before a pending action's `effectiveTime` to start pausing.
+        // Immutable.
+        uint64 pauseTimeBefore;
+        // Seconds after a completed action's `effectiveTime` to keep pausing.
+        // Immutable.
+        uint64 pauseTimeAfter;
+    }
 
-    /// @dev Manual emergency pause flag. Independent of corporate-action
-    /// auto-pause — either condition causes price reads to revert.
-    bool public paused;
+    // keccak256(abi.encode(uint256(keccak256("st0x.pausableoraclewrapper.main")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant MAIN_STORAGE_LOCATION = 0x3bf9f07749a1b9ca296211065904d5a319fee3811030efb4609952e7a2384800;
 
-    /// @dev The wrapped oracle. Immutable after init.
-    AggregatorV2V3Interface public upstream;
-
-    /// @dev Address implementing `ICorporateActionsV1` consulted on every
-    /// price read for auto-pause. Zero address disables auto-pause.
-    /// Immutable after init.
-    address public corporateActionsVault;
-    /// @dev Bitmap of action types that trigger an auto-pause. Immutable.
-    uint256 public actionTypeMask;
-    /// @dev Seconds before a pending action's `effectiveTime` to start
-    /// pausing. Immutable.
-    uint64 public pauseTimeBefore;
-    /// @dev Seconds after a completed action's `effectiveTime` to keep
-    /// pausing. Immutable.
-    uint64 public pauseTimeAfter;
+    function _main() private pure returns (MainStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := MAIN_STORAGE_LOCATION
+        }
+    }
 
     /// @notice Emitted when the manual pause state changes.
     /// @param isPaused The new pause state.
@@ -128,12 +136,48 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     event PausableOracleWrapperInitialized(address indexed sender, PausableOracleWrapperConfig config);
 
     modifier onlyAdmin() {
-        if (msg.sender != admin) revert OnlyAdmin();
+        if (msg.sender != _main().admin) revert OnlyAdmin();
         _;
     }
 
     constructor() {
         _disableInitializers();
+    }
+
+    /// @notice Governance address.
+    function admin() public view returns (address) {
+        return _main().admin;
+    }
+
+    /// @notice Manual emergency pause flag.
+    function paused() public view returns (bool) {
+        return _main().paused;
+    }
+
+    /// @notice The wrapped oracle.
+    function upstream() public view returns (AggregatorV2V3Interface) {
+        return _main().upstream;
+    }
+
+    /// @notice Address implementing `ICorporateActionsV1` consulted for
+    /// auto-pause; zero disables it.
+    function corporateActionsVault() public view returns (address) {
+        return _main().corporateActionsVault;
+    }
+
+    /// @notice Bitmap of action types that trigger an auto-pause.
+    function actionTypeMask() public view returns (uint256) {
+        return _main().actionTypeMask;
+    }
+
+    /// @notice Seconds before a pending action's `effectiveTime` to pause.
+    function pauseTimeBefore() public view returns (uint64) {
+        return _main().pauseTimeBefore;
+    }
+
+    /// @notice Seconds after a completed action's `effectiveTime` to pause.
+    function pauseTimeAfter() public view returns (uint64) {
+        return _main().pauseTimeAfter;
     }
 
     /// @notice Documents the typed signature of the initialize function. Per
@@ -154,12 +198,13 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
         if (config.admin == address(0)) revert ZeroAdmin();
         if (address(config.upstream) == address(0)) revert ZeroUpstream();
 
-        admin = config.admin;
-        upstream = config.upstream;
-        corporateActionsVault = config.pauseConfig.corporateActionsVault;
-        actionTypeMask = config.pauseConfig.actionTypeMask;
-        pauseTimeBefore = config.pauseConfig.pauseTimeBefore;
-        pauseTimeAfter = config.pauseConfig.pauseTimeAfter;
+        MainStorage storage $ = _main();
+        $.admin = config.admin;
+        $.upstream = config.upstream;
+        $.corporateActionsVault = config.pauseConfig.corporateActionsVault;
+        $.actionTypeMask = config.pauseConfig.actionTypeMask;
+        $.pauseTimeBefore = config.pauseConfig.pauseTimeBefore;
+        $.pauseTimeAfter = config.pauseConfig.pauseTimeAfter;
 
         emit PausableOracleWrapperInitialized(msg.sender, config);
 
@@ -169,25 +214,25 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     /// @inheritdoc AggregatorV2V3Interface
     /// @dev Delegated to upstream — wrapping is shape-preserving.
     function decimals() external view override returns (uint8) {
-        return upstream.decimals();
+        return _main().upstream.decimals();
     }
 
     /// @inheritdoc AggregatorV2V3Interface
     /// @dev Delegated to upstream — wrapping is shape-preserving.
     function description() external view override returns (string memory) {
-        return upstream.description();
+        return _main().upstream.description();
     }
 
     /// @inheritdoc AggregatorV2V3Interface
     /// @dev Delegated to upstream — wrapping is shape-preserving.
     function version() external view override returns (uint256) {
-        return upstream.version();
+        return _main().upstream.version();
     }
 
     /// @inheritdoc AggregatorV2V3Interface
     function latestAnswer() external view override returns (int256) {
         _validateNotPaused();
-        return upstream.latestAnswer();
+        return _main().upstream.latestAnswer();
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -199,7 +244,7 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     {
         _validateNotPaused();
         // slither-disable-next-line unused-return
-        return upstream.latestRoundData();
+        return _main().upstream.latestRoundData();
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -214,7 +259,7 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     {
         _validateNotPaused();
         // slither-disable-next-line unused-return
-        return upstream.getRoundData(_roundId);
+        return _main().upstream.getRoundData(_roundId);
     }
 
     /// @notice Pause or unpause the wrapper's manual flag. Admin only.
@@ -222,7 +267,7 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     /// causes price reads to revert.
     /// @param isPaused True to pause, false to unpause.
     function setPaused(bool isPaused) external onlyAdmin {
-        paused = isPaused;
+        _main().paused = isPaused;
         emit PauseSet(isPaused);
     }
 
@@ -235,8 +280,9 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     /// @param newAdmin The new admin address. Cannot be zero.
     function setAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAdmin();
-        emit AdminSet(admin, newAdmin);
-        admin = newAdmin;
+        MainStorage storage $ = _main();
+        emit AdminSet($.admin, newAdmin);
+        $.admin = newAdmin;
     }
 
     /// @dev Reverts if either pause condition is currently active. Manual
@@ -244,9 +290,10 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
     /// admin has explicitly set the manual flag we want that error returned,
     /// not the corporate-action one.
     function _validateNotPaused() internal view {
-        if (paused) revert OraclePausedManual();
+        MainStorage storage $ = _main();
+        if ($.paused) revert OraclePausedManual();
         (bool autoPaused, uint64 effectiveTime) = LibCorporateActionsPause.inPauseWindow(
-            corporateActionsVault, actionTypeMask, pauseTimeBefore, pauseTimeAfter
+            $.corporateActionsVault, $.actionTypeMask, $.pauseTimeBefore, $.pauseTimeAfter
         );
         if (autoPaused) revert OraclePausedCorporateAction(effectiveTime);
     }
