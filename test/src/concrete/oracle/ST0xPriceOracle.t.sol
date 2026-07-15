@@ -262,6 +262,45 @@ contract ST0xPriceOracleTest is Test {
         assertEq(oracle.price(PAIR_A), 42e18, "current-timestamp price is servable");
     }
 
+    /// @notice Per-pair isolation: two DISTINCT pairs each keep their own
+    /// price and timestamp. A regression that collapses the pair mapping to a
+    /// single global slot (or mis-keys writes/reads) would make one pair's
+    /// write clobber the other — this test fails under that mutation.
+    function test_UpdatePrice_TwoPairs_IsolatedState() public {
+        address baseTokenB = address(0xCCC3);
+        address quoteTokenB = address(0xDDD4);
+        bytes32 pairB = oracle.pairId(baseTokenB, quoteTokenB);
+        assertTrue(pairB != PAIR_A, "pairs must be distinct");
+
+        // Distinct prices AND distinct timestamps per pair.
+        uint256 tsA = block.timestamp;
+        vm.warp(block.timestamp + 7);
+        uint256 tsB = block.timestamp;
+
+        _push(PAIR_A, 42e18, tsA);
+        _push(pairB, 99e18, tsB);
+
+        // Each pair reads back exactly its own value — not the other's, and
+        // not a shared last-write.
+        (uint256 priceA, uint256 storedTsA) = oracle.pairPrice(PAIR_A);
+        (uint256 priceB, uint256 storedTsB) = oracle.pairPrice(pairB);
+        assertEq(priceA, 42e18, "pair A price isolated");
+        assertEq(storedTsA, tsA, "pair A timestamp isolated");
+        assertEq(priceB, 99e18, "pair B price isolated");
+        assertEq(storedTsB, tsB, "pair B timestamp isolated");
+
+        assertEq(oracle.price(PAIR_A), 42e18, "price() serves pair A's own value");
+        assertEq(oracle.price(pairB), 99e18, "price() serves pair B's own value");
+
+        // Overwriting pair A with a fresher price must not touch pair B.
+        vm.warp(block.timestamp + 7);
+        _push(PAIR_A, 43e18, block.timestamp);
+        assertEq(oracle.price(PAIR_A), 43e18, "pair A advanced");
+        (uint256 priceBAfter, uint256 storedTsBAfter) = oracle.pairPrice(pairB);
+        assertEq(priceBAfter, 99e18, "pair B price untouched by pair A write");
+        assertEq(storedTsBAfter, tsB, "pair B timestamp untouched by pair A write");
+    }
+
     // -------- constant-derivation pins (convention-vs-enforcement) --------
 
     /// @notice `DOMAIN_SEPARATOR` is a hardcoded hex literal — pin it to its

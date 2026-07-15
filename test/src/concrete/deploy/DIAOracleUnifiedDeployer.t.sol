@@ -24,6 +24,8 @@ import {
 } from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
 import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
 import {MockERC4626} from "test/mocks/MockERC4626.sol";
+import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 
 contract DIAOracleUnifiedDeployerTest is Test {
     DIAVaultOracle internal oracleImpl;
@@ -117,8 +119,38 @@ contract DIAOracleUnifiedDeployerTest is Test {
             })
         );
 
+        // Fully-populated, NON-trivial config: distinct admin, real DIA feed,
+        // distinct symbol / vault / maxAge, and an ENABLED coherent pause
+        // config with a real corporate-actions mock, non-zero mask, and
+        // distinct non-zero before/after windows. Every forwarded field is
+        // asserted below so a mis-wire of ANY of them fails this test.
+        MockCorporateActions actions = new MockCorporateActions();
+        MockERC4626 wtVault = new MockERC4626();
+        address distinctAdmin = address(0xDA11);
+        string memory distinctSymbol = "AMZN";
+        uint256 distinctMaxAge = 42 minutes;
+        uint256 distinctMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        uint64 distinctBefore = 111;
+        uint64 distinctAfter = 4444;
+
+        DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
+            admin: distinctAdmin,
+            oracleConfig: DIAVaultOracleConfig({
+                diaOracle: IDIAOracleV2(address(diaOracle)),
+                symbol: distinctSymbol,
+                vault: address(wtVault),
+                maxAge: distinctMaxAge
+            }),
+            pauseConfig: CorporateActionPauseConfig({
+                corporateActionsVault: address(actions),
+                actionTypeMask: distinctMask,
+                pauseTimeBefore: distinctBefore,
+                pauseTimeAfter: distinctAfter
+            })
+        });
+
         vm.recordLogs();
-        (DIAVaultOracle oracle, PausableOracleWrapper wrapper) = unified.newOracleWithWrapper(_defaultDeployConfig());
+        (DIAVaultOracle oracle, PausableOracleWrapper wrapper) = unified.newOracleWithWrapper(config);
 
         // -- Event --
         Vm.Log[] memory entries = vm.getRecordedLogs();
@@ -135,10 +167,20 @@ contract DIAOracleUnifiedDeployerTest is Test {
         }
         assertTrue(found, "unified Deployment event not emitted");
 
-        // -- Wiring --
-        assertEq(address(wrapper.upstream()), address(oracle), "wrapper upstream wired to oracle");
-        assertEq(wrapper.admin(), ADMIN, "wrapper admin from config");
+        // -- Oracle: every forwarded DIAVaultOracle field --
         assertEq(address(oracle.diaOracle()), address(diaOracle), "oracle DIA feed from config");
+        assertEq(oracle.symbol(), distinctSymbol, "oracle symbol from config");
+        assertEq(oracle.vault(), address(wtVault), "oracle vault from config");
+        assertEq(oracle.maxAge(), distinctMaxAge, "oracle maxAge from config");
+
+        // -- Wrapper: upstream wiring + every forwarded field --
+        assertEq(address(wrapper.upstream()), address(oracle), "wrapper upstream wired to oracle");
+        assertEq(wrapper.admin(), distinctAdmin, "wrapper admin from config");
+        assertEq(wrapper.corporateActionsVault(), address(actions), "wrapper corporate-actions vault from config");
+        assertEq(wrapper.actionTypeMask(), distinctMask, "wrapper action-type mask from config");
+        assertEq(wrapper.pauseTimeBefore(), distinctBefore, "wrapper pauseTimeBefore from config");
+        assertEq(wrapper.pauseTimeAfter(), distinctAfter, "wrapper pauseTimeAfter from config");
+        assertEq(wrapper.paused(), false, "wrapper starts unpaused");
     }
 
     function testNewOracleWithWrapperEndToEndPriceRead() external {

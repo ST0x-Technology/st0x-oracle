@@ -439,6 +439,84 @@ contract PausableOracleWrapperTest is Test {
         assertEq(wrapper.latestAnswer(), int256(123));
     }
 
+    // -------- Config forwarding: asymmetric window discrimination --------
+    //
+    // These tests use ASYMMETRIC pauseTimeBefore vs pauseTimeAfter so that
+    // swapping the two args into `LibCorporateActionsPause.inPauseWindow`, or
+    // dropping either, flips the pause outcome. The wrapper must forward its
+    // stored (pauseTimeBefore, pauseTimeAfter) into the CORRECT positions.
+
+    uint64 internal constant ASYM_BEFORE = 100;
+    uint64 internal constant ASYM_AFTER = 5000;
+
+    function _asymConfig() internal view returns (PausableOracleWrapperConfig memory) {
+        return PausableOracleWrapperConfig({
+            admin: ADMIN,
+            upstream: AggregatorV2V3Interface(address(upstream)),
+            pauseConfig: CorporateActionPauseConfig({
+                corporateActionsVault: address(actions),
+                actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
+                pauseTimeBefore: ASYM_BEFORE,
+                pauseTimeAfter: ASYM_AFTER
+            })
+        });
+    }
+
+    /// @dev Pending action at `now + 300`. With the correct small
+    /// `pauseTimeBefore = 100`, the pre-window predicate
+    /// `now + 100 >= now + 300` is FALSE, so reads succeed. If the wrapper
+    /// swapped the args (feeding the large `pauseTimeAfter = 5000` as "before")
+    /// the predicate `now + 5000 >= now + 300` would be TRUE and this read
+    /// would revert — so a swap-or-mis-position mutation fails this test.
+    function testAsymPendingOutsidePreWindowReadsSucceed() external {
+        PausableOracleWrapper wrapper = _deployProxy(_asymConfig());
+        uint64 effectiveTime = uint64(block.timestamp + 300);
+        actions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        upstream.setLatestAnswer(int256(42));
+        assertEq(wrapper.latestAnswer(), int256(42), "small pauseTimeBefore must NOT pause a far pending action");
+    }
+
+    /// @dev Same pending action moved to `now + 50`, now INSIDE the
+    /// `pauseTimeBefore = 100` pre-window (`now + 100 >= now + 50`), so reads
+    /// must revert. Pins the correct `pauseTimeBefore` is actually consulted.
+    function testAsymPendingInsidePreWindowReverts() external {
+        PausableOracleWrapper wrapper = _deployProxy(_asymConfig());
+        uint64 effectiveTime = uint64(block.timestamp + 50);
+        actions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        upstream.setLatestAnswer(int256(42));
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        wrapper.latestAnswer();
+    }
+
+    /// @dev Completed action at `now - 300`. With the correct large
+    /// `pauseTimeAfter = 5000`, the post-window predicate
+    /// `now <= (now - 300) + 5000` is TRUE, so reads must revert. If the
+    /// wrapper swapped the args (feeding the small `pauseTimeBefore = 100` as
+    /// "after") the predicate `now <= (now - 300) + 100 = now - 200` would be
+    /// FALSE and the read would succeed — so a swap-or-mis-position mutation
+    /// fails this test.
+    function testAsymCompletedInsidePostWindowReverts() external {
+        PausableOracleWrapper wrapper = _deployProxy(_asymConfig());
+        uint64 effectiveTime = uint64(block.timestamp - 300);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        upstream.setLatestAnswer(int256(42));
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        wrapper.latestAnswer();
+    }
+
+    /// @dev Completed action moved to `now - 5001`, now just OUTSIDE the
+    /// `pauseTimeAfter = 5000` post-window (`now > (now - 5001) + 5000`), so
+    /// reads succeed. Pins the correct `pauseTimeAfter` boundary; a swap to the
+    /// small `pauseTimeBefore = 100` would already have failed the previous
+    /// test, and dropping `pauseTimeAfter` to zero would fail the prior one too.
+    function testAsymCompletedOutsidePostWindowReadsSucceed() external {
+        PausableOracleWrapper wrapper = _deployProxy(_asymConfig());
+        uint64 effectiveTime = uint64(block.timestamp - ASYM_AFTER - 1);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        upstream.setLatestAnswer(int256(77));
+        assertEq(wrapper.latestAnswer(), int256(77), "completed action past pauseTimeAfter must NOT pause");
+    }
+
     function testManualPauseTakesPrecedenceOverAutoPause() external {
         // Both conditions would fire — manual pause is checked first so its
         // selector is what the integrator sees.

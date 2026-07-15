@@ -137,6 +137,28 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, pendingTime, "pending action's effectiveTime should be returned when both windows open");
     }
 
+    /// A PENDING action exists but its pre-window has NOT opened yet
+    /// (`now + pauseTimeBefore < pendingEffective`), so the pending branch
+    /// falls through WITHOUT returning. A COMPLETED action's post-window IS
+    /// open, so the function must return `(true, completedEffective)` — the
+    /// COMPLETED action's time, not the pending one. Guards the fall-through
+    /// from the pending branch into the completed branch: a regression that
+    /// `return`ed early on any present pending (regardless of window) would
+    /// report the pending time and fail this.
+    function testPendingPreWindowClosedFallsThroughToCompleted() external {
+        // Pending action far in the future: now + BEFORE < pendingEffective.
+        uint64 pendingTime = uint64(block.timestamp + 2 * BEFORE + 1);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, pendingTime);
+        // Completed action inside its post-window.
+        uint64 completedTime = uint64(block.timestamp - AFTER / 2);
+        mock.setLatestCompleted(2, ACTION_TYPE_STOCK_SPLIT_V1, completedTime);
+
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "completed post-window must pause after pending falls through");
+        assertEq(ts, completedTime, "fall-through must report the COMPLETED action's effectiveTime");
+    }
+
     // -------- Zero-window edge cases --------
 
     function testZeroBeforeWithExactPendingReturnsFalse() external {

@@ -17,6 +17,7 @@ import {
     DIAPriceStale,
     ZeroVaultSupply,
     ZeroVaultSharePrice,
+    VaultSharePriceOverflow,
     HistoricalRoundDataUnsupported
 } from "src/concrete/oracle/DIAVaultOracle.sol";
 import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
@@ -226,6 +227,35 @@ contract DIAVaultOracleTest is Test {
         vault.setTotalSupply(1e18);
 
         vm.expectRevert(ZeroVaultSharePrice.selector);
+        oracle.latestAnswer();
+    }
+
+    // -------- latestAnswer overflow --------
+
+    /// @notice Drive the computed 8-decimal share price above `int256.max` so
+    /// the `int256(price8)` cast would be unsafe, and assert the contract
+    /// reverts `VaultSharePriceOverflow` instead of returning a wrapped
+    /// negative price. A regression that dropped the overflow guard (returning
+    /// `int256(price8)` directly) would produce a garbage negative answer and
+    /// fail this test.
+    ///
+    /// Magnitude: the 8dp share price must land strictly BETWEEN int256.max
+    /// (~5.79e76) and uint256.max (~1.16e77) — below the lower bound the value
+    /// fits an int256 and no revert fires; above the upper bound the earlier
+    /// `toFixedDecimalLossy(_, 8)` step itself reverts `FixedDecimalOverflow`
+    /// before the guard is reached. diaPrice raw = 1e38 (natural 1e20 at 18dp),
+    /// totalAssets = 7e48, totalSupply = 1 → natural 7e68 → 8dp 7e76, which sits
+    /// in that window. All operands are clean powers-of-ten so BOTH the
+    /// intermediate `fromFixedDecimalLosslessPacked` and the final 8dp
+    /// conversion are lossless, giving an exact `price8 == 7e76` — so we assert
+    /// the full selector + args rather than the bare selector.
+    function testLatestAnswerRevertsVaultSharePriceOverflow() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 1e38, uint128(block.timestamp));
+        vault.setTotalAssets(7e48);
+        vault.setTotalSupply(1);
+
+        vm.expectRevert(abi.encodeWithSelector(VaultSharePriceOverflow.selector, uint256(7e76)));
         oracle.latestAnswer();
     }
 

@@ -20,6 +20,7 @@ import {
     ZeroBeaconOwner
 } from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
 import {MockAggregatorV2V3} from "test/mocks/MockAggregatorV2V3.sol";
+import {PausableOracleWrapperV2} from "test/mocks/PausableOracleWrapperV2.sol";
 
 contract PausableOracleWrapperBeaconSetDeployerTest is Test {
     PausableOracleWrapper internal implementation;
@@ -122,18 +123,48 @@ contract PausableOracleWrapperBeaconSetDeployerTest is Test {
         bsd.newPausableOracleWrapper(badConfig);
     }
 
+    /// @notice The beacon is genuinely SHARED: deploy two proxies with DISTINCT
+    /// configs, then upgrade the single beacon to a V2 implementation and prove
+    /// BOTH proxies retarget (answer the V2-only `implVersion()`), while each
+    /// proxy retains its OWN distinct config across the upgrade. A tautological
+    /// version (identical configs, no upgrade) would pass even if each proxy
+    /// had its own beacon — this discriminates that.
     function testMultipleProxiesShareBeacon() external {
         PausableOracleWrapperBeaconSetDeployer bsd = _deployBSD();
-        PausableOracleWrapper a = bsd.newPausableOracleWrapper(_defaultWrapperConfig());
-        PausableOracleWrapper b = bsd.newPausableOracleWrapper(_defaultWrapperConfig());
+
+        // Distinct configs: different admin + different upstream per proxy.
+        MockAggregatorV2V3 upstreamB = new MockAggregatorV2V3();
+        address adminB = address(0xB0B);
+        PausableOracleWrapperConfig memory configA = _defaultWrapperConfig();
+        PausableOracleWrapperConfig memory configB = PausableOracleWrapperConfig({
+            admin: adminB, upstream: AggregatorV2V3Interface(address(upstreamB)), pauseConfig: _disabledPauseConfig()
+        });
+
+        PausableOracleWrapper a = bsd.newPausableOracleWrapper(configA);
+        PausableOracleWrapper b = bsd.newPausableOracleWrapper(configB);
         assertTrue(address(a) != address(b), "proxies must be distinct");
 
         address beacon = address(bsd.I_PAUSABLE_ORACLE_WRAPPER_BEACON());
         assertEq(UpgradeableBeacon(beacon).implementation(), address(implementation));
 
-        // Both proxies independently delegate to the same implementation, so
-        // both `upstream()` reads should succeed and return the value each
-        // was initialized with.
-        assertEq(address(a.upstream()), address(b.upstream()));
+        // V1 has no `implVersion()` — both proxies revert on it pre-upgrade.
+        (bool okA,) = address(a).staticcall(abi.encodeWithSignature("implVersion()"));
+        (bool okB,) = address(b).staticcall(abi.encodeWithSignature("implVersion()"));
+        assertFalse(okA, "V1 has no implVersion() (a)");
+        assertFalse(okB, "V1 has no implVersion() (b)");
+
+        // One beacon upgrade retargets EVERY proxy off that beacon.
+        PausableOracleWrapperV2 v2Impl = new PausableOracleWrapperV2();
+        vm.prank(BEACON_OWNER);
+        UpgradeableBeacon(beacon).upgradeTo(address(v2Impl));
+
+        assertEq(PausableOracleWrapperV2(address(a)).implVersion(), 2, "proxy a retargeted");
+        assertEq(PausableOracleWrapperV2(address(b)).implVersion(), 2, "proxy b retargeted");
+
+        // Each proxy retains its OWN distinct config across the upgrade.
+        assertEq(a.admin(), ADMIN, "proxy a keeps its own admin");
+        assertEq(address(a.upstream()), address(upstream), "proxy a keeps its own upstream");
+        assertEq(b.admin(), adminB, "proxy b keeps its own admin");
+        assertEq(address(b.upstream()), address(upstreamB), "proxy b keeps its own upstream");
     }
 }

@@ -11,10 +11,13 @@ import {
     DIAVaultOracleBeaconSetDeployer,
     DIAVaultOracleBeaconSetDeployerConfig,
     ZeroImplementation,
-    ZeroBeaconOwner
+    ZeroBeaconOwner,
+    InitializeOracleFailed
 } from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
 import {MockERC4626} from "test/mocks/MockERC4626.sol";
+import {MockWrongMagicDIAVaultOracle} from "test/mocks/MockWrongMagicDIAVaultOracle.sol";
+import {DIAVaultOracleV2} from "test/mocks/DIAVaultOracleV2.sol";
 
 contract DIAVaultOracleBeaconSetDeployerTest is Test {
     DIAVaultOracle internal implementation;
@@ -106,18 +109,64 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         bsd.newDIAVaultOracle(badConfig);
     }
 
+    /// @notice A wrong-magic (non-`ICLONEABLE_V2_SUCCESS`) return from
+    /// `initialize` — as opposed to a revert — must be rejected with
+    /// `InitializeOracleFailed`. Distinct from
+    /// `testNewDIAVaultOraclePropagatesInitRevertZeroVault`, which covers a
+    /// REVERTING init. Point the beacon at a mock impl whose `initialize`
+    /// succeeds but returns the wrong magic.
+    function testNewDIAVaultOracleRevertsOnWrongInitMagic() external {
+        MockWrongMagicDIAVaultOracle wrongImpl = new MockWrongMagicDIAVaultOracle();
+        DIAVaultOracleBeaconSetDeployer bsd = new DIAVaultOracleBeaconSetDeployer(
+            DIAVaultOracleBeaconSetDeployerConfig({
+                initialOwner: BEACON_OWNER, initialDIAVaultOracleImplementation: address(wrongImpl)
+            })
+        );
+        vm.expectRevert(InitializeOracleFailed.selector);
+        bsd.newDIAVaultOracle(_defaultOracleConfig());
+    }
+
+    /// @notice The beacon is genuinely SHARED: deploy two proxies with DISTINCT
+    /// configs, then upgrade the single beacon to a V2 implementation and prove
+    /// BOTH proxies retarget (answer the V2-only `implVersion()`), while each
+    /// proxy retains its OWN distinct config across the upgrade. A tautological
+    /// version (identical configs, no upgrade) would pass even if each proxy
+    /// had its own beacon — this discriminates that.
     function testMultipleProxiesShareBeacon() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
-        DIAVaultOracle a = bsd.newDIAVaultOracle(_defaultOracleConfig());
-        DIAVaultOracle b = bsd.newDIAVaultOracle(_defaultOracleConfig());
+
+        // Distinct configs: different vault + symbol per proxy.
+        MockERC4626 vaultB = new MockERC4626();
+        DIAVaultOracleConfig memory configA = _defaultOracleConfig();
+        DIAVaultOracleConfig memory configB = DIAVaultOracleConfig({
+            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: "AMZN", vault: address(vaultB), maxAge: MAX_AGE
+        });
+
+        DIAVaultOracle a = bsd.newDIAVaultOracle(configA);
+        DIAVaultOracle b = bsd.newDIAVaultOracle(configB);
         assertTrue(address(a) != address(b), "proxies must be distinct");
 
         address beacon = address(bsd.I_DIA_VAULT_ORACLE_BEACON());
         assertEq(UpgradeableBeacon(beacon).implementation(), address(implementation));
 
-        // Both proxies independently delegate to the same implementation, so
-        // both `diaOracle()` reads should succeed and return the value each
-        // was initialized with.
-        assertEq(address(a.diaOracle()), address(b.diaOracle()));
+        // V1 has no `implVersion()` — both proxies revert on it pre-upgrade.
+        (bool okA,) = address(a).staticcall(abi.encodeWithSignature("implVersion()"));
+        (bool okB,) = address(b).staticcall(abi.encodeWithSignature("implVersion()"));
+        assertFalse(okA, "V1 has no implVersion() (a)");
+        assertFalse(okB, "V1 has no implVersion() (b)");
+
+        // One beacon upgrade retargets EVERY proxy off that beacon.
+        DIAVaultOracleV2 v2Impl = new DIAVaultOracleV2();
+        vm.prank(BEACON_OWNER);
+        UpgradeableBeacon(beacon).upgradeTo(address(v2Impl));
+
+        assertEq(DIAVaultOracleV2(address(a)).implVersion(), 2, "proxy a retargeted");
+        assertEq(DIAVaultOracleV2(address(b)).implVersion(), 2, "proxy b retargeted");
+
+        // Each proxy retains its OWN distinct config across the upgrade.
+        assertEq(a.vault(), address(vault), "proxy a keeps its own vault");
+        assertEq(a.symbol(), SYMBOL, "proxy a keeps its own symbol");
+        assertEq(b.vault(), address(vaultB), "proxy b keeps its own vault");
+        assertEq(b.symbol(), "AMZN", "proxy b keeps its own symbol");
     }
 }
