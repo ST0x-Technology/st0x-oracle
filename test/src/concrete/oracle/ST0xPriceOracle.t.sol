@@ -100,6 +100,44 @@ contract ST0xPriceOracleTest is Test {
         new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, address(0), TIMEOUT)));
     }
 
+    function test_Initialize_ZeroTimeout_Reverts() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        vm.expectRevert(ST0xPriceOracle.ZeroTimeout.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, 0)));
+    }
+
+    function test_Initialize_TimeoutTooLarge_Reverts() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        uint64 tooLarge = oracle.MAX_TIMEOUT() + 1;
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, tooLarge));
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, tooLarge)));
+    }
+
+    function test_Initialize_TimeoutAtMax_Ok() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        uint64 atMax = impl.MAX_TIMEOUT();
+        ST0xPriceOracle fresh = ST0xPriceOracle(
+            address(new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, atMax))))
+        );
+        assertEq(fresh.timeout(), atMax, "timeout at MAX_TIMEOUT is accepted");
+    }
+
+    function test_SetTimeout_Zero_Reverts() public {
+        vm.prank(ORACLE_ADMIN);
+        vm.expectRevert(ST0xPriceOracle.ZeroTimeout.selector);
+        oracle.setTimeout(0);
+    }
+
+    function test_SetTimeout_TooLarge_Reverts() public {
+        uint64 tooLarge = oracle.MAX_TIMEOUT() + 1;
+        vm.prank(ORACLE_ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, tooLarge));
+        oracle.setTimeout(tooLarge);
+    }
+
     function test_Initialize_OnlyOnce() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         oracle.initialize(RANDO, SIGNER, TIMEOUT);

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {ICorporateActionsV1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {ICorporateActionsV1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {CompletionFilter, NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 
 /// @title LibCorporateActionsPause
@@ -31,9 +31,13 @@ library LibCorporateActionsPause {
     /// @notice Whether the oracle should auto-pause right now.
     /// @param corporateActionsVault Address implementing `ICorporateActionsV1`.
     /// `address(0)` short-circuits to `false` (auto-pause disabled).
-    /// @param mask Bitmap of action types to consider. `0` short-circuits
-    /// to `false` (no action types match anything). `type(uint256).max`
-    /// matches every present and future action type.
+    /// @param mask Bitmap of action types to consider. The
+    /// `ACTION_TYPE_INIT_V1` bit is always stripped before querying — the
+    /// vault's bootstrap node is a price-irrelevant bookkeeping entry created
+    /// (and completed) by the first `scheduleCorporateAction`, so matching it
+    /// would spuriously open a post-window on a non-event. A mask that is `0`
+    /// or exactly `ACTION_TYPE_INIT_V1` therefore short-circuits to `false`.
+    /// `type(uint256).max` matches every present and future real action type.
     /// @param pauseTimeBefore Seconds before a pending action's `effectiveTime`
     /// to start pausing.
     /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime`
@@ -50,14 +54,22 @@ library LibCorporateActionsPause {
         view
         returns (bool paused, uint64 effectiveTime)
     {
-        if (corporateActionsVault == address(0) || mask == 0) {
+        // Strip the bootstrap bit: `ACTION_TYPE_INIT_V1` is the vault's
+        // lazily-created init node, completed in the same block as the first
+        // `scheduleCorporateAction`. Matching it (notably under the
+        // recommended `type(uint256).max` mask) would auto-pause the oracle
+        // for the whole `pauseTimeAfter` on the mere act of scheduling any
+        // first action — an unrecoverable spurious pause tied to a non-event.
+        uint256 effectiveMask = mask & ~ACTION_TYPE_INIT_V1;
+        if (corporateActionsVault == address(0) || effectiveMask == 0) {
             return (false, 0);
         }
 
         ICorporateActionsV1 vault = ICorporateActionsV1(corporateActionsVault);
 
         // slither-disable-next-line unused-return
-        (uint256 pendingCursor,, uint64 pendingEffective) = vault.earliestActionOfType(mask, CompletionFilter.PENDING);
+        (uint256 pendingCursor,, uint64 pendingEffective) =
+            vault.earliestActionOfType(effectiveMask, CompletionFilter.PENDING);
         // `NODE_NONE = type(uint256).max` is the documented no-match sentinel
         // from `ICorporateActionsV1` — cursor `0` is a real bootstrap node and
         // must NOT be treated as "no match".
@@ -73,7 +85,7 @@ library LibCorporateActionsPause {
 
         // slither-disable-next-line unused-return
         (uint256 completedCursor,, uint64 completedEffective) =
-            vault.latestActionOfType(mask, CompletionFilter.COMPLETED);
+            vault.latestActionOfType(effectiveMask, CompletionFilter.COMPLETED);
         if (completedCursor != NODE_NONE) {
             // completedEffective <= now is guaranteed by the COMPLETED filter.
             // slither-disable-next-line timestamp

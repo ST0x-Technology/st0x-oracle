@@ -14,10 +14,12 @@ import {
     OraclePausedCorporateAction,
     ZeroUpstream,
     ZeroAdmin,
-    OnlyAdmin
+    OnlyAdmin,
+    InvalidPauseConfig
 } from "src/concrete/wrapper/PausableOracleWrapper.sol";
 import {MockAggregatorV2V3} from "test/mocks/MockAggregatorV2V3.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
+import {MockRevertingCorporateActions, CorporateActionsUnavailable} from "test/mocks/MockRevertingCorporateActions.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {TestERC1967Proxy} from "test/mocks/TestERC1967Proxy.sol";
 
@@ -100,6 +102,64 @@ contract PausableOracleWrapperTest is Test {
         // admin is the first member of MainStorage → sits exactly at the slot.
         address storedAdmin = address(uint160(uint256(vm.load(address(wrapper), derived))));
         assertEq(storedAdmin, wrapper.admin(), "MainStorage must be namespaced at the ERC-7201 derived slot");
+    }
+
+    // -------- Pause-config coherence (audit #30 / #47) --------
+
+    /// @dev Every partial (incoherent) pause config must revert at init:
+    /// vault-only, mask-only, window-only, and vault+mask-but-no-window all
+    /// silently never pause, so they are rejected rather than minted.
+    function testInitRevertsVaultOnlyPauseConfig() external {
+        CorporateActionPauseConfig memory pause = _disabledPauseConfig();
+        pause.corporateActionsVault = address(actions);
+        _expectInvalidPauseConfig(pause);
+    }
+
+    function testInitRevertsMaskOnlyPauseConfig() external {
+        CorporateActionPauseConfig memory pause = _disabledPauseConfig();
+        pause.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        _expectInvalidPauseConfig(pause);
+    }
+
+    function testInitRevertsWindowOnlyPauseConfig() external {
+        CorporateActionPauseConfig memory pause = _disabledPauseConfig();
+        pause.pauseTimeAfter = PAUSE_AFTER;
+        _expectInvalidPauseConfig(pause);
+    }
+
+    function testInitRevertsVaultAndMaskButNoWindow() external {
+        CorporateActionPauseConfig memory pause = _disabledPauseConfig();
+        pause.corporateActionsVault = address(actions);
+        pause.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        _expectInvalidPauseConfig(pause);
+    }
+
+    function _expectInvalidPauseConfig(CorporateActionPauseConfig memory pause) internal {
+        PausableOracleWrapper wrapper = _deployUninit();
+        PausableOracleWrapperConfig memory config = PausableOracleWrapperConfig({
+            admin: ADMIN, upstream: AggregatorV2V3Interface(address(upstream)), pauseConfig: pause
+        });
+        vm.expectRevert(InvalidPauseConfig.selector);
+        wrapper.initialize(abi.encode(config));
+    }
+
+    /// @dev An enabled config whose vault has no working corporate-actions
+    /// facet must fail the DEPLOY transaction (via the init probe), not every
+    /// future read against an immutable config.
+    function testInitProbesVaultAndRevertsOnBrokenFacet() external {
+        MockRevertingCorporateActions broken = new MockRevertingCorporateActions();
+        CorporateActionPauseConfig memory pause = CorporateActionPauseConfig({
+            corporateActionsVault: address(broken),
+            actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
+            pauseTimeBefore: PAUSE_BEFORE,
+            pauseTimeAfter: PAUSE_AFTER
+        });
+        PausableOracleWrapper wrapper = _deployUninit();
+        PausableOracleWrapperConfig memory config = PausableOracleWrapperConfig({
+            admin: ADMIN, upstream: AggregatorV2V3Interface(address(upstream)), pauseConfig: pause
+        });
+        vm.expectRevert(CorporateActionsUnavailable.selector);
+        wrapper.initialize(abi.encode(config));
     }
 
     // -------- Init validation --------

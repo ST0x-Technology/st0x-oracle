@@ -29,6 +29,15 @@ error OnlyAdmin();
 /// silently mint a broken oracle.
 error ZeroAdmin();
 
+/// @dev Error raised when the corporate-action pause config is internally
+/// inconsistent. Auto-pause must be either coherently ENABLED (vault + mask +
+/// at least one non-zero window) or coherently DISABLED (all four fields
+/// zero). Any partial shape (e.g. a vault with a zero mask, or a vault + mask
+/// with both windows zero) silently never pauses — the exact failure the
+/// feature exists to prevent — so reject it at init instead of minting a
+/// wrapper whose auto-pause is dead.
+error InvalidPauseConfig();
+
 /// @title CorporateActionPauseConfig
 /// @notice Configuration for the corporate-action-aware auto-pause feature.
 /// All fields are immutable after initialize.
@@ -198,13 +207,35 @@ contract PausableOracleWrapper is AggregatorV2V3Interface, ICloneableV2, Initial
         if (config.admin == address(0)) revert ZeroAdmin();
         if (address(config.upstream) == address(0)) revert ZeroUpstream();
 
+        CorporateActionPauseConfig memory pause = config.pauseConfig;
+        bool vaultSet = pause.corporateActionsVault != address(0);
+        bool maskSet = pause.actionTypeMask != 0;
+        bool windowSet = pause.pauseTimeBefore != 0 || pause.pauseTimeAfter != 0;
+        // Coherent config only: all-off, or vault + mask + at least one window.
+        // Anything in between is a dead auto-pause masquerading as enabled.
+        bool enabled = vaultSet && maskSet && windowSet;
+        bool disabled = !vaultSet && !maskSet && !windowSet;
+        if (!enabled && !disabled) revert InvalidPauseConfig();
+
+        // When enabled, probe the vault once so an incompatible wiring — a
+        // missing corporate-actions facet (ABI-decode revert) or a mask with
+        // no bits in the upstream VALID_ACTION_TYPES_MASK (InvalidMask) —
+        // reverts THIS deploy transaction rather than every future consumer
+        // read against an immutable, unrecoverable config.
+        if (enabled) {
+            // slither-disable-next-line unused-return
+            LibCorporateActionsPause.inPauseWindow(
+                pause.corporateActionsVault, pause.actionTypeMask, pause.pauseTimeBefore, pause.pauseTimeAfter
+            );
+        }
+
         MainStorage storage $ = _main();
         $.admin = config.admin;
         $.upstream = config.upstream;
-        $.corporateActionsVault = config.pauseConfig.corporateActionsVault;
-        $.actionTypeMask = config.pauseConfig.actionTypeMask;
-        $.pauseTimeBefore = config.pauseConfig.pauseTimeBefore;
-        $.pauseTimeAfter = config.pauseConfig.pauseTimeAfter;
+        $.corporateActionsVault = pause.corporateActionsVault;
+        $.actionTypeMask = pause.actionTypeMask;
+        $.pauseTimeBefore = pause.pauseTimeBefore;
+        $.pauseTimeAfter = pause.pauseTimeAfter;
 
         emit PausableOracleWrapperInitialized(msg.sender, config);
 
