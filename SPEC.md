@@ -607,15 +607,39 @@ AccessControl, ERC-7201 namespaced storage).
 
 ### 11.2 `MorphoPairOracle`
 
-Thin adapter binding one Morpho Blue market to one pair on the central store. It
-is literally the interface: `price()` forwards `iCentral.price(sPairId)`
-verbatim — scaling, staleness policy, signer rotation and update mechanics all
-live on the central oracle.
+Beacon-proxied adapter binding one Morpho Blue market to one pair on the central
+store, and — unlike the central store, which treats values as opaque — imposing
+a concrete scale convention for its markets.
+
+**The scale contract (cross-repo).** The off-chain publisher MUST sign, for
+`pairId(base, quote)`, the price of one whole `base` (Morpho _collateral_) token
+denominated in whole `quote` (Morpho _loan_) tokens, scaled to
+`PUBLISHER_DECIMALS = 1e18`. This constant on the adapter is the explicit,
+versioned contract the separate publisher repo honours. The earlier "forward the
+opaque value verbatim" behaviour left Morpho's 36-decimal invariant as an
+unpinned social agreement across three parties (publisher, this repo, whoever
+creates the market); a mis-scaled pair returned a plausible-but-wrong price with
+nothing reverting.
+
+**Morpho's convention.** `IOracle.price()` returns the price of one collateral
+token in loan token, scaled by `1e36 * 10^loanDecimals / 10^collateralDecimals`.
+With `base` = collateral, `quote` = loan, and the publisher's 18-decimal
+whole-token ratio `signed`:
+
+```
+price() = signed * 10^(36 + quoteDecimals - baseDecimals - 18)
+        = mulDiv(signed, 10^(36 + quoteDecimals), 10^(baseDecimals + 18))
+```
+
+`initialize(baseToken, quoteToken)` derives `pairId` from the central oracle,
+reads both tokens' on-chain `decimals()`, and precomputes the two scale factors
+— so `price()` is a single `mulDiv` reading the publisher-signed value from the
+central store (which enforces the staleness / unset reverts).
 
 Every market's adapter is a `BeaconProxy` over one shared `UpgradeableBeacon`,
 so a single beacon upgrade retargets all deployed adapters at once. The central
 oracle address is an implementation immutable (chain-constant, shared by every
-proxy); only the per-market `sPairId` is proxy storage, set once in
+proxy); per-market state is namespaced ERC-7201 storage set once in
 `initialize`.
 
 ---
@@ -650,6 +674,7 @@ st0x.oracle/
     │   ├── MockDIAOracle.sol
     │   ├── MockCorporateActions.sol
     │   ├── MockERC4626.sol
+    │   ├── MockERC20Decimals.sol
     │   ├── MorphoPairOracleV2.sol
     │   └── TestERC1967Proxy.sol
     └── src/

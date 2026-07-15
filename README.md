@@ -117,9 +117,12 @@ Morpho Blue markets:
   EIP-712 domain deliberately binds name + version only, so one signed payload
   serves every chain the oracle is deployed on. Global `signer` / `timeout`
   rotate via `ORACLE_ADMIN_ROLE`-gated setters.
-- **`MorphoPairOracle`** — thin beacon-proxied adapter exposing one pair on the
-  central store through Morpho Blue's `IOracle.price()`; one shared beacon
-  upgrade retargets every deployed adapter at once.
+- **`MorphoPairOracle`** — beacon-proxied adapter exposing one pair on the
+  central store through Morpho Blue's `IOracle.price()`. It owns the decimal
+  conversion: the publisher signs an 18-decimal (`PUBLISHER_DECIMALS`)
+  whole-token ratio and the adapter rescales it into Morpho's
+  `1e36·10^loanDec/10^collDec` convention using the pair tokens' on-chain
+  decimals. One shared beacon upgrade retargets every deployed adapter at once.
 
 ## Setup
 
