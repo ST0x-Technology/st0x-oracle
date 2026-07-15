@@ -108,16 +108,21 @@ output.
 
 ### 3.1 Storage
 
+State lives in an ERC-7201 namespaced struct at
+`erc7201:st0x.diavaultoracle.main` (exposed through same-named public getters),
+so a future beacon upgrade can never collide the layout of a live proxy:
+
 ```solidity
-IDIAOracleV2 public diaOracle;   // DIA oracle contract
-string       public symbol;      // Bare feed symbol e.g. "COIN", "AMZN", "TSLA"
-address      public vault;       // ERC-4626 vault whose shares are priced
-uint256      public maxAge;      // Max acceptable DIA reading age (seconds)
+IDIAOracleV2 diaOracle;   // DIA oracle contract
+string       symbol;      // Bare feed symbol e.g. "COIN", "AMZN", "TSLA"
+address      vault;       // ERC-4626 vault whose shares are priced
+uint256      maxAge;      // Max acceptable DIA reading age (seconds)
 ```
 
 All four are set once by `initialize(bytes calldata)` and never written again.
 There is no admin, no pause flag, no setter. To change any of them, deploy a
-fresh proxy and migrate consumers.
+fresh proxy and migrate consumers. The namespaced slot constant is pinned by a
+test recomputing the ERC-7201 derivation.
 
 The DIA feed key is the **bare symbol** (`"COIN"`, `"AMZN"`, `"TSLA"`), not a
 pair string like `"COIN/USD"`. The DIA oracle contract is queried with this
@@ -215,14 +220,18 @@ A pure-decorator wrapper that adds operational pause semantics on top of any
 
 ### 4.1 Storage
 
+State lives in an ERC-7201 namespaced struct at
+`erc7201:st0x.pausableoraclewrapper.main` (same-named public getters), pinned by
+a slot-derivation test so a beacon upgrade cannot collide a live proxy:
+
 ```solidity
-address                 public admin;                  // governance
-bool                    public paused;                 // manual emergency flag
-AggregatorV2V3Interface public upstream;               // wrapped oracle (immutable)
-address                 public corporateActionsVault;  // ICorporateActionsV1, immutable
-uint256                 public actionTypeMask;         // bitmap, immutable
-uint64                  public pauseTimeBefore;        // pre-window (s), immutable
-uint64                  public pauseTimeAfter;         // post-window (s), immutable
+address                 admin;                  // governance
+bool                    paused;                 // manual emergency flag
+AggregatorV2V3Interface upstream;               // wrapped oracle (immutable)
+address                 corporateActionsVault;  // ICorporateActionsV1, immutable
+uint256                 actionTypeMask;         // bitmap, immutable
+uint64                  pauseTimeBefore;        // pre-window (s), immutable
+uint64                  pauseTimeAfter;         // post-window (s), immutable
 ```
 
 `admin` and `paused` are the only mutable slots after `initialize`. `upstream`
@@ -606,8 +615,13 @@ AccessControl, ERC-7201 namespaced storage).
 - **Global config.** `signer` and `timeout` are global across all pairs, rotated
   via `ORACLE_ADMIN_ROLE`-gated `setSigner` / `setTimeout` — deliberately
   separate functions so the two config axes can never race each other inside one
-  calldata blob. `DEFAULT_ADMIN_ROLE` (granted at `initialize`) does role
-  administration only.
+  calldata blob. `timeout` is bounded to `(0, MAX_TIMEOUT]` at both write sites
+  (zero bricks reads; an over-large value silently disables staleness).
+  `initialize(admin, oracleAdmin, signer, timeout)` grants `DEFAULT_ADMIN_ROLE`
+  (role administration only) and `ORACLE_ADMIN_ROLE` (rotation) **atomically** —
+  no post-deploy grant step, so an emergency signer rotation can never be
+  blocked behind the role admin while the compromised signer's permissionless
+  payloads keep landing.
 - **Reads.** `price(id)` reverts `PriceUnset` when no update has ever landed and
   `PriceStale` once the stored timestamp ages past `timeout`. `pairPrice(id)`
   exposes the raw stored state (no staleness check) for publishers sizing their
