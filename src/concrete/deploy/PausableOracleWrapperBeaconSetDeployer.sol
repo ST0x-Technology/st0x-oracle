@@ -6,7 +6,7 @@ import {IBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/IBeacon.sol";
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
 import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProxy.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {PausableOracleWrapper, PausableOracleWrapperConfig} from "src/concrete/wrapper/PausableOracleWrapper.sol";
+import {PausableOracleWrapper, PausableOracleWrapperConfig} from "../wrapper/PausableOracleWrapper.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error ZeroImplementation();

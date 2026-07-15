@@ -5,20 +5,20 @@ pragma solidity =0.8.25;
 import {Script, console2} from "forge-std-1.16.1/src/Script.sol";
 import {Ownable} from "@openzeppelin-contracts-5.6.1/access/Ownable.sol";
 
-import {DIAVaultOracle} from "src/concrete/oracle/DIAVaultOracle.sol";
-import {PausableOracleWrapper} from "src/concrete/wrapper/PausableOracleWrapper.sol";
+import {DIAVaultOracle} from "../src/concrete/oracle/DIAVaultOracle.sol";
+import {PausableOracleWrapper} from "../src/concrete/wrapper/PausableOracleWrapper.sol";
 import {
     DIAVaultOracleBeaconSetDeployer,
     DIAVaultOracleBeaconSetDeployerConfig
-} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
+} from "../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {
     PausableOracleWrapperBeaconSetDeployer,
     PausableOracleWrapperBeaconSetDeployerConfig
-} from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
+} from "../src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
 import {
     DIAOracleUnifiedDeployer,
     DIAOracleUnifiedDeployerConstructorConfig
-} from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+} from "../src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
 
 /// @dev Deploys the DIA stack infra: fresh implementations, both beacon-set
 /// deployers, and the unified deployer composing them. No per-vault proxies

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
+import {IDIAOracleV2} from "../../src/interface/IDIAOracleV2.sol";
 
 /// @title MockDIAOracle
 /// @notice Minimal scriptable mock of `IDIAOracleV2`. Tests script a feed via

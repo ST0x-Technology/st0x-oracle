@@ -6,8 +6,8 @@ import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/uti
 import {IERC20Metadata} from "@openzeppelin-contracts-5.6.1/interfaces/IERC20Metadata.sol";
 import {Math} from "@openzeppelin-contracts-5.6.1/utils/math/Math.sol";
 
-import {IOracle} from "src/interface/IOracle.sol";
-import {ST0xPriceOracle} from "src/concrete/oracle/ST0xPriceOracle.sol";
+import {IOracle} from "../../interface/IOracle.sol";
+import {ST0xPriceOracle} from "./ST0xPriceOracle.sol";
 
 /// @dev Error raised when a zero address is provided for a pair token.
 error ZeroToken();

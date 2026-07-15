@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
-import {DIAVaultOracle, DIAVaultOracleConfig} from "src/concrete/oracle/DIAVaultOracle.sol";
+import {AggregatorV2V3Interface} from "../../interface/IAggregatorV2V3.sol";
+import {DIAVaultOracle, DIAVaultOracleConfig} from "../oracle/DIAVaultOracle.sol";
 import {
     PausableOracleWrapper,
     PausableOracleWrapperConfig,
     CorporateActionPauseConfig
-} from "src/concrete/wrapper/PausableOracleWrapper.sol";
-import {DIAVaultOracleBeaconSetDeployer} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
-import {PausableOracleWrapperBeaconSetDeployer} from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
+} from "../wrapper/PausableOracleWrapper.sol";
+import {DIAVaultOracleBeaconSetDeployer} from "./DIAVaultOracleBeaconSetDeployer.sol";
+import {PausableOracleWrapperBeaconSetDeployer} from "./PausableOracleWrapperBeaconSetDeployer.sol";
 
 /// @dev Error raised when a zero address is provided for an upstream beacon
 /// set deployer.

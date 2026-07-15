@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {AggregatorV2V3Interface} from "../../src/interface/IAggregatorV2V3.sol";
 
 /// @title MockAggregatorV2V3
 /// @notice Scriptable mock of `AggregatorV2V3Interface` for unit-testing

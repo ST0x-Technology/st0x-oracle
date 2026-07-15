@@ -8,10 +8,10 @@ import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/Upgr
 import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProxy.sol";
 import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 
-import {ST0xPriceOracle} from "src/concrete/oracle/ST0xPriceOracle.sol";
-import {MorphoPairOracle, ZeroToken, IdenticalTokens} from "src/concrete/oracle/MorphoPairOracle.sol";
-import {MorphoPairOracleV2} from "test/mocks/MorphoPairOracleV2.sol";
-import {MockERC20Decimals} from "test/mocks/MockERC20Decimals.sol";
+import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
+import {MorphoPairOracle, ZeroToken, IdenticalTokens} from "../../../../src/concrete/oracle/MorphoPairOracle.sol";
+import {MorphoPairOracleV2} from "../../../mocks/MorphoPairOracleV2.sol";
+import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 
 /// @title MorphoPairOracleTest
 /// @notice Unit coverage for the `MorphoPairOracle` beacon-proxied adapter:

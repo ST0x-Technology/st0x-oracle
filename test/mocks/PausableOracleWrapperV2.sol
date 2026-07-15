@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {PausableOracleWrapper} from "src/concrete/wrapper/PausableOracleWrapper.sol";
+import {PausableOracleWrapper} from "../../src/concrete/wrapper/PausableOracleWrapper.sol";
 
 /// @title PausableOracleWrapperV2
 /// @dev Trivial V2 implementation used only to prove that upgrading the shared

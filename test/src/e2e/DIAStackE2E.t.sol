@@ -3,35 +3,35 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
+import {IDIAOracleV2} from "../../../src/interface/IDIAOracleV2.sol";
 import {
     DIAVaultOracle,
     DIAVaultOracleConfig,
     DIAPriceNotSet,
     DIAPriceStale
-} from "src/concrete/oracle/DIAVaultOracle.sol";
+} from "../../../src/concrete/oracle/DIAVaultOracle.sol";
 import {
     PausableOracleWrapper,
     CorporateActionPauseConfig,
     OraclePausedManual,
     OraclePausedCorporateAction
-} from "src/concrete/wrapper/PausableOracleWrapper.sol";
+} from "../../../src/concrete/wrapper/PausableOracleWrapper.sol";
 import {
     DIAVaultOracleBeaconSetDeployer,
     DIAVaultOracleBeaconSetDeployerConfig
-} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
+} from "../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {
     PausableOracleWrapperBeaconSetDeployer,
     PausableOracleWrapperBeaconSetDeployerConfig
-} from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
+} from "../../../src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
 import {
     DIAOracleUnifiedDeployer,
     DIAOracleUnifiedDeployerConstructorConfig,
     DIAOracleUnifiedDeployConfig
-} from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
-import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
-import {MockERC4626} from "test/mocks/MockERC4626.sol";
-import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
+} from "../../../src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+import {MockDIAOracle} from "../../mocks/MockDIAOracle.sol";
+import {MockERC4626} from "../../mocks/MockERC4626.sol";
+import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
 import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 
 /// @title DIAStackE2ETest

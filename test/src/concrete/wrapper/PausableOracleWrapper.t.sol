@@ -5,7 +5,7 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {AggregatorV2V3Interface} from "../../../../src/interface/IAggregatorV2V3.sol";
 import {
     PausableOracleWrapper,
     PausableOracleWrapperConfig,
@@ -16,12 +16,15 @@ import {
     ZeroAdmin,
     OnlyAdmin,
     InvalidPauseConfig
-} from "src/concrete/wrapper/PausableOracleWrapper.sol";
-import {MockAggregatorV2V3} from "test/mocks/MockAggregatorV2V3.sol";
-import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
-import {MockRevertingCorporateActions, CorporateActionsUnavailable} from "test/mocks/MockRevertingCorporateActions.sol";
+} from "../../../../src/concrete/wrapper/PausableOracleWrapper.sol";
+import {MockAggregatorV2V3} from "../../../mocks/MockAggregatorV2V3.sol";
+import {MockCorporateActions} from "../../../mocks/MockCorporateActions.sol";
+import {
+    MockRevertingCorporateActions,
+    CorporateActionsUnavailable
+} from "../../../mocks/MockRevertingCorporateActions.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
-import {TestERC1967Proxy} from "test/mocks/TestERC1967Proxy.sol";
+import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
 
 contract PausableOracleWrapperTest is Test {
     PausableOracleWrapper internal implementation;

@@ -5,19 +5,19 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {Vm} from "forge-std-1.16.1/src/Vm.sol";
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
-import {DIAVaultOracle, DIAVaultOracleConfig, ZeroVault} from "src/concrete/oracle/DIAVaultOracle.sol";
+import {IDIAOracleV2} from "../../../../src/interface/IDIAOracleV2.sol";
+import {DIAVaultOracle, DIAVaultOracleConfig, ZeroVault} from "../../../../src/concrete/oracle/DIAVaultOracle.sol";
 import {
     DIAVaultOracleBeaconSetDeployer,
     DIAVaultOracleBeaconSetDeployerConfig,
     ZeroImplementation,
     ZeroBeaconOwner,
     InitializeOracleFailed
-} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
-import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
-import {MockERC4626} from "test/mocks/MockERC4626.sol";
-import {MockWrongMagicDIAVaultOracle} from "test/mocks/MockWrongMagicDIAVaultOracle.sol";
-import {DIAVaultOracleV2} from "test/mocks/DIAVaultOracleV2.sol";
+} from "../../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
+import {MockDIAOracle} from "../../../mocks/MockDIAOracle.sol";
+import {MockERC4626} from "../../../mocks/MockERC4626.sol";
+import {MockWrongMagicDIAVaultOracle} from "../../../mocks/MockWrongMagicDIAVaultOracle.sol";
+import {DIAVaultOracleV2} from "../../../mocks/DIAVaultOracleV2.sol";
 
 contract DIAVaultOracleBeaconSetDeployerTest is Test {
     DIAVaultOracle internal implementation;

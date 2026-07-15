@@ -5,22 +5,22 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {Vm} from "forge-std-1.16.1/src/Vm.sol";
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {AggregatorV2V3Interface} from "../../../../src/interface/IAggregatorV2V3.sol";
 import {
     PausableOracleWrapper,
     PausableOracleWrapperConfig,
     CorporateActionPauseConfig,
     ZeroAdmin,
     ZeroUpstream
-} from "src/concrete/wrapper/PausableOracleWrapper.sol";
+} from "../../../../src/concrete/wrapper/PausableOracleWrapper.sol";
 import {
     PausableOracleWrapperBeaconSetDeployer,
     PausableOracleWrapperBeaconSetDeployerConfig,
     ZeroImplementation,
     ZeroBeaconOwner
-} from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
-import {MockAggregatorV2V3} from "test/mocks/MockAggregatorV2V3.sol";
-import {PausableOracleWrapperV2} from "test/mocks/PausableOracleWrapperV2.sol";
+} from "../../../../src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
+import {MockAggregatorV2V3} from "../../../mocks/MockAggregatorV2V3.sol";
+import {PausableOracleWrapperV2} from "../../../mocks/PausableOracleWrapperV2.sol";
 
 contract PausableOracleWrapperBeaconSetDeployerTest is Test {
     PausableOracleWrapper internal implementation;

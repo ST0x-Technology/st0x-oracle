@@ -9,7 +9,7 @@ import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProx
 import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 import {IAccessControl} from "@openzeppelin-contracts-5.6.1/access/IAccessControl.sol";
 
-import {ST0xPriceOracle} from "src/concrete/oracle/ST0xPriceOracle.sol";
+import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
 
 /// @title ST0xPriceOracleTest
 /// @notice Unit coverage for the central multi-pair oracle: global signer /

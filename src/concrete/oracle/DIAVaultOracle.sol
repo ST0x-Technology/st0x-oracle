@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {IDIAOracleV2} from "../../interface/IDIAOracleV2.sol";
+import {AggregatorV2V3Interface} from "../../interface/IAggregatorV2V3.sol";
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";

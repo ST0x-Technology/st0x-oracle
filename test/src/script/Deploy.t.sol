@@ -4,10 +4,12 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {Ownable} from "@openzeppelin-contracts-5.6.1/access/Ownable.sol";
-import {DIAOracleUnifiedDeployer} from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
-import {DIAVaultOracleBeaconSetDeployer} from "src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
-import {PausableOracleWrapperBeaconSetDeployer} from "src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
-import {DeployExposed} from "test/src/script/DeployExposed.sol";
+import {DIAOracleUnifiedDeployer} from "../../../src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+import {DIAVaultOracleBeaconSetDeployer} from "../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
+import {
+    PausableOracleWrapperBeaconSetDeployer
+} from "../../../src/concrete/deploy/PausableOracleWrapperBeaconSetDeployer.sol";
+import {DeployExposed} from "./DeployExposed.sol";
 
 /// @title DeployTest
 /// @notice Unit coverage for the `Deploy` script's `deployDIAStackInfra`

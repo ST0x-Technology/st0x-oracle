@@ -5,7 +5,7 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
+import {IDIAOracleV2} from "../../../../src/interface/IDIAOracleV2.sol";
 import {
     DIAVaultOracle,
     DIAVaultOracleConfig,
@@ -19,10 +19,10 @@ import {
     ZeroVaultSharePrice,
     VaultSharePriceOverflow,
     HistoricalRoundDataUnsupported
-} from "src/concrete/oracle/DIAVaultOracle.sol";
-import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
-import {MockERC4626} from "test/mocks/MockERC4626.sol";
-import {TestERC1967Proxy} from "test/mocks/TestERC1967Proxy.sol";
+} from "../../../../src/concrete/oracle/DIAVaultOracle.sol";
+import {MockDIAOracle} from "../../../mocks/MockDIAOracle.sol";
+import {MockERC4626} from "../../../mocks/MockERC4626.sol";
+import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;

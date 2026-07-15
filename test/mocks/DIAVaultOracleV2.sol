@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {DIAVaultOracle} from "src/concrete/oracle/DIAVaultOracle.sol";
+import {DIAVaultOracle} from "../../src/concrete/oracle/DIAVaultOracle.sol";
 
 /// @title DIAVaultOracleV2
 /// @dev Trivial V2 implementation used only to prove that upgrading the shared

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Deploy} from "script/Deploy.sol";
-import {DIAOracleUnifiedDeployer} from "src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+import {Deploy} from "../../../script/Deploy.sol";
+import {DIAOracleUnifiedDeployer} from "../../../src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
 
 /// @title DeployExposed
 /// @dev Test-only subclass that exposes the internal `deployDIAStackInfra`
