@@ -336,9 +336,17 @@ encoding:
 - `ACTION_TYPE_STABLES_DIVIDEND_V1 = 1 << 2`
 - `type(uint256).max` matches every present and future action type.
 
-A `mask == 0` short-circuits to "not paused" — no action types match anything. A
-zero `corporateActionsVault` also short-circuits to "not paused" and disables
-auto-pause for the life of the wrapper proxy.
+These literals are restated from the `st0x-deploy` dependency;
+`test/src/lib/ActionTypeEncoding.t.sol` pins them against the imported constants
+so a dependency re-encoding fails CI rather than silently mis-matching an
+operator's mask.
+
+The `ACTION_TYPE_INIT_V1 = 1 << 0` bit is **always stripped** before querying:
+it is the vault's bootstrap bookkeeping node (completed in the same block as the
+first scheduled action), not a real corporate action, so a `mask` of `0` _or_
+exactly `ACTION_TYPE_INIT_V1` short-circuits to "not paused" — no action types
+match anything. A zero `corporateActionsVault` also short-circuits to "not
+paused" and disables auto-pause for the life of the wrapper proxy.
 
 ### 5.3 Overlap Resolution: Pending Wins
 

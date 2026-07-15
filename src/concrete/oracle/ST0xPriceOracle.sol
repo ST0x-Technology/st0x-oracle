@@ -118,16 +118,26 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     }
 
     /// @notice Initialise the singleton. `admin` receives
-    /// `DEFAULT_ADMIN_ROLE` (role administration only — grant
-    /// `ORACLE_ADMIN_ROLE` separately to whoever rotates config). The
-    /// initial global signer and timeout are set here and announced through
-    /// the same events the setters emit.
-    function initialize(address admin, address signer_, uint64 timeout_) external initializer {
-        if (admin == address(0)) revert ZeroAdmin();
+    /// `DEFAULT_ADMIN_ROLE` (role administration only) and `oracleAdmin`
+    /// receives `ORACLE_ADMIN_ROLE` (signer/timeout rotation) — both granted
+    /// atomically so no post-deploy "remember to grant the role" step exists.
+    /// A missing grant would leave `setSigner` uncallable, blocking an
+    /// emergency key rotation behind the `DEFAULT_ADMIN` multisig while the
+    /// compromised signer's permissionless payloads keep landing. The initial
+    /// global signer and timeout are set here and announced through the same
+    /// events the setters emit.
+    /// @param admin Receives `DEFAULT_ADMIN_ROLE`. Cannot be zero.
+    /// @param oracleAdmin Receives `ORACLE_ADMIN_ROLE`. Cannot be zero (may be
+    /// the same address as `admin` if a single multisig holds both).
+    /// @param signer_ The initial global publisher key. Cannot be zero.
+    /// @param timeout_ The initial global staleness bound. `(0, MAX_TIMEOUT]`.
+    function initialize(address admin, address oracleAdmin, address signer_, uint64 timeout_) external initializer {
+        if (admin == address(0) || oracleAdmin == address(0)) revert ZeroAdmin();
         if (signer_ == address(0)) revert ZeroSigner();
         _validateTimeout(timeout_);
         __AccessControl_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ORACLE_ADMIN_ROLE, oracleAdmin);
 
         MainStorage storage $ = _main();
         $.signer = signer_;

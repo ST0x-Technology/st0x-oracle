@@ -5,7 +5,7 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
-import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {ACTION_TYPE_INIT_V1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
 
 contract LibCorporateActionsPauseTest is Test {
@@ -201,11 +201,10 @@ contract LibCorporateActionsPauseTest is Test {
     /// matching it would spuriously auto-pause on routine vault setup (audit
     /// #41). The library strips the INIT bit before querying.
     function testWildcardMaskIgnoresBootstrapInitNode() external {
-        uint256 INIT = 1 << 0;
         uint64 effectiveTime = uint64(block.timestamp - 60);
         // The only "action" is the bootstrap INIT node, freshly completed and
         // well inside the post-window — yet the wildcard mask must not pause.
-        mock.setLatestCompleted(0, INIT, effectiveTime);
+        mock.setLatestCompleted(0, ACTION_TYPE_INIT_V1, effectiveTime);
         (bool paused, uint64 ts) =
             LibCorporateActionsPause.inPauseWindow(address(mock), type(uint256).max, BEFORE, AFTER);
         assertEq(paused, false, "INIT bootstrap node must not pause");
@@ -226,8 +225,9 @@ contract LibCorporateActionsPauseTest is Test {
     /// A mask of exactly `ACTION_TYPE_INIT_V1` reduces to the empty mask after
     /// the strip and short-circuits to not-paused.
     function testInitOnlyMaskShortCircuits() external {
-        mock.setLatestCompleted(0, 1 << 0, uint64(block.timestamp - 60));
-        (bool paused, uint64 ts) = LibCorporateActionsPause.inPauseWindow(address(mock), 1 << 0, BEFORE, AFTER);
+        mock.setLatestCompleted(0, ACTION_TYPE_INIT_V1, uint64(block.timestamp - 60));
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_INIT_V1, BEFORE, AFTER);
         assertEq(paused, false, "INIT-only mask short-circuits");
         assertEq(ts, 0);
     }

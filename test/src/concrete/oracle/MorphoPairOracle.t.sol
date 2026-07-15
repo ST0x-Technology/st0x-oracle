@@ -40,7 +40,9 @@ contract MorphoPairOracleTest is Test {
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(impl), ADMIN);
         oracle = ST0xPriceOracle(
             address(
-                new BeaconProxy(address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, TIMEOUT)))
+                new BeaconProxy(
+                    address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER, TIMEOUT))
+                )
             )
         );
 
