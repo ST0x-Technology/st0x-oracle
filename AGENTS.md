@@ -15,6 +15,9 @@ nix develop -c forge build
 
 All commands below assume you are inside `nix develop`.
 
+On a fresh clone, `dependencies/` is gitignored — run `forge soldeer install`
+once before any build/test/lint command (CI runs the same step in every job).
+
 ## Before Pushing
 
 CI is the reusable `rainlanguage/rainix` sol workflows
@@ -38,13 +41,16 @@ rainix-sol-single-contract
 reuse lint
 ```
 
-Two more org-wide gates CI enforces that have no local task:
+Three more org-wide gates CI enforces that have no local task:
 
 - **No git submodules.** Dependencies come from soldeer (see `foundry.toml`
   `[dependencies]`), never `.gitmodules`.
 - **No custom NatSpec tags.** `@custom:` is banned; document behavior in
   standard NatSpec (`@notice`/`@dev`/`@param`/`@return`). Sole exception:
   ERC-7201's exact `@custom:storage-location erc7201:` annotation.
+- **No ignored/skipped tests.** Rust `#[ignore]`, JS `.skip`/`.only`, Solidity
+  `xtest` renames, and any `vm.skip` are all banned. A test either runs and
+  passes or is deleted.
 
 ## Slither Annotations
 

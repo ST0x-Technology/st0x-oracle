@@ -130,6 +130,7 @@ This project uses Nix flakes for a reproducible toolchain.
 
 ```bash
 nix develop
+forge soldeer install   # first time only: dependencies/ is gitignored
 ```
 
 ## Build & Test
