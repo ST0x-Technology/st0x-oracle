@@ -1,0 +1,27 @@
+{
+  "network": "base",
+  "chainId": 8453,
+  "note": "Canonical record of the DIA-stack deployment on Base (recovered from the deploy broadcast; CI logs expire). These impls predate the ERC-7201 + hardening changes on the current branch, so on-chain bytecode intentionally differs from current source until a redeploy/beacon-upgrade reconciles them; test/src/prod/DIAStackProd.t.sol records this. The signed-price stack is not yet deployed on Base.",
+  "dia": {
+    "diaVaultOracleImplementation": "0x2e5ddDFbe97f1421e4ccEf0c423374379502a132",
+    "pausableOracleWrapperImplementation": "0xb78DBdE0C6e7a95c014126F25F792C17dc50AA12",
+    "diaVaultOracleBeaconSetDeployer": "0x8B8cc6db58E5bb9F507FFce893246958c7Ca9F6d",
+    "pausableOracleWrapperBeaconSetDeployer": "0x4e231b3A59863599446D2c9e5635DEa77D30c645",
+    "diaOracleUnifiedDeployer": "0x3601B658021980212e3172aD4058a9A5d6BEAbbA",
+    "instances": {
+      "wtCOIN": {
+        "oracleProxy": "0xef31D3E7c6a60e0725758Cd318603c7864b3278A",
+        "wrapperProxy": "0xF502C60D034a98751c7db5639C5557e00e9657A9",
+        "diaFeed": "0xCE521b52513242c5094bc56f57887BB2A05B8129",
+        "symbol": "COIN",
+        "autoPause": "disabled (corporateActionsVault = 0)"
+      }
+    }
+  },
+  "signedPrice": {
+    "st0xPriceOracleImplementation": null,
+    "st0xPriceOracleBeaconSetDeployer": null,
+    "st0xPriceOracleProxy": null,
+    "morphoPairOracleBeaconSetDeployer": null
+  }
+}

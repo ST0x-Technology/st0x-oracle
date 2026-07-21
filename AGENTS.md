@@ -104,9 +104,48 @@ workflow exposes it as a required dispatch input; a missing value fails the
 deploy loudly.
 
 1. Run the workflow with the target network, suite, and beacon owner
-2. Parse deployed addresses from the workflow logs
+2. Record the deployed addresses from the workflow logs into
+   `deployments/<network>.json` (see **Deployment records** below) and PR it —
+   CI logs expire, so this committed file is the canonical record
 3. Use `cast send` with `--interactive` for any onchain calls that need a
    private key
+
+### Determinism
+
+Proxies are minted via **CREATE2 with a config-derived salt**
+(`salt = keccak256(abi.encode(initConfig))`), so a proxy's address is a
+deterministic commitment to its config and re-running a deploy with identical
+config reverts on the collision instead of forking a second divergent proxy. The
+classic no-arg Zoltu pattern is deliberately **not** used: the beacon owner is a
+required runtime input (governance), which is config that cannot be baked into
+fixed init bytecode — CREATE2-salted minting is the determinism compatible with
+runtime-owned beacons.
+
+### Deployment records
+
+Each chain's deployed addresses are committed under `deployments/<network>.json`
+(the impls, beacons, beacon-set deployers, unified deployer, and — once deployed
+— the signed-price singleton), so the canonical record survives the CI logs it
+was parsed from. `DeploymentsRecord.t.sol` asserts the committed record stays
+structurally complete (populated, checksummed, distinct addresses) so it can't
+silently rot to zeros.
+
+Note the recorded Base DIA impls predate this branch's ERC-7201 + hardening
+changes, so on-chain bytecode intentionally differs from current source until a
+redeploy / beacon upgrade reconciles them. A codehash prod-fork test (raindex
+`LibRaindexDeployProd` pattern) is the right follow-up **once the stack is
+redeployed onto the current impls at deterministic addresses** — it needs a live
+deployment that matches source to be green, and a guaranteed Base fork RPC, so
+it belongs in a scheduled workflow rather than the per-push run.
+
+### Toolchain pins
+
+Two independent rainix pins exist by design and are allowed to differ: CI runs
+the reusable `rainlanguage/rainix` workflows at `@main` (org convention — a
+rainix CI fix propagates instantly), which pin their own internal `RAINIX_SHA`;
+local dev + `manual-sol-artifacts.yaml` use this repo's `flake.lock`. There is
+no cross-pin sync check because the two serve different roles; bump `flake.lock`
+with `nix flake update` when local tooling needs to catch up.
 
 ### Secret Naming Convention
 

@@ -12,6 +12,9 @@ evm_version = "cancun"
 bytecode_hash = "none"
 cbor_metadata = false
 
+# Read-only access to the committed deployment records for DeploymentsRecord.t.sol.
+fs_permissions = [{ access = "read", path = "./deployments" }]
+
 remappings = [
   # Some upstream OpenZeppelin-consuming deps use the unversioned
   # `@openzeppelin/contracts/` import prefix; bridge to the soldeer-pinned

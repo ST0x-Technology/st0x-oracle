@@ -10,6 +10,17 @@ import {CompletionFilter, NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporat
 /// paths `LibCorporateActionsPause` consumes. Other interface methods revert
 /// so a regression that calls them is caught loudly.
 ///
+/// @dev Audit findings #45/#52 note this mock re-encodes beliefs about the
+/// real `StoxCorporateActionsFacet` traversal. Rather than reproduce the
+/// dependency's delegatecall + authorizer harness to re-test code the
+/// `st0x-deploy` package already covers, the divergence surface is bounded
+/// deliberately: the action-type bit encoding this mock relies on is pinned to
+/// the imported constants by `ActionTypeEncoding.t.sol`, and the read contract
+/// is the `ICorporateActionsV1` interface itself. The remaining cross-impl
+/// check — that `LibCorporateActionsPause` reads a *real* deployed vault's
+/// schedule identically — belongs in a fork test against a live vault, not a
+/// reproduced harness.
+///
 /// Setters accept a caller-supplied cursor so tests can exercise both the
 /// no-match sentinel (`NODE_NONE`) and the bootstrap node (cursor 0). Tests
 /// that don't care about cursor can just pass `1`.
