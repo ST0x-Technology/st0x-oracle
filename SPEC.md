@@ -1,7 +1,8 @@
 # ST0x Oracle Stack Specification
 
-**Repository:** `st0x.oracle` **Version:** 3.0 **Status:** Draft **Date:**
-2026-06-30
+**Repository:** `st0x.oracle` **Version:** 3.1 **Status:** Implemented (DIA
+stack live on Base; signed-price stack deployable, not yet deployed) **Date:**
+2026-07-15
 
 ---
 
