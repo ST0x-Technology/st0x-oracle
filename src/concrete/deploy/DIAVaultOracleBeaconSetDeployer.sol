@@ -63,11 +63,16 @@ contract DIAVaultOracleBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new DIAVaultOracle proxy.
+    /// @dev The proxy is minted via CREATE2 with `salt = keccak256(config)`, so
+    /// its address is a deterministic commitment to its config and a re-run
+    /// with identical config reverts on the CREATE2 collision instead of
+    /// silently forking a second, divergent oracle.
     /// @param config The initialization configuration.
     /// @return oracle The deployed proxy as a typed reference.
     // slither-disable-next-line reentrancy-events
     function newDIAVaultOracle(DIAVaultOracleConfig memory config) external returns (DIAVaultOracle oracle) {
-        oracle = DIAVaultOracle(address(new BeaconProxy(address(I_DIA_VAULT_ORACLE_BEACON), "")));
+        bytes32 salt = keccak256(abi.encode(config));
+        oracle = DIAVaultOracle(address(new BeaconProxy{salt: salt}(address(I_DIA_VAULT_ORACLE_BEACON), "")));
 
         if (oracle.initialize(abi.encode(config)) != ICLONEABLE_V2_SUCCESS) {
             revert InitializeOracleFailed();

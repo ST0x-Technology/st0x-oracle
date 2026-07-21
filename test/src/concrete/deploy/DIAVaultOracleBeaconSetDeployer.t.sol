@@ -80,6 +80,24 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
 
     // -------- newDIAVaultOracle --------
 
+    /// @notice CREATE2 salt = keccak256(config): minting the same config twice
+    /// reverts on the address collision rather than silently forking a second
+    /// divergent oracle. A differing config lands at a different address.
+    function testNewDIAVaultOracleIsIdempotentPerConfig() external {
+        DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
+        DIAVaultOracle first = bsd.newDIAVaultOracle(_defaultOracleConfig());
+
+        // Same config → CREATE2 collision → revert (empty returndata).
+        vm.expectRevert();
+        bsd.newDIAVaultOracle(_defaultOracleConfig());
+
+        // Differing config → different deterministic address.
+        DIAVaultOracleConfig memory other = _defaultOracleConfig();
+        other.maxAge = _defaultOracleConfig().maxAge + 1;
+        DIAVaultOracle second = bsd.newDIAVaultOracle(other);
+        assertTrue(address(first) != address(second), "distinct config gives distinct address");
+    }
+
     function testNewDIAVaultOracleEmitsDeployment() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
 

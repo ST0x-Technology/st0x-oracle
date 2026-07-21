@@ -63,12 +63,18 @@ contract PausableOracleWrapperBeaconSetDeployer {
     /// @notice Deploys and initializes a new PausableOracleWrapper proxy.
     /// @param config The initialization configuration.
     /// @return wrapper The deployed proxy as a typed reference.
+    /// @dev The proxy is minted via CREATE2 with `salt = keccak256(config)`, so
+    /// its address is a deterministic commitment to its config and a re-run
+    /// with identical config reverts on the CREATE2 collision instead of
+    /// silently forking a second, divergent wrapper.
     // slither-disable-next-line reentrancy-events
     function newPausableOracleWrapper(PausableOracleWrapperConfig memory config)
         external
         returns (PausableOracleWrapper wrapper)
     {
-        wrapper = PausableOracleWrapper(address(new BeaconProxy(address(I_PAUSABLE_ORACLE_WRAPPER_BEACON), "")));
+        bytes32 salt = keccak256(abi.encode(config));
+        wrapper =
+            PausableOracleWrapper(address(new BeaconProxy{salt: salt}(address(I_PAUSABLE_ORACLE_WRAPPER_BEACON), "")));
 
         if (wrapper.initialize(abi.encode(config)) != ICLONEABLE_V2_SUCCESS) {
             revert InitializeWrapperFailed();

@@ -86,6 +86,22 @@ contract PausableOracleWrapperBeaconSetDeployerTest is Test {
 
     // -------- newPausableOracleWrapper --------
 
+    /// @notice CREATE2 salt = keccak256(config): the same config twice reverts
+    /// on the address collision rather than forking a second divergent wrapper;
+    /// a differing config lands at a different deterministic address.
+    function testNewPausableOracleWrapperIsIdempotentPerConfig() external {
+        PausableOracleWrapperBeaconSetDeployer bsd = _deployBSD();
+        PausableOracleWrapper first = bsd.newPausableOracleWrapper(_defaultWrapperConfig());
+
+        vm.expectRevert();
+        bsd.newPausableOracleWrapper(_defaultWrapperConfig());
+
+        PausableOracleWrapperConfig memory other = _defaultWrapperConfig();
+        other.admin = address(0xBEEF);
+        PausableOracleWrapper second = bsd.newPausableOracleWrapper(other);
+        assertTrue(address(first) != address(second), "distinct config gives distinct address");
+    }
+
     function testNewPausableOracleWrapperEmitsDeployment() external {
         PausableOracleWrapperBeaconSetDeployer bsd = _deployBSD();
 
