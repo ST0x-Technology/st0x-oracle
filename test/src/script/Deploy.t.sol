@@ -51,6 +51,25 @@ contract DeployTest is Test {
         );
     }
 
+    /// @notice The signed-price helper reads its config from env, mints the
+    /// singleton central store through its beacon-set deployer, and owns BOTH
+    /// beacons with the requested owner. Asserts the security postconditions
+    /// `deploySignedPriceStack` require()s: the singleton carries the requested
+    /// signer, `oracleAdmin` holds `ORACLE_ADMIN_ROLE`, and both beacons are
+    /// owned by the requested owner (never the deploy key).
+    function testDeploySignedPriceStackWiresOracleAndBeacons() external {
+        address stAdmin = address(0x57ADAD);
+        address stOracleAdmin = address(0x57ADDD);
+        address stSigner = address(0x57516E);
+        uint64 stTimeout = 1 hours;
+        vm.setEnv("ST0X_ADMIN", vm.toString(stAdmin));
+        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(stOracleAdmin));
+        vm.setEnv("ST0X_SIGNER", vm.toString(stSigner));
+        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(stTimeout)));
+
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER);
+    }
+
     /// @notice `run()` REQUIRES `BEACON_INITIAL_OWNER != deploy key`: the beacon
     /// owner can swap the implementation behind every proxy, so it must never
     /// be the hot deploy key. Set the env so the two collide and assert the

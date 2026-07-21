@@ -14,4 +14,8 @@ contract DeployExposed is Deploy {
     function exposedDeployDIAStackInfra(address beaconInitialOwner) external returns (DIAOracleUnifiedDeployer) {
         return deployDIAStackInfra(beaconInitialOwner);
     }
+
+    function exposedDeploySignedPriceStack(address beaconInitialOwner) external {
+        deploySignedPriceStack(beaconInitialOwner);
+    }
 }
