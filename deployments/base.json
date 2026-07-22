@@ -1,7 +1,7 @@
 {
   "network": "base",
   "chainId": 8453,
-  "note": "Canonical record of the DIA-stack deployment on Base (recovered from the deploy broadcast; CI logs expire). These impls predate the ERC-7201 + hardening changes on the current branch, so on-chain bytecode intentionally differs from current source until a redeploy/beacon-upgrade reconciles them; test/src/prod/DIAStackProd.t.sol records this. The signed-price stack is not yet deployed on Base.",
+  "note": "Canonical record of the DIA-stack deployment on Base (recovered from the deploy broadcast; CI logs expire). This is the PRE-FOLD two-contract architecture: a DIAVaultOracle adapter behind a PausableOracleWrapper. The current branch deletes the wrapper and folds corporate-action auto-pause into DIAVaultOracle, and ERC-7201-namespaces + hardens the impls — so on-chain bytecode and shape intentionally differ from current source until a redeploy reconciles them (the wtCOIN wrapperProxy has no analogue in the new single-contract design). The signed-price stack is not yet deployed on Base.",
   "dia": {
     "diaVaultOracleImplementation": "0x2e5ddDFbe97f1421e4ccEf0c423374379502a132",
     "pausableOracleWrapperImplementation": "0xb78DBdE0C6e7a95c014126F25F792C17dc50AA12",

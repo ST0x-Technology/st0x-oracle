@@ -16,13 +16,16 @@ import {
 } from "../../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {MockDIAOracle} from "../../../mocks/MockDIAOracle.sol";
 import {MockERC4626} from "../../../mocks/MockERC4626.sol";
+import {MockCorporateActions} from "../../../mocks/MockCorporateActions.sol";
 import {MockWrongMagicDIAVaultOracle} from "../../../mocks/MockWrongMagicDIAVaultOracle.sol";
 import {DIAVaultOracleV2} from "../../../mocks/DIAVaultOracleV2.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 
 contract DIAVaultOracleBeaconSetDeployerTest is Test {
     DIAVaultOracle internal implementation;
     MockDIAOracle internal diaOracle;
     MockERC4626 internal vault;
+    MockCorporateActions internal actions;
     address internal constant BEACON_OWNER = address(0xBEEF);
     string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 1 hours;
@@ -33,6 +36,9 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         implementation = new DIAVaultOracle();
         diaOracle = new MockDIAOracle();
         vault = new MockERC4626();
+        actions = new MockCorporateActions();
+        // The oracle derives its corporate-actions vault from vault.asset().
+        vault.setAsset(address(actions));
         vm.warp(1_000_000);
     }
 
@@ -46,7 +52,13 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
 
     function _defaultOracleConfig() internal view returns (DIAVaultOracleConfig memory) {
         return DIAVaultOracleConfig({
-            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: SYMBOL, vault: address(vault), maxAge: MAX_AGE
+            diaOracle: IDIAOracleV2(address(diaOracle)),
+            symbol: SYMBOL,
+            vault: address(vault),
+            maxAge: MAX_AGE,
+            actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
+            pauseTimeBefore: 3600,
+            pauseTimeAfter: 3600
         });
     }
 
@@ -120,9 +132,8 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
 
     function testNewDIAVaultOraclePropagatesInitRevertZeroVault() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
-        DIAVaultOracleConfig memory badConfig = DIAVaultOracleConfig({
-            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: SYMBOL, vault: address(0), maxAge: MAX_AGE
-        });
+        DIAVaultOracleConfig memory badConfig = _defaultOracleConfig();
+        badConfig.vault = address(0);
         vm.expectRevert(ZeroVault.selector);
         bsd.newDIAVaultOracle(badConfig);
     }
@@ -155,10 +166,11 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
 
         // Distinct configs: different vault + symbol per proxy.
         MockERC4626 vaultB = new MockERC4626();
+        vaultB.setAsset(address(actions));
         DIAVaultOracleConfig memory configA = _defaultOracleConfig();
-        DIAVaultOracleConfig memory configB = DIAVaultOracleConfig({
-            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: "AMZN", vault: address(vaultB), maxAge: MAX_AGE
-        });
+        DIAVaultOracleConfig memory configB = _defaultOracleConfig();
+        configB.symbol = "AMZN";
+        configB.vault = address(vaultB);
 
         DIAVaultOracle a = bsd.newDIAVaultOracle(configA);
         DIAVaultOracle b = bsd.newDIAVaultOracle(configB);

@@ -7,42 +7,43 @@ market). Exposes a single proxy address per vault behind
 
 ## Architecture
 
-Two layers, separated by intent. The **adapter** (`DIAVaultOracle`) does pure
-price math: reads the underlying-asset price from a DIA Data Association feed
-(keyed by bare symbol — `"COIN"`, `"AMZN"`, `"TSLA"`, not a pair string),
-multiplies by the vault's `totalAssets / totalSupply` ratio, returns an
-8-decimal `int256`. The **wrapper** (`PausableOracleWrapper`) is a
-shape-preserving decorator that adds operational pause semantics on top of any
-`AggregatorV2V3Interface` source — a manual admin emergency pause and an
-automatic corporate-action pause driven by `ICorporateActionsV1` via
-`LibCorporateActionsPause`. Consumers target the wrapper proxy; the wrapper's
-`upstream` slot is immutable.
+A single consumer-facing contract per vault. **`DIAVaultOracle`** reads the
+underlying-equity price from a DIA Data Association feed (keyed by bare symbol —
+`"COIN"`, `"AMZN"`, `"TSLA"`, not a pair string), multiplies by the vault's
+`totalAssets / totalSupply` ratio, returns an 8-decimal `int256` — and
+auto-pauses reads around scheduled corporate actions by consulting
+`ICorporateActionsV1` on every read (via `LibCorporateActionsPause`). Every ST0x
+token implements corporate actions, so the auto-pause is mandatory; there is no
+manual pause and no admin.
 
 ```
-             ┌───────────────────────────────┐
-consumers ──▶│     PausableOracleWrapper     │   ← canonical address
-             │     AggregatorV2V3Interface   │
-             │     + manual + auto pause     │
-             └───────────────┬───────────────┘
-                             │ upstream (immutable)
-                             ▼
-             ┌───────────────────────────────┐
-             │        DIAVaultOracle         │
-             │   diaOracle.getValue(symbol)× │
-             │       totalAssets / totalSupply│
-             └───────────────────────────────┘
+             ┌───────────────────────────────────┐
+consumers ──▶│           DIAVaultOracle          │   ← canonical address
+             │        AggregatorV2V3Interface     │
+             │   diaOracle.getValue(symbol)       │
+             │     × totalAssets / totalSupply    │
+             │   + corporate-action auto-pause    │
+             └─────────┬──────────────────┬───────┘
+                       ▼                  ▼
+              ┌────────────────┐  ┌──────────────────┐
+              │  IDIAOracleV2  │  │ ICorporateActionsV1│
+              └────────────────┘  └──────────────────┘
 ```
 
 **Flagship features:**
 
-- **Corporate-action auto-pause.** The wrapper consults `ICorporateActionsV1` on
+- **Corporate-action auto-pause.** The oracle consults `ICorporateActionsV1` on
   every read. Inside a configured pre/post window of any matching scheduled or
   completed action (stock splits, dividends, ...), reads revert
   `OraclePausedCorporateAction(effectiveTime)`. Lending markets that catch the
   revert treat the price as unavailable for the window — no borrows, no
-  liquidations across a NAV-rebalance boundary.
-- **`wtStock` NAV tracking via `convertToAssets`.** The adapter's
-  `totalAssets / totalSupply` factor is exactly ERC-4626
+  liquidations across a NAV-rebalance boundary. The corporate-actions vault
+  (`ICorporateActionsV1`) is **derived** as the priced vault's `asset()` — the
+  tStock the wtStock wraps — not a separate config field, and the auto-pause is
+  mandatory.
+- **`wtStock` NAV tracking via `convertToAssets`.** The
+  `totalAssets /
+  totalSupply` factor is exactly ERC-4626
   `convertToAssets(1 share)`. Post-split rebalances inside the underlying
   `tStock` vault flow through to the share price automatically on the first read
   after the pause window closes — no oracle-side intervention.
@@ -61,32 +62,24 @@ See `SPEC.md` for the full specification.
 
 ## Integrator Quickstart
 
-Deploy a paired `(oracle, wrapper)` for a new vault in one transaction:
+Mint a `DIAVaultOracle` for a new vault through its beacon-set deployer:
 
 ```solidity
-DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
-    admin: governanceMultisig,
-    oracleConfig: DIAVaultOracleConfig({
-        diaOracle: IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
-        symbol:    "COIN",
-        vault:     wtStockVault,
-        maxAge:    2 hours
-    }),
-    pauseConfig: CorporateActionPauseConfig({
-        corporateActionsVault: corporateActionsVault,
-        actionTypeMask:        type(uint256).max,
-        pauseTimeBefore:       1 hours,
-        pauseTimeAfter:        2 hours
+DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
+    DIAVaultOracleConfig({
+        diaOracle:       IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+        symbol:          "COIN",
+        vault:           wtStockVault,  // ICorporateActionsV1 derived from vault.asset()
+        maxAge:          2 hours,
+        actionTypeMask:  type(uint256).max,
+        pauseTimeBefore: 1 hours,
+        pauseTimeAfter:  2 hours
     })
-});
-
-(DIAVaultOracle oracle, PausableOracleWrapper wrapper) =
-    unifiedDeployer.newOracleWithWrapper(config);
+);
 ```
 
-Hand `address(wrapper)` to consumers as the `AggregatorV2V3Interface` source
-they already plug Chainlink feeds into. The adapter address is an internal
-detail.
+Hand `address(oracle)` to consumers as the `AggregatorV2V3Interface` source they
+already plug Chainlink feeds into.
 
 ## Operational Preconditions for Consumers
 
@@ -97,11 +90,11 @@ two constraints, or the pause feature is silently defeated:
    pause revert and serves a raw DIA / raw Chainlink / raw anything price masks
    the exact failure mode the auto-pause exists to surface. The pause must reach
    the protocol as `OraclePriceNotFound` or equivalent, never get swallowed.
-2. **Consumer's `maxPriceAge` ≥ adapter's `maxAge`.** Otherwise the consumer's
-   staleness check rejects the read before our internal
+2. **Consumer's `maxPriceAge` ≥ the oracle's `maxAge`.** Otherwise the
+   consumer's staleness check rejects the read before our internal
    `DIAPriceStale(timestamp)` revert can surface, and the deployment loses the
-   layered staleness signal. Set consumer staleness as a strict upper bound on
-   adapter staleness.
+   layered staleness signal. Set the consumer's threshold to be at least the
+   oracle's `maxAge`.
 
 ## Signed-Price Stack
 
@@ -150,15 +143,13 @@ script/
 src/
 ├── concrete/
 │   ├── oracle/
-│   │   ├── DIAVaultOracle.sol
+│   │   ├── DIAVaultOracle.sol       (prices wtStock + corporate-action auto-pause)
 │   │   ├── ST0xPriceOracle.sol
 │   │   └── MorphoPairOracle.sol
-│   ├── wrapper/
-│   │   └── PausableOracleWrapper.sol
 │   └── deploy/
 │       ├── DIAVaultOracleBeaconSetDeployer.sol
-│       ├── PausableOracleWrapperBeaconSetDeployer.sol
-│       └── DIAOracleUnifiedDeployer.sol
+│       ├── ST0xPriceOracleBeaconSetDeployer.sol
+│       └── MorphoPairOracleBeaconSetDeployer.sol
 ├── interface/
 │   ├── IDIAOracleV2.sol         (vendored DIA Data Association's published interface)
 │   ├── IAggregatorV2V3.sol      (vendored Chainlink shape)
@@ -168,8 +159,9 @@ src/
 test/
 ├── mocks/
 └── src/
-    ├── concrete/{oracle,wrapper,deploy}/
+    ├── concrete/{oracle,deploy}/
     ├── lib/
+    ├── script/
     └── e2e/
 ```
 

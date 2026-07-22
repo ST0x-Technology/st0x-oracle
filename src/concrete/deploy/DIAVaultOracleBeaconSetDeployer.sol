@@ -41,9 +41,7 @@ struct DIAVaultOracleBeaconSetDeployerConfig {
 contract DIAVaultOracleBeaconSetDeployer {
     /// @notice Emitted when a new DIAVaultOracle proxy is deployed.
     /// @param caller The direct on-chain caller of `newDIAVaultOracle`.
-    /// For oracles created via `DIAOracleUnifiedDeployer` this is the
-    /// unified deployer contract, not the originating EOA. Indexed so
-    /// monitoring can filter by deployer.
+    /// Indexed so monitoring can filter by deployer.
     /// @param oracle The address of the new proxy. Indexed for filtering.
     event Deployment(address indexed caller, address indexed oracle);
 

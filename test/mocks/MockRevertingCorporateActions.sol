@@ -11,7 +11,7 @@ error CorporateActionsUnavailable();
 /// @title MockRevertingCorporateActions
 /// @notice A corporate-actions vault whose traversal getters always revert —
 /// stands in for a vault whose corporate-actions facet is not cut yet (or a
-/// mask outside `VALID_ACTION_TYPES_MASK`). Used to prove `PausableOracleWrapper`
+/// mask outside `VALID_ACTION_TYPES_MASK`). Used to prove `DIAVaultOracle`
 /// probes the vault at `initialize`, so incompatible wiring reverts the deploy
 /// transaction instead of every future read.
 contract MockRevertingCorporateActions is ICorporateActionsV1 {

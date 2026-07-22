@@ -23,14 +23,15 @@ stack's job is to expose a single proxy address per vault that:
    distributions), so downstream lending markets can't liquidate or borrow
    against a stale-by-construction share price while the vault NAV is
    mid-rebalance.
-4. Gives ST0x governance a manual emergency pause independent of the
-   corporate-action machinery.
 
 The previous architecture (Pyth + per-protocol adapters + a registry indirection
 layer) has been replaced. DIA Data Association now supplies the underlying
 price, all protocol-specific adapter shims are gone (consumers target
 `AggregatorV2V3Interface` directly), and the registry indirection has been
-removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
+removed in favour of a single consumer-facing proxy per vault. The
+corporate-action auto-pause — previously a separate `PausableOracleWrapper`
+decorator — is now folded directly into `DIAVaultOracle`, so there is one
+contract, one address, and no wrapper indirection.
 
 ---
 
@@ -38,63 +39,45 @@ removed in favour of a simple `(adapter, wrapper)` proxy pair per vault.
 
 ```
                  ┌──────────────────────────────────────┐
-consumers ──────▶│        PausableOracleWrapper         │   ← canonical
+consumers ──────▶│            DIAVaultOracle            │   ← single canonical
 (Euler, Aave,    │                                      │     consumer-facing
- Compound,       │   AggregatorV2V3Interface            │     address
+ Compound,       │   AggregatorV2V3Interface (8 dec)    │     address
  other lending)  │                                      │
-                 │   + OraclePausedManual()             │
-                 │   + OraclePausedCorporateAction(t)   │
-                 └────────────────┬─────────────────────┘
-                                  │ upstream (immutable)
-                                  ▼
-                 ┌──────────────────────────────────────┐
-                 │           DIAVaultOracle             │
-                 │                                      │
-                 │   AggregatorV2V3Interface (8 dec)    │
-                 │                                      │
                  │   price = diaOracle.getValue(symbol) │
                  │         × vault.totalAssets()        │
                  │         / vault.totalSupply()        │
-                 └────────────────┬─────────────────────┘
-                                  │
-             ┌────────────────────┴────────────────────┐
-             ▼                                         ▼
-    ┌─────────────────┐                    ┌──────────────────┐
-    │  IDIAOracleV2   │                    │  ERC-4626 vault  │
-    │  (off-chain     │                    │   (wtStock)      │
-    │   pushed price) │                    │                  │
-    └─────────────────┘                    └──────────────────┘
-                                                    ▲
-                                                    │ ICorporateActionsV1
-                                                    │ (consulted by wrapper
-                                                    │  on every read)
-                                                    │
-                                           ┌──────────────────┐
-                                           │  corporateActions│
-                                           │      Vault       │
-                                           └──────────────────┘
+                 │                                      │
+                 │   reads pause-gated via              │
+                 │   + OraclePausedCorporateAction(t)   │
+                 └───────┬───────────┬──────────────┬───┘
+                         │           │              │
+                         ▼           ▼              ▼
+             ┌───────────────┐ ┌───────────┐ ┌──────────────────┐
+             │  IDIAOracleV2 │ │ ERC-4626  │ │ ICorporateActions│
+             │  (off-chain   │ │  vault    │ │       V1         │
+             │  pushed price)│ │ (wtStock) │ │ (corporateActions│
+             │               │ │           │ │     Vault)       │
+             └───────────────┘ └───────────┘ └──────────────────┘
+                                              consulted on every read
 ```
 
 The repo also ships a second, independent stack — the publisher-signed price
 store for Morpho Blue markets — specified in §11. The rest of this overview and
 §§3–10 describe the DIA stack.
 
-**Two layers, separated by intent:**
+**One contract, three reads.** `DIAVaultOracle` is the single consumer-facing
+address. On every price read it:
 
-- **Adapter layer** — `DIAVaultOracle`. Pure price math. Reads DIA for the
-  underlying, multiplies by the vault's assets-per-share ratio, scales to 8
-  decimals. No admin, no pause flag, nothing operational. Replaceable by a
-  different price-source adapter without touching the wrapper.
-- **Wrapper layer** — `PausableOracleWrapper`. Pure decorator. Adds pause
-  semantics (manual + corporate-action-aware) on top of any
-  `AggregatorV2V3Interface`. Shape-preserving — `decimals`, `description`,
-  `version` are delegated. The same wrapper implementation will decorate a
-  Chainlink-direct adapter, a different vendor adapter, or anything else
-  satisfying the interface, with zero changes.
+- reads the underlying equity price from DIA (`IDIAOracleV2`),
+- multiplies by the priced `vault`'s (`ERC-4626` wtStock) assets-per-share ratio
+  and scales to 8 decimals, and
+- consults the `corporateActionsVault` (`ICorporateActionsV1`) and reverts if
+  the current block falls inside a scheduled corporate action's pause window.
 
-The wrapper proxy is the canonical consumer-facing address. The adapter proxy's
-address is an internal implementation detail of the wrapper and need not be
-exposed to integrators after deploy time.
+It exposes Chainlink's `AggregatorV2V3Interface` directly — no wrapper, no
+adapter shim, no registry indirection. The corporate-action auto-pause is baked
+in and mandatory (§3.6, §4): there is no manual pause and no admin. Config is
+set once at `initialize` and immutable thereafter.
 
 ---
 
@@ -103,9 +86,10 @@ exposed to integrators after deploy time.
 **Location:** `src/concrete/oracle/DIAVaultOracle.sol`
 
 Prices ERC-4626 vault shares by combining the DIA Data Association price of the
-underlying asset with the vault's `totalAssets / totalSupply` ratio.
-Beacon-proxy clone via `ICloneableV2`. 8-decimal `AggregatorV2V3Interface`
-output.
+underlying asset with the vault's `totalAssets / totalSupply` ratio, and
+auto-pauses reads around scheduled corporate actions. The single consumer-facing
+contract of the DIA stack. Beacon-proxy clone via `ICloneableV2`. 8-decimal
+`AggregatorV2V3Interface` output.
 
 ### 3.1 Storage
 
@@ -114,16 +98,28 @@ State lives in an ERC-7201 namespaced struct at
 so a future beacon upgrade can never collide the layout of a live proxy:
 
 ```solidity
-IDIAOracleV2 diaOracle;   // DIA oracle contract
-string       symbol;      // Bare feed symbol e.g. "COIN", "AMZN", "TSLA"
-address      vault;       // ERC-4626 vault whose shares are priced
-uint256      maxAge;      // Max acceptable DIA reading age (seconds)
+IDIAOracleV2 diaOracle;              // DIA oracle contract
+string       symbol;                 // Bare feed symbol e.g. "COIN", "AMZN"
+address      vault;                  // ERC-4626 vault whose shares are priced
+uint256      maxAge;                 // Max acceptable DIA reading age (seconds)
+address      corporateActionsVault;  // ICorporateActionsV1 gating the pause
+uint256      actionTypeMask;         // bitmap of action types that pause
+uint64       pauseTimeBefore;        // pre-window (seconds)
+uint64       pauseTimeAfter;         // post-window (seconds)
 ```
 
-All four are set once by `initialize(bytes calldata)` and never written again.
-There is no admin, no pause flag, no setter. To change any of them, deploy a
-fresh proxy and migrate consumers. The namespaced slot constant is pinned by a
-test recomputing the ERC-7201 derivation.
+`corporateActionsVault` is **not** a config field — it is derived at init as
+`IERC4626(vault).asset()`, the tStock the wtStock wraps, which is the contract
+that implements `ICorporateActionsV1`. So `DIAVaultOracleConfig` has **seven**
+fields (everything above except `corporateActionsVault`); the derived value is
+stored in the eighth slot. Deriving it removes a mis-wiring surface — the
+auto-pause can't be pointed at the wrong token. `actionTypeMask` and the
+pre/post windows remain config (they are per-deployment pause policy).
+
+All eight storage fields are set once by `initialize(bytes calldata)` and never
+written again. There is no admin, no manual pause flag, no setter. To change any
+of them, deploy a fresh proxy and migrate consumers. The namespaced slot
+constant is pinned by a test recomputing the ERC-7201 derivation.
 
 The DIA feed key is the **bare symbol** (`"COIN"`, `"AMZN"`, `"TSLA"`), not a
 pair string like `"COIN/USD"`. The DIA oracle contract is queried with this
@@ -153,14 +149,14 @@ vaultSharePrice  =  ────────────────────
 `DIAVaultOracle implements AggregatorV2V3Interface, ICloneableV2,
 Initializable`:
 
-| Function                 | Behaviour                                                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `decimals()`             | Returns `8`. Chainlink convention for USD-denominated price feeds.                                                                                                                                |
-| `description()`          | Returns the configured `symbol` (e.g. `"COIN"`). Lets consumers introspect what symbol the oracle wraps without an off-chain lookup.                                                              |
-| `version()`              | Returns `1`.                                                                                                                                                                                      |
-| `latestAnswer()`         | Reads DIA via `getValue(symbol)` (checks `maxAge` and not-set), computes share price, returns `int256`.                                                                                           |
-| `latestRoundData()`      | As above, with `roundId == answeredInRound == uint80(timestamp)` and `startedAt == updatedAt == timestamp`. Integrators that diff `roundId` see a new value whenever DIA has produced a new push. |
-| `getRoundData(_roundId)` | Always reverts `HistoricalRoundDataUnsupported(_roundId)`. DIA exposes only its latest push through this interface.                                                                               |
+| Function                 | Behaviour                                                                                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `decimals()`             | Returns `8`. Chainlink convention for USD-denominated price feeds.                                                                                                                                                    |
+| `description()`          | Returns the configured `symbol` (e.g. `"COIN"`). Lets consumers introspect what symbol the oracle wraps without an off-chain lookup.                                                                                  |
+| `version()`              | Returns `1`.                                                                                                                                                                                                          |
+| `latestAnswer()`         | Pause-gated: reverts `OraclePausedCorporateAction` inside a corporate-action window (§3.6). Otherwise reads DIA via `getValue(symbol)` (checks `maxAge` and not-set), computes share price, returns `int256`.         |
+| `latestRoundData()`      | Pause-gated as above, then returns `roundId == answeredInRound == uint80(timestamp)` and `startedAt == updatedAt == timestamp`. Integrators that diff `roundId` see a new value whenever DIA has produced a new push. |
+| `getRoundData(_roundId)` | Always reverts `HistoricalRoundDataUnsupported(_roundId)` (before any pause check). DIA exposes only its latest push through this interface.                                                                          |
 
 ### 3.4 Errors
 
@@ -168,12 +164,21 @@ Initializable`:
   `initialize` rejects zero values. An empty symbol would key into an unset DIA
   feed; `maxAge = 0` would make every read instantly stale; failing loud at init
   is preferable to minting a broken oracle.
+- `ZeroCorporateActionsVault()` — `initialize` rejects a vault whose `asset()`
+  is zero (a broken / non-ST0x vault), since the derived corporate-actions vault
+  would be zero and silently disable the mandatory auto-pause.
+- `InvalidPauseConfig()` — `initialize` rejects an incoherent pause window:
+  `actionTypeMask == 0`, or both `pauseTimeBefore` and `pauseTimeAfter` are
+  zero. Either would leave the auto-pause "configured" but never firing.
 - `DIAPriceNotSet()` — DIA's `getValue(symbol)` returned `(0, 0)`. DIA does
-  **not** revert for unset feeds — it silently returns zeros. The adapter checks
+  **not** revert for unset feeds — it silently returns zeros. The oracle checks
   this explicitly and raises `DIAPriceNotSet()` rather than producing a
   zero-value Chainlink answer, which would be silently catastrophic for
   consumers that don't check for zero.
 - `DIAPriceStale(uint256 timestamp)` — `block.timestamp - timestamp > maxAge`.
+- `OraclePausedCorporateAction(uint64 effectiveTime)` — a corporate-action pause
+  window is open on `latestAnswer` / `latestRoundData`. `effectiveTime` is the
+  action whose window contains `now` (pending wins on overlap; see §5.3).
 - `ZeroVaultSupply()` — `vault.totalSupply() == 0`. Pricing one share of a
   zero-supply vault is undefined.
 - `ZeroVaultSharePrice()` — computed price rounds to zero. A zero price is never
@@ -189,7 +194,33 @@ Initializable`:
   — emitted exactly once. Single source of truth for off-chain indexers; all
   immutable config lives in this event.
 
-### 3.6 DIA Freshness Policy
+### 3.6 Corporate-Action Auto-Pause (mandatory)
+
+The auto-pause is baked into the oracle, not bolted on by a wrapper, and cannot
+be disabled. On every `latestAnswer` / `latestRoundData` read the oracle
+consults `ICorporateActionsV1` on the corporate-actions vault — derived at init
+as `IERC4626(vault).asset()` (the tStock the wtStock wraps) — via
+`LibCorporateActionsPause.inPauseWindow(...)` and reverts
+`OraclePausedCorporateAction(effectiveTime)` if the current block falls inside
+the pre/post window of any matching scheduled or completed action. See §4 for
+the pause semantics and §5 for the windowing library.
+
+**Init validation.** `initialize` enforces the auto-pause is coherently wired:
+
+- `IERC4626(vault).asset() == 0` reverts `ZeroCorporateActionsVault()` — every
+  ST0x token implements corporate actions (on the tStock the wtStock wraps), so
+  a zero `asset()` is a broken/non-ST0x vault, never a valid "disable".
+- `actionTypeMask == 0`, or both windows zero, reverts `InvalidPauseConfig()` —
+  a "configured" pause that could never fire is a silent footgun.
+
+**Init probe.** After validation, `initialize` calls `inPauseWindow(...)` once
+against the configured vault (result discarded; only reachability is asserted).
+An incompatible wiring — a missing `ICorporateActionsV1` facet (ABI-decode
+revert) or a mask with no bits set in the upstream `VALID_ACTION_TYPES_MASK`
+(`InvalidMask`) — reverts **this deploy transaction** rather than bricking every
+future consumer read against immutable config.
+
+### 3.7 DIA Freshness Policy
 
 DIA pushes a new value whenever **either** of two triggers fires, whichever
 happens first:
@@ -204,7 +235,7 @@ missed heartbeat tolerance, enough slack to absorb a single skipped push without
 false staleness reverts, but tight enough to surface a genuinely stalled feed
 quickly.
 
-### 3.7 Live DIA Contract on Base
+### 3.8 Live DIA Contract on Base
 
 The canonical DIA oracle contract on Base mainnet is
 `0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol price feeds are all
@@ -212,91 +243,38 @@ served by this single contract via `getValue(string key)`.
 
 ---
 
-## 4. `PausableOracleWrapper`
+## 4. Corporate-Action Auto-Pause
 
-**Location:** `src/concrete/wrapper/PausableOracleWrapper.sol`
+The auto-pause lives directly in `DIAVaultOracle` (§3.6) — there is no separate
+pause contract. This section details the read-time pause semantics. The
+windowing logic is in `LibCorporateActionsPause` (§5); the free-value-extraction
+rationale is in §6.1.
 
-A pure-decorator wrapper that adds operational pause semantics on top of any
-`AggregatorV2V3Interface` upstream. Beacon-proxy clone via `ICloneableV2`.
+### 4.1 Pause Semantics
 
-### 4.1 Storage
+The two consumer-facing reads (`latestAnswer`, `latestRoundData`) revert
+`OraclePausedCorporateAction(uint64 effectiveTime)` when
+`LibCorporateActionsPause.inPauseWindow(...)` returns `true` for the configured
+`corporateActionsVault`, `actionTypeMask`, and pre/post windows. The
+`effectiveTime` payload identifies which scheduled or completed action's window
+contains `now` (pending wins on overlap — see §5.3). The pause check runs first,
+before any DIA or vault read, so a paused oracle never touches the priced
+source.
 
-State lives in an ERC-7201 namespaced struct at
-`erc7201:st0x.pausableoraclewrapper.main` (same-named public getters), pinned by
-a slot-derivation test so a beacon upgrade cannot collide a live proxy:
+`getRoundData(_roundId)` is unconditionally unsupported and reverts
+`HistoricalRoundDataUnsupported(_roundId)` before any pause check — DIA exposes
+no per-round history through this interface regardless of pause state.
 
-```solidity
-address                 admin;                  // governance
-bool                    paused;                 // manual emergency flag
-AggregatorV2V3Interface upstream;               // wrapped oracle (immutable)
-address                 corporateActionsVault;  // ICorporateActionsV1, immutable
-uint256                 actionTypeMask;         // bitmap, immutable
-uint64                  pauseTimeBefore;        // pre-window (s), immutable
-uint64                  pauseTimeAfter;         // post-window (s), immutable
-```
+There is **no manual pause** and **no admin**. The only pause is the on-chain,
+deterministic corporate-action window; ST0x governance influences it solely by
+being keeper-of-record on the `corporateActionsVault` schedule, not through any
+oracle-side switch. Config is immutable after `initialize`.
 
-`admin` and `paused` are the only mutable slots after `initialize`. `upstream`
-and the entire `CorporateActionPauseConfig` block are immutable — there is no
-admin upgrade path that could swap the priced source. Swapping the priced source
-means redeploying the wrapper and migrating consumers, which is by design (see
-§7).
-
-### 4.2 Pause Semantics
-
-Reads (`latestAnswer`, `latestRoundData`, `getRoundData`) revert if **either**
-of two independent conditions is true:
-
-1. **Manual pause.** `paused == true`, set by `admin` via `setPaused(bool)`.
-   Reverts `OraclePausedManual()`. Persists until `setPaused(false)`.
-2. **Corporate-action auto-pause.**
-   `LibCorporateActionsPause.inPauseWindow(...)` returns `true` for the
-   configured vault, mask, and pre/post windows. Reverts
-   `OraclePausedCorporateAction(uint64 effectiveTime)`. The `effectiveTime`
-   payload disambiguates which scheduled or completed action triggered the
-   pause. See §5 for the windowing semantics.
-
-The two conditions are OR'd. The manual check runs first (cheaper — single
-`SLOAD`) so that when an admin has explicitly set the manual flag, integrators
-see `OraclePausedManual()` rather than a coincidental
-`OraclePausedCorporateAction(t)`.
-
-The error selectors are distinct so a consumer doing `try / catch` introspection
-can disambiguate "ops paused us" from "scheduled event in window" if they wish.
-For the simple case — a consumer that catches any revert and falls back to "no
-price available" — no disambiguation is needed.
-
-### 4.3 Shape Preservation
-
-`decimals()`, `description()`, and `version()` are delegated straight to
-`upstream`. The wrapper does not modify any value; it only adds revert
-conditions. A consumer dropping in a `PausableOracleWrapper` proxy where it
-would have used the underlying adapter sees identical shape and identical price
-behaviour outside pause windows.
-
-### 4.4 Admin Surface
-
-| Function                     | Behaviour                                                                                                                                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setPaused(bool isPaused)`   | `onlyAdmin`. Toggles the manual flag. Emits `PauseSet(isPaused)`.                                                                                                                              |
-| `setAdmin(address newAdmin)` | `onlyAdmin`. One-step transfer; new admin takes effect immediately. Rejects zero. A misaddressed transfer permanently locks governance — use a multisig. Emits `AdminSet(oldAdmin, newAdmin)`. |
-
-### 4.5 Errors
-
-- `ZeroUpstream()` / `ZeroAdmin()` — `initialize` and `setAdmin` reject zero
-  values. A zero admin permanently locks `setPaused`; a zero upstream mints a
-  wrapper that always reverts.
-- `OnlyAdmin()` — caller is not `admin`.
-- `OraclePausedManual()` — manual pause is set.
-- `OraclePausedCorporateAction(uint64 effectiveTime)` — auto-pause window is
-  open. `effectiveTime` is the action whose window contains `now`.
-
-### 4.6 Events
-
-- `PausableOracleWrapperInitialized(address indexed sender,
-  PausableOracleWrapperConfig config)`
-  — once on init.
-- `PauseSet(bool isPaused)`
-- `AdminSet(address indexed oldAdmin, address indexed newAdmin)`
+The single `OraclePausedCorporateAction(effectiveTime)` selector is distinct
+from the DIA staleness errors, so a consumer doing `try / catch` introspection
+can tell "scheduled event in window" from "feed stale/unset" if it wishes. For
+the simple case — a consumer that catches any revert and falls back to "no price
+available" — no disambiguation is needed.
 
 ---
 
@@ -356,7 +334,9 @@ it is the vault's bootstrap bookkeeping node (completed in the same block as the
 first scheduled action), not a real corporate action, so a `mask` of `0` _or_
 exactly `ACTION_TYPE_INIT_V1` short-circuits to "not paused" — no action types
 match anything. A zero `corporateActionsVault` also short-circuits to "not
-paused" and disables auto-pause for the life of the wrapper proxy.
+paused" — though `DIAVaultOracle` rejects a zero `corporateActionsVault` at init
+(`ZeroCorporateActionsVault`), so a live DIA-stack proxy never reaches this
+short-circuit; it exists for the library's own generality.
 
 ### 5.3 Overlap Resolution: Pending Wins
 
@@ -385,8 +365,8 @@ refactors.
 
 ## 6. Flagship Features
 
-The wrapper/adapter split surfaces two core ST0x security properties that
-downstream lending markets get for free.
+`DIAVaultOracle` surfaces two core ST0x security properties that downstream
+lending markets get for free.
 
 ### 6.1 Corporate-Action Auto-Pause
 
@@ -398,7 +378,7 @@ split's `effectiveTime`; until that rebalance is reflected in
 the market sees new shares. Anyone trading across that boundary captures free
 value at the expense of slower participants.
 
-The wrapper's corporate-action auto-pause closes the boundary: from
+The oracle's corporate-action auto-pause closes the boundary: from
 `effectiveTime - pauseTimeBefore` through `effectiveTime + pauseTimeAfter`,
 every price read reverts `OraclePausedCorporateAction(effectiveTime)`. Lending
 markets that catch the revert (Aave-style `try/catch` consumers) treat the price
@@ -426,16 +406,18 @@ multiplies. The auto-pause window covers the period where the rebalance is still
 settling and the ratio is mid-transition. After the post-window closes, reads
 resume against the updated ratio.
 
-This is also why the wrapper does not allow swapping `upstream`: if a future
-admin could redirect to a different priced source, the (paused-correctly)
-share-price invariant would no longer be guaranteed by construction.
+This is also why the oracle's config is immutable after init: if a future admin
+could redirect `diaOracle`, `vault`, or `corporateActionsVault` to a different
+source, the (paused-correctly) share-price invariant would no longer be
+guaranteed by construction. Changing any of them means redeploying a fresh proxy
+and migrating consumers.
 
 ---
 
 ## 7. Beacon-Proxy & Upgrade Model
 
-Both `DIAVaultOracle` and `PausableOracleWrapper` follow the standard
-`st0x.deploy` BeaconSetDeployer pattern:
+The DIA stack is a single beacon (`DIAVaultOracle`) plus its beacon-set
+deployer. It follows the standard `st0x.deploy` BeaconSetDeployer pattern:
 
 - Each contract has a `BeaconSetDeployer` constructor that takes an
   implementation address and an initial beacon owner, then constructs a fresh
@@ -453,16 +435,14 @@ Both `DIAVaultOracle` and `PausableOracleWrapper` follow the standard
 
 **What the beacon owner cannot do:**
 
-- Change a proxy's `upstream` (it's immutable in the proxy's storage).
-- Change a proxy's `corporateActionsVault`, `actionTypeMask`, `pauseTimeBefore`,
-  or `pauseTimeAfter`.
-- Change a `DIAVaultOracle` proxy's `diaOracle`, `symbol`, `vault`, or `maxAge`.
+- Change a `DIAVaultOracle` proxy's `diaOracle`, `symbol`, `vault`, `maxAge`,
+  `corporateActionsVault`, `actionTypeMask`, `pauseTimeBefore`, or
+  `pauseTimeAfter`.
 
 These are immutable after init by design. A beacon upgrade can change behaviour
 but cannot redirect the priced source or weaken the pause windows. The only way
-to change a vault's priced source is to redeploy a fresh adapter and a fresh
-wrapper, then migrate consumers — which is, again, an intentional friction
-surface.
+to change a vault's priced source is to redeploy a fresh `DIAVaultOracle` proxy
+and migrate consumers — which is, again, an intentional friction surface.
 
 ---
 
@@ -470,54 +450,51 @@ surface.
 
 **Location:** `src/concrete/deploy/`
 
-| Contract                                 | Purpose                                                                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `DIAVaultOracleBeaconSetDeployer`        | Owns the `DIAVaultOracle` beacon. Exposes `newDIAVaultOracle(config)` to mint a proxy.                                     |
-| `PausableOracleWrapperBeaconSetDeployer` | Owns the `PausableOracleWrapper` beacon. Exposes `newPausableOracleWrapper(config)` to mint a proxy.                       |
-| `DIAOracleUnifiedDeployer`               | One-shot. `newOracleWithWrapper(config)` mints both proxies in a single transaction and wires `wrapper.upstream = oracle`. |
+| Contract                          | Purpose                                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `DIAVaultOracleBeaconSetDeployer` | Owns the `DIAVaultOracle` beacon. Exposes `newDIAVaultOracle(config)` to mint the consumer-facing oracle proxy. |
 
-### 8.1 Unified Deploy
+The signed-price stack (§11) ships its own beacon-set deployers —
+`ST0xPriceOracleBeaconSetDeployer` and `MorphoPairOracleBeaconSetDeployer` — in
+the same directory; they are independent of the DIA stack.
+
+The `DEPLOYMENT_SUITE` for the DIA stack is `dia-vault-oracle`.
+
+### 8.1 Deploy
 
 ```solidity
-DIAOracleUnifiedDeployConfig memory config = DIAOracleUnifiedDeployConfig({
-    admin: governanceMultisig,
-    oracleConfig: DIAVaultOracleConfig({
-        diaOracle: IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
-        symbol:    "COIN",
-        vault:     wtStockVault,
-        maxAge:    2 hours
-    }),
-    pauseConfig: CorporateActionPauseConfig({
-        corporateActionsVault: corporateActionsVault,
-        actionTypeMask:        type(uint256).max,
-        pauseTimeBefore:       1 hours,
-        pauseTimeAfter:        2 hours
-    })
+// corporateActionsVault is NOT passed — the oracle derives it as
+// IERC4626(wtStockVault).asset() (the tStock).
+DIAVaultOracleConfig memory config = DIAVaultOracleConfig({
+    diaOracle:       IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+    symbol:          "COIN",
+    vault:           wtStockVault,
+    maxAge:          2 hours,
+    actionTypeMask:  type(uint256).max,
+    pauseTimeBefore: 1 hours,
+    pauseTimeAfter:  2 hours
 });
 
-(DIAVaultOracle oracle, PausableOracleWrapper wrapper) =
-    unifiedDeployer.newOracleWithWrapper(config);
+DIAVaultOracle oracle = deployer.newDIAVaultOracle(config);
 
-// Hand `address(wrapper)` to consumers. Forget `address(oracle)`.
+// Hand `address(oracle)` to consumers — it is the single consumer-facing address.
 ```
 
-Atomicity is the point: a two-step deploy-then-wire-up flow opens a window for
-misaddressing the adapter, which would silently mint a wrapper around the wrong
-priced source. The unified deployer closes that window — the wrapper's
-`upstream` slot is set to the freshly-deployed adapter inside the same
-transaction that created the adapter, and both addresses are emitted in the
-deployer's `Deployment(caller, oracle, wrapper)` event.
+The proxy is minted via CREATE2 with `salt = keccak256(abi.encode(config))`, so
+its address is a deterministic commitment to its config and a re-run with
+identical config reverts on the CREATE2 collision instead of silently forking a
+second, divergent oracle. The deployer's init also runs the corporate-actions
+init probe (§3.6): a bad wiring reverts the deploy transaction, not every future
+read. The new proxy address is emitted in the deployer's
+`Deployment(caller, oracle)` event.
 
 ### 8.2 Per-Chain Deploy Sequence
 
 1. Deploy `DIAVaultOracle` implementation.
 2. Deploy `DIAVaultOracleBeaconSetDeployer` (it constructs its beacon).
-3. Deploy `PausableOracleWrapper` implementation.
-4. Deploy `PausableOracleWrapperBeaconSetDeployer` (it constructs its beacon).
-5. Deploy `DIAOracleUnifiedDeployer` wired to both BeaconSetDeployers.
-6. (Per vault) Call `unifiedDeployer.newOracleWithWrapper(...)`.
+3. (Per vault) Call `deployer.newDIAVaultOracle(...)`.
 
-Steps 1-5 happen once per chain. Step 6 is one transaction per vault.
+Steps 1-2 happen once per chain. Step 3 is one transaction per vault.
 
 ---
 
@@ -534,7 +511,7 @@ dependencies:
   uint128 timestamp)`.
   `value` is the 18-decimal price for the symbol; `timestamp` is the
   `block.timestamp` of the last on-chain push. **DIA does not revert for unset
-  feeds** — it returns `(0, 0)`. The adapter checks this explicitly (see §3.4
+  feeds** — it returns `(0, 0)`. The oracle checks this explicitly (see §3.4
   `DIAPriceNotSet`). Vendored because the interface is one function and stable;
   hand-typed against DIA Data Association's published interface, last synced
   2026-06-30. No drift-detection test exists — re-sync on any upstream bump.
@@ -551,16 +528,16 @@ dependencies:
 ## 10. Integrator Model
 
 Consumers (Euler, Aave V3, Compound V3, future Chainlink-compatible markets)
-target the `PausableOracleWrapper` proxy address at the
-`AggregatorV2V3Interface` they already use for Chainlink feeds. No
-protocol-specific shim is involved. The wrapper looks indistinguishable from a
+target the `DIAVaultOracle` proxy address directly at the
+`AggregatorV2V3Interface` they already use for Chainlink feeds. No wrapper, no
+protocol-specific shim is involved. The oracle looks indistinguishable from a
 Chainlink feed except that:
 
-- `latestAnswer` / `latestRoundData` revert during pause windows. Consumers must
-  treat these reverts as "price unavailable", not "price is the last successful
-  read".
-- `getRoundData(_roundId)` always reverts when the upstream is `DIAVaultOracle`.
-  Consumers should not rely on historical round lookups against this stack.
+- `latestAnswer` / `latestRoundData` revert during corporate-action pause
+  windows. Consumers must treat these reverts as "price unavailable", not "price
+  is the last successful read".
+- `getRoundData(_roundId)` always reverts on this stack. Consumers should not
+  rely on historical round lookups against `DIAVaultOracle`.
 
 ### 10.1 Operational Preconditions
 
@@ -574,11 +551,11 @@ For any consumer that wraps reads in `try / catch`:
    deliberately withheld.
 
 2. **The consumer's own `maxPriceAge` (or equivalent staleness threshold) must
-   be greater than or equal to the adapter's `maxAge`.** Otherwise the
-   consumer's check rejects the read before the adapter's internal
+   be greater than or equal to the oracle's `maxAge`.** Otherwise the consumer's
+   check rejects the read before the oracle's internal
    `DIAPriceStale(timestamp)` revert can fire, and the deployment loses the
    layered staleness signal. Configure consumer staleness as a strict upper
-   bound on adapter staleness.
+   bound on the oracle's staleness.
 
 ---
 
@@ -679,12 +656,10 @@ st0x.oracle/
 │   │   │   ├── DIAVaultOracle.sol
 │   │   │   ├── ST0xPriceOracle.sol
 │   │   │   └── MorphoPairOracle.sol
-│   │   ├── wrapper/
-│   │   │   └── PausableOracleWrapper.sol
 │   │   └── deploy/
 │   │       ├── DIAVaultOracleBeaconSetDeployer.sol
-│   │       ├── PausableOracleWrapperBeaconSetDeployer.sol
-│   │       └── DIAOracleUnifiedDeployer.sol
+│   │       ├── ST0xPriceOracleBeaconSetDeployer.sol
+│   │       └── MorphoPairOracleBeaconSetDeployer.sol
 │   ├── interface/
 │   │   ├── IDIAOracleV2.sol         ← vendored DIA interface
 │   │   ├── IAggregatorV2V3.sol      ← vendored Chainlink shape
@@ -693,7 +668,6 @@ st0x.oracle/
 │       └── LibCorporateActionsPause.sol
 └── test/
     ├── mocks/
-    │   ├── MockAggregatorV2V3.sol
     │   ├── MockDIAOracle.sol
     │   ├── MockCorporateActions.sol
     │   ├── MockERC4626.sol
@@ -703,7 +677,6 @@ st0x.oracle/
     └── src/
         ├── concrete/
         │   ├── oracle/
-        │   ├── wrapper/
         │   └── deploy/
         ├── lib/
         └── e2e/
@@ -715,7 +688,7 @@ st0x.oracle/
 ## 13. Security Considerations
 
 1. **DIA "not set" must surface, not mask.** DIA's `getValue` returns `(0, 0)`
-   for unset feeds rather than reverting. The adapter checks this explicitly and
+   for unset feeds rather than reverting. The oracle checks this explicitly and
    raises `DIAPriceNotSet()`. A zero-value Chainlink answer passed through to a
    consumer that does not check for zero would be silently catastrophic.
 2. **DIA staleness must surface, not mask.** `block.timestamp - timestamp
@@ -728,19 +701,23 @@ st0x.oracle/
    value. The vault must be a known ST0x deployment; pricing a hostile ERC-4626
    implementation is out of scope.
 5. **Zero vault supply reverts.** Pricing a share of a zero-supply vault is
-   undefined; the adapter reverts `ZeroVaultSupply()`.
+   undefined; the oracle reverts `ZeroVaultSupply()`.
 6. **`NODE_NONE` is the no-match sentinel, not `0`.** See §5.4. Misreading this
    would treat the bootstrap node as a real corporate action.
 7. **Pending-wins overlap rule.** See §5.3. If a future change reverses this,
    integrators reading the `effectiveTime` payload would see the wrong "next
    event" timestamp.
-8. **Wrapper `admin` is single-step and zero-rejected on transfer.** A
-   misaddressed transfer permanently locks `setPaused`; use a multisig.
-9. **Upstream and pause config are immutable.** No admin path can redirect the
-   priced source or weaken pause windows; only redeploy + migration.
-10. **`getRoundData` reverts on DIA-backed deployments.** Consumers that depend
-    on historical round lookups will fail loudly, not get wrong-but-plausible
-    data.
+8. **Auto-pause is mandatory and validated at init.** The corporate-actions
+   vault is derived as `IERC4626(vault).asset()` and must be non-zero
+   (`ZeroCorporateActionsVault`), the pause window coherent
+   (`InvalidPauseConfig`); `initialize` also probes the derived vault once so a
+   bad wiring reverts the deploy transaction rather than bricking every future
+   read (§3.6).
+9. **Config is immutable.** No admin exists and no path can redirect the priced
+   source or weaken the pause windows; only redeploy + migration. There is no
+   manual pause and no admin surface on the DIA stack.
+10. **`getRoundData` reverts on the DIA stack.** Consumers that depend on
+    historical round lookups will fail loudly, not get wrong-but-plausible data.
 11. **Fallback oracles on the consumer side undermine the pause feature.** See
     §10.1. The pause must reach the consumer; a fallback that hides it defeats
     the security property.

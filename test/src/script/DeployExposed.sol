@@ -3,15 +3,15 @@
 pragma solidity =0.8.25;
 
 import {Deploy} from "../../../script/Deploy.sol";
-import {DIAOracleUnifiedDeployer} from "../../../src/concrete/deploy/DIAOracleUnifiedDeployer.sol";
+import {DIAVaultOracleBeaconSetDeployer} from "../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 
 /// @title DeployExposed
-/// @dev Test-only subclass that exposes the internal `deployDIAStackInfra`
-/// helper for unit testing. Calling `run()` directly is awkward because it
-/// opens a `vm.startBroadcast`; this exposer lets the test drive the pure
+/// @dev Test-only subclass that exposes the internal deploy helpers for unit
+/// testing. Calling `run()` directly is awkward because it opens a
+/// `vm.startBroadcast`; this exposer lets the test drive the pure
 /// wiring/postcondition logic without a broadcast or fork.
 contract DeployExposed is Deploy {
-    function exposedDeployDIAStackInfra(address beaconInitialOwner) external returns (DIAOracleUnifiedDeployer) {
+    function exposedDeployDIAStackInfra(address beaconInitialOwner) external returns (DIAVaultOracleBeaconSetDeployer) {
         return deployDIAStackInfra(beaconInitialOwner);
     }
 

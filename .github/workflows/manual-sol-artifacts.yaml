@@ -16,7 +16,7 @@ on:
         required: true
         type: choice
         options:
-          - dia-oracle-unified-deployer
+          - dia-vault-oracle
           - signed-price-stack
       beacon-initial-owner:
         description: 'Beacon owner (governance multisig, checksummed). Must NOT be the deploy key.'

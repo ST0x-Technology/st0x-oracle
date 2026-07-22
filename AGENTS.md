@@ -61,7 +61,7 @@ When slither flags false positives, suppress them with inline comments:
 ```
 
 Always add a comment explaining WHY the finding is a false positive. See
-`DIAOracleUnifiedDeployer.newOracleWithWrapper` for an example.
+`DIAVaultOracleBeaconSetDeployer.newDIAVaultOracle` for an example.
 
 ## Address Checksums
 
@@ -91,11 +91,12 @@ Deployments happen via GitHub Actions (`manual-sol-artifacts.yaml`), not
 locally. The workflow runs `rainix-sol-artifacts`, which executes
 `script/Deploy.sol:Deploy` with the chosen `DEPLOYMENT_SUITE`:
 
-- `dia-oracle-unified-deployer` — DIA stack infra: fresh implementations, both
-  beacon-set deployers, and the `DIAOracleUnifiedDeployer` composing them. No
-  per-vault proxies are minted; each vault's `(oracle, wrapper)` pair is minted
-  afterwards through the unified deployer with that vault's real
-  corporate-action pause config.
+- `dia-vault-oracle` — DIA stack infra: a fresh `DIAVaultOracle` implementation
+  and its beacon-set deployer. No per-vault proxies are minted; each vault's
+  oracle is minted afterwards through the beacon-set deployer with that vault's
+  DIA feed + corporate-action pause config.
+- `signed-price-stack` — the `ST0xPriceOracle` singleton + its beacon-set
+  deployer, and a `MorphoPairOracleBeaconSetDeployer` bound to it.
 
 `BEACON_INITIAL_OWNER` is **required** and must differ from the deploy key: the
 beacon owner controls the implementation behind every proxy (every served
@@ -124,9 +125,9 @@ runtime-owned beacons.
 ### Deployment records
 
 Each chain's deployed addresses are committed under `deployments/<network>.json`
-(the impls, beacons, beacon-set deployers, unified deployer, and — once deployed
-— the signed-price singleton), so the canonical record survives the CI logs it
-was parsed from. `DeploymentsRecord.t.sol` asserts the committed record stays
+(the impls, beacons, beacon-set deployers, and — once deployed — the
+signed-price singleton), so the canonical record survives the CI logs it was
+parsed from. `DeploymentsRecord.t.sol` asserts the committed record stays
 structurally complete (populated, checksummed, distinct addresses) so it can't
 silently rot to zeros.
 
@@ -169,18 +170,15 @@ Two stacks share the repo — see `README.md` and `SPEC.md` for the full picture
 **DIA stack** (prices `wtStock` ERC-4626 vault shares for Chainlink-compatible
 consumers):
 
-- **DIAVaultOracle** — reads the underlying-asset price from a DIA feed (keyed
-  by bare symbol, e.g. `"COIN"`) and multiplies by the vault's
-  `totalAssets / totalSupply`; 8-decimal `AggregatorV2V3Interface`.
-- **PausableOracleWrapper** — shape-preserving decorator over any
-  `AggregatorV2V3Interface`: manual admin pause + automatic corporate-action
-  pause via `LibCorporateActionsPause`. The wrapper proxy is the canonical
-  consumer-facing address; its upstream is immutable.
-- **DIAVaultOracleBeaconSetDeployer / PausableOracleWrapperBeaconSetDeployer** —
-  each owns an `UpgradeableBeacon` and mints beacon proxies of its
-  implementation.
-- **DIAOracleUnifiedDeployer** — atomic (oracle, wrapper) pair deploy with the
-  wrapper's upstream wired to the fresh adapter.
+- **DIAVaultOracle** — the single consumer-facing contract. Reads the
+  underlying-equity price from a DIA feed (keyed by bare symbol, e.g. `"COIN"`),
+  multiplies by the vault's `totalAssets / totalSupply`, returns 8-decimal
+  `AggregatorV2V3Interface` — and auto-pauses reads around scheduled corporate
+  actions via `LibCorporateActionsPause`/`ICorporateActionsV1`. The auto-pause
+  is mandatory (every ST0x token implements corporate actions); there is no
+  manual pause and no admin.
+- **DIAVaultOracleBeaconSetDeployer** — owns an `UpgradeableBeacon` and mints
+  `DIAVaultOracle` proxies (CREATE2, config-salted).
 
 **Signed-price stack** (Morpho Blue markets):
 
@@ -188,8 +186,11 @@ consumers):
   Permissionless `updatePrice` authorised by the global publisher's EIP-712
   signature; strict per-pair timestamp inequality is the replay defence.
   `ORACLE_ADMIN_ROLE` rotates signer/timeout.
-- **MorphoPairOracle** — thin beacon-proxied adapter exposing one pair on the
-  central store through Morpho Blue's `IOracle.price()`.
+- **MorphoPairOracle** — beacon-proxied adapter exposing one pair on the central
+  store through Morpho Blue's `IOracle.price()`, owning the publisher→Morpho
+  decimal rescale.
+- **ST0xPriceOracleBeaconSetDeployer / MorphoPairOracleBeaconSetDeployer** —
+  deploy the singleton and per-market adapter proxies.
 
 Beacon pattern throughout: implementations are deployed once and proxied; one
 beacon upgrade retargets every proxy minted from it.

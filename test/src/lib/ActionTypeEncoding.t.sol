@@ -11,7 +11,7 @@ import {
 
 /// @title ActionTypeEncodingTest
 /// @notice Pins the `st0x-deploy` action-type bitmap that SPEC.md §5.2 and
-/// `PausableOracleWrapper`'s NatSpec restate by value. Nothing else forces
+/// `DIAVaultOracle`'s NatSpec restate by value. Nothing else forces
 /// those first-party restatements to agree with the dependency; this test
 /// fires on any soldeer bump that re-encodes the bitmap, forcing every
 /// documented `actionTypeMask` recipe to be re-verified before it ships. A
