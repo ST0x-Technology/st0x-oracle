@@ -1,0 +1,35 @@
+name: Fork tests
+on: [push]
+# The per-push rainix reusable sol workflow runs `forge test` but is a
+# cross-org reusable, so it doesn't reliably inject a Base fork RPC into
+# forge's env — the fork tests under test/src/fork/ no-op there. This job
+# wires the RPC_URL_BASE_FORK repo secret to BASE_RPC_URL explicitly and runs
+# the fork tests for real against live Base.
+jobs:
+  fork-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+      - run: nix develop -c forge soldeer install
+      - name: Run fork tests against live Base
+        env:
+          BASE_RPC_URL: ${{ secrets.RPC_URL_BASE_FORK || vars.RPC_URL_BASE_FORK }}
+        run: |
+          if [ -z "${BASE_RPC_URL}" ]; then
+            echo "::error::BASE_RPC_URL is empty — set the RPC_URL_BASE_FORK repo secret/var so fork tests run." >&2
+            exit 1
+          fi
+          nix develop -c forge test --match-path "test/src/fork/*" -vvv

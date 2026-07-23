@@ -31,10 +31,13 @@ interface IAuthorizable {
 /// an actual stock split on the deployed tCOIN receipt vault and asserts the
 /// oracle — pointed at the wtCOIN wrapper — reverts `OraclePausedCorporateAction`.
 ///
-/// Requires a Base RPC in `RPC_URL_BASE_FORK` (the same var rainix CI plumbs).
-/// `no-ignored-tests` bans `vm.skip`, so when the RPC is unset the test returns
-/// early with a loud log line rather than skipping silently — set the var (or
-/// run locally with `RPC_URL_BASE_FORK=https://mainnet.base.org`) to exercise it.
+/// Forks Base from `BASE_RPC_URL`. The dedicated `fork-tests.yaml` workflow
+/// wires this from the `RPC_URL_BASE_FORK` repo secret and runs it for real in
+/// CI. The per-push rainix job doesn't inject that RPC (it's a cross-org
+/// reusable workflow), so when `BASE_RPC_URL` is unset this loudly logs and
+/// returns rather than erroring — `no-ignored-tests` bans `vm.skip`, and a hard
+/// `createSelectFork` failure would red every per-push run. Locally, export
+/// `BASE_RPC_URL=https://mainnet.base.org` to run it.
 contract DIAVaultOracleForkBaseTest is Test {
     // Live Base deployments (see deployments/base.json + st0x.deploy LibProdTokensBase).
     address constant DIA_FEED = 0xCE521b52513242c5094bc56f57887BB2A05B8129;
@@ -82,9 +85,9 @@ contract DIAVaultOracleForkBaseTest is Test {
     }
 
     function testForkOracleAutoPausesOnRealScheduledSplit() external {
-        string memory rpc = vm.envOr("RPC_URL_BASE_FORK", string(""));
+        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
         if (bytes(rpc).length == 0) {
-            console2.log("SKIP testForkOracleAutoPausesOnRealScheduledSplit: RPC_URL_BASE_FORK unset");
+            console2.log("SKIP testForkOracleAutoPausesOnRealScheduledSplit: BASE_RPC_URL unset");
             return;
         }
         vm.createSelectFork(rpc);

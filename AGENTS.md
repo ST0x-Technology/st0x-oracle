@@ -84,6 +84,14 @@ Do not use lowercase addresses from transaction receipts directly.
   everything else).
 - `test/src/e2e/DIAStackE2E.t.sol` exercises the full DIA stack (deployers →
   proxies → reads) without forking.
+- **Fork tests** (`test/src/fork/`) fork live Base from the `BASE_RPC_URL` env
+  var. The dedicated `.github/workflows/fork-tests.yaml` job wires this from the
+  `RPC_URL_BASE_FORK` repo secret and runs them for real; the per-push rainix
+  reusable job (cross-org) doesn't inject that RPC, so there the fork tests
+  loudly log + no-op (they can't `vm.skip` — it's banned org-wide — and a hard
+  fork failure would red every run). Locally,
+  `export
+  BASE_RPC_URL=https://mainnet.base.org` before `forge test`.
 
 ## Deployment
 
