@@ -125,6 +125,34 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
+    /// @notice Per config NatSpec, at least ONE of before/after must be
+    /// non-zero — a single-sided window is a valid config. Init must SUCCEED
+    /// with only a pre-window (`pauseTimeAfter == 0`) and, symmetrically, with
+    /// only a post-window (`pauseTimeBefore == 0`). Guards the reject predicate
+    /// `before == 0 && after == 0`: a regression to `before == 0 || after == 0`
+    /// would wrongly reject these valid single-sided configs.
+    function testInitSucceedsWithOnlyPreWindow() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = PAUSE_BEFORE;
+        config.pauseTimeAfter = 0;
+        DIAVaultOracle oracle = _deployUninit();
+        bytes32 ok = oracle.initialize(abi.encode(config));
+        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pre-window-only config must be accepted");
+        assertEq(oracle.pauseTimeBefore(), PAUSE_BEFORE);
+        assertEq(oracle.pauseTimeAfter(), 0);
+    }
+
+    function testInitSucceedsWithOnlyPostWindow() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = 0;
+        config.pauseTimeAfter = PAUSE_AFTER;
+        DIAVaultOracle oracle = _deployUninit();
+        bytes32 ok = oracle.initialize(abi.encode(config));
+        assertEq(ok, ICLONEABLE_V2_SUCCESS, "post-window-only config must be accepted");
+        assertEq(oracle.pauseTimeBefore(), 0);
+        assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER);
+    }
+
     /// @notice A corporate-actions vault whose facet reverts must fail the
     /// DEPLOY transaction (via the init probe), not every future read.
     function testInitProbesVaultRevertsOnBrokenFacet() external {
@@ -238,6 +266,32 @@ contract DIAVaultOracleTest is Test {
         assertEq(oracle.symbol(), SYMBOL);
         assertEq(oracle.vault(), address(vault));
         assertEq(oracle.maxAge(), MAX_AGE);
+        // The auto-pause config must be persisted verbatim — a stored mask or
+        // window that drifts from config silently changes the pause behaviour.
+        assertEq(
+            oracle.corporateActionsVault(), address(actions), "corporate-actions vault must be the derived asset()"
+        );
+        assertEq(oracle.actionTypeMask(), ACTION_TYPE_STOCK_SPLIT_V1, "actionTypeMask must be stored verbatim");
+        assertEq(oracle.pauseTimeBefore(), PAUSE_BEFORE, "pauseTimeBefore must be stored verbatim");
+        assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER, "pauseTimeAfter must be stored verbatim");
+    }
+
+    /// @notice The stored `actionTypeMask` must be the ONE applied to the
+    /// auto-pause: a completed action whose type is NOT in the configured mask
+    /// must NOT pause the oracle, even inside its post-window. Guards against a
+    /// stored mask that silently broadens to the wildcard (`type(uint256).max`)
+    /// — under which an unrelated action type would spuriously pause reads.
+    function testConfiguredMaskExcludesNonMatchingActionType() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint64(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        // A completed action of a DIFFERENT type, squarely inside its
+        // post-window. The configured mask is STOCK_SPLIT only, so this must
+        // NOT pause — the oracle prices normally.
+        uint256 unrelatedType = 1 << 5;
+        actions.setLatestCompleted(1, unrelatedType, uint64(block.timestamp - PAUSE_AFTER / 2));
+        assertEq(oracle.latestAnswer(), 100e8, "action outside the configured mask must not pause");
     }
 
     // -------- Typed overload reverts --------
@@ -310,6 +364,41 @@ contract DIAVaultOracleTest is Test {
 
         int256 answer = oracle.latestAnswer();
         assertEq(answer, int256(100e8));
+    }
+
+    /// @notice `_readDIAChecked` reverts `DIAPriceNotSet` when the DIA value is
+    /// zero even if the timestamp is non-zero — the value-zero and timestamp-zero
+    /// terms of the not-set check are independent, so a mutant dropping the
+    /// value-zero term would price off a zero value.
+    function testLatestAnswerRevertsDIAValueZeroTimestampNonZero() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 0, uint128(block.timestamp)); // value 0, ts non-zero
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        vm.expectRevert(DIAPriceNotSet.selector);
+        oracle.latestAnswer();
+    }
+
+    /// @notice Symmetric to the above: a zero timestamp reverts `DIAPriceNotSet`
+    /// (never-published), NOT `DIAPriceStale`, even when the value is non-zero.
+    function testLatestAnswerRevertsDIAValueNonZeroTimestampZero() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, 0); // value non-zero, ts 0
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        vm.expectRevert(DIAPriceNotSet.selector);
+        oracle.latestAnswer();
+    }
+
+    /// @notice A very large but in-range 8dp price (5e76 < int256.max ~5.79e76)
+    /// is RETURNED, not rejected by the overflow guard — pins the non-revert
+    /// side of the `price8 > int256.max` boundary.
+    function testLatestAnswerLargePriceBelowIntMaxReturns() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 1e38, uint128(block.timestamp));
+        vault.setTotalAssets(5e48);
+        vault.setTotalSupply(1);
+        assertEq(oracle.latestAnswer(), int256(5e76));
     }
 
     // -------- latestAnswer zero supply --------
