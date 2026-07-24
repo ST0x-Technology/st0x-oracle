@@ -287,7 +287,7 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, uint64(block.timestamp));
     }
 
-    /// SPEC §16.3: `effectiveTime` is zero iff `paused` is false. Fuzz the
+    /// Invariant: `effectiveTime` is zero iff `paused` is false. Fuzz the
     /// presence and timing of pending and completed actions and assert the
     /// invariant holds.
     function testFuzzPausedFalseImpliesEffectiveTimeZero(

@@ -156,7 +156,7 @@ Per-network secrets/vars follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
 
 ## Architecture
 
-Two stacks share the repo — see `README.md` and `SPEC.md` for the full picture.
+Two stacks share the repo — see `README.md` for the full picture.
 
 **DIA stack** (prices `wtStock` ERC-4626 vault shares for Chainlink-compatible
 consumers):

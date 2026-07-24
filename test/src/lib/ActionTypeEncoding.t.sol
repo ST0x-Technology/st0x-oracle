@@ -10,8 +10,8 @@ import {
 } from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 
 /// @title ActionTypeEncodingTest
-/// @notice Pins the `st0x-deploy` action-type bitmap that SPEC.md §5.2 and
-/// `DIAVaultOracle`'s NatSpec restate by value. Nothing else forces
+/// @notice Pins the `st0x-deploy` action-type bitmap that `DIAVaultOracle`'s
+/// NatSpec restates by value. Nothing else forces
 /// those first-party restatements to agree with the dependency; this test
 /// fires on any soldeer bump that re-encodes the bitmap, forcing every
 /// documented `actionTypeMask` recipe to be re-verified before it ships. A

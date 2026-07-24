@@ -14,7 +14,6 @@ path = [
   "soldeer.lock",
   "AGENTS.md",
   "CLAUDE.md",
-  "SPEC.md",
   "slither.config.json",
 ]
 SPDX-FileCopyrightText = "Copyright (c) 2020 Rain Open Source Software Ltd"
