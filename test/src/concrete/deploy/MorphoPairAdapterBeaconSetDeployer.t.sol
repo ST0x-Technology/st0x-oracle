@@ -7,16 +7,16 @@ import {Vm} from "forge-std-1.16.1/src/Vm.sol";
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
 import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProxy.sol";
 import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
-import {MorphoPairOracle, ZeroToken, IdenticalTokens} from "../../../../src/concrete/oracle/MorphoPairOracle.sol";
+import {MorphoPairAdapter, ZeroToken, IdenticalTokens} from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
 import {
-    MorphoPairOracleBeaconSetDeployer,
-    MorphoPairOracleBeaconSetDeployerConfig,
+    MorphoPairAdapterBeaconSetDeployer,
+    MorphoPairAdapterBeaconSetDeployerConfig,
     ZeroBeaconOwner
-} from "../../../../src/concrete/deploy/MorphoPairOracleBeaconSetDeployer.sol";
-import {MorphoPairOracleV2} from "../../../mocks/MorphoPairOracleV2.sol";
+} from "../../../../src/concrete/deploy/MorphoPairAdapterBeaconSetDeployer.sol";
+import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 
-contract MorphoPairOracleBeaconSetDeployerTest is Test {
+contract MorphoPairAdapterBeaconSetDeployerTest is Test {
     uint256 internal constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
     address internal SIGNER;
 
@@ -50,9 +50,9 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
         quote = new MockERC20Decimals(6);
     }
 
-    function _deployBSD() internal returns (MorphoPairOracleBeaconSetDeployer) {
-        return new MorphoPairOracleBeaconSetDeployer(
-            MorphoPairOracleBeaconSetDeployerConfig({initialOwner: BEACON_OWNER, central: central})
+    function _deployBSD() internal returns (MorphoPairAdapterBeaconSetDeployer) {
+        return new MorphoPairAdapterBeaconSetDeployer(
+            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: BEACON_OWNER, central: central})
         );
     }
 
@@ -60,40 +60,40 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
 
     function testConstructorRevertsZeroBeaconOwner() external {
         vm.expectRevert(ZeroBeaconOwner.selector);
-        new MorphoPairOracleBeaconSetDeployer(
-            MorphoPairOracleBeaconSetDeployerConfig({initialOwner: address(0), central: central})
+        new MorphoPairAdapterBeaconSetDeployer(
+            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: address(0), central: central})
         );
     }
 
-    /// @notice A zero central is caught by `MorphoPairOracle.ZeroCentral` in the
+    /// @notice A zero central is caught by `MorphoPairAdapter.ZeroCentral` in the
     /// implementation constructor the deployer builds — no local guard needed.
     function testConstructorRevertsZeroCentral() external {
-        vm.expectRevert(MorphoPairOracle.ZeroCentral.selector);
-        new MorphoPairOracleBeaconSetDeployer(
-            MorphoPairOracleBeaconSetDeployerConfig({initialOwner: BEACON_OWNER, central: ST0xPriceOracle(address(0))})
+        vm.expectRevert(MorphoPairAdapter.ZeroCentral.selector);
+        new MorphoPairAdapterBeaconSetDeployer(
+            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: BEACON_OWNER, central: ST0xPriceOracle(address(0))})
         );
     }
 
     function testConstructorHappyPathDeploysBeacon() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
-        address beacon = address(bsd.I_MORPHO_PAIR_ORACLE_BEACON());
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
+        address beacon = address(bsd.I_MORPHO_PAIR_ADAPTER_BEACON());
         assertTrue(beacon != address(0));
         assertEq(UpgradeableBeacon(beacon).owner(), BEACON_OWNER);
         assertEq(address(bsd.I_CENTRAL()), address(central), "central immutable wired");
 
         // The beacon's implementation is bound to the same central store.
-        MorphoPairOracle impl = MorphoPairOracle(UpgradeableBeacon(beacon).implementation());
+        MorphoPairAdapter impl = MorphoPairAdapter(UpgradeableBeacon(beacon).implementation());
         assertEq(address(impl.iCentral()), address(central), "impl bound to central");
     }
 
-    // -------- newMorphoPairOracle --------
+    // -------- newMorphoPairAdapter --------
 
     /// @notice The proxy is initialized inside its constructor: pairId, base,
     /// quote wired and the publisher-scaled value rescaled to Morpho convention.
     /// base=18dec, quote=6dec, signed=42e18 ⇒ price() = 42 * 10^(36+6-18) = 42e24.
-    function testNewMorphoPairOracleWiresAndRescales() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
-        MorphoPairOracle adapter = bsd.newMorphoPairOracle(address(base), address(quote));
+    function testNewMorphoPairAdapterWiresAndRescales() external {
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
+        MorphoPairAdapter adapter = bsd.newMorphoPairAdapter(address(base), address(quote));
 
         bytes32 pair = central.pairId(address(base), address(quote));
         assertEq(adapter.pairId(), pair, "pairId wired");
@@ -108,25 +108,25 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
     /// @notice CREATE2 salt = keccak256(base, quote): minting the same pair twice
     /// reverts on the address collision rather than silently forking a second
     /// divergent adapter. A differing pair lands at a different address.
-    function testNewMorphoPairOracleIsIdempotentPerConfig() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
-        MorphoPairOracle first = bsd.newMorphoPairOracle(address(base), address(quote));
+    function testNewMorphoPairAdapterIsIdempotentPerConfig() external {
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
+        MorphoPairAdapter first = bsd.newMorphoPairAdapter(address(base), address(quote));
 
         // Same pair → CREATE2 collision → revert (empty returndata).
         vm.expectRevert();
-        bsd.newMorphoPairOracle(address(base), address(quote));
+        bsd.newMorphoPairAdapter(address(base), address(quote));
 
         // Differing pair → different deterministic address.
         MockERC20Decimals quote2 = new MockERC20Decimals(8);
-        MorphoPairOracle second = bsd.newMorphoPairOracle(address(base), address(quote2));
+        MorphoPairAdapter second = bsd.newMorphoPairAdapter(address(base), address(quote2));
         assertTrue(address(first) != address(second), "distinct pair gives distinct address");
     }
 
-    function testNewMorphoPairOracleEmitsDeployment() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
+    function testNewMorphoPairAdapterEmitsDeployment() external {
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
 
         vm.recordLogs();
-        MorphoPairOracle adapter = bsd.newMorphoPairOracle(address(base), address(quote));
+        MorphoPairAdapter adapter = bsd.newMorphoPairAdapter(address(base), address(quote));
 
         Vm.Log[] memory entries = vm.getRecordedLogs();
         bytes32 sig = keccak256("Deployment(address,address)");
@@ -144,12 +144,12 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
 
     /// @notice A reverting `initialize` (here identical tokens) bubbles straight
     /// up out of the proxy constructor.
-    function testNewMorphoPairOraclePropagatesInitRevert() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
+    function testNewMorphoPairAdapterPropagatesInitRevert() external {
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
         vm.expectRevert(ZeroToken.selector);
-        bsd.newMorphoPairOracle(address(0), address(quote));
+        bsd.newMorphoPairAdapter(address(0), address(quote));
         vm.expectRevert(IdenticalTokens.selector);
-        bsd.newMorphoPairOracle(address(base), address(base));
+        bsd.newMorphoPairAdapter(address(base), address(base));
     }
 
     /// @notice The beacon is genuinely SHARED: deploy two adapters with DISTINCT
@@ -157,17 +157,17 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
     /// BOTH proxies retarget (answer the V2-only `version()`), while each proxy
     /// retains its OWN distinct state across the upgrade.
     function testMultipleProxiesShareBeacon() external {
-        MorphoPairOracleBeaconSetDeployer bsd = _deployBSD();
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
 
         MockERC20Decimals base2 = new MockERC20Decimals(8);
-        MorphoPairOracle a = bsd.newMorphoPairOracle(address(base), address(quote));
-        MorphoPairOracle b = bsd.newMorphoPairOracle(address(base2), address(quote));
+        MorphoPairAdapter a = bsd.newMorphoPairAdapter(address(base), address(quote));
+        MorphoPairAdapter b = bsd.newMorphoPairAdapter(address(base2), address(quote));
         assertTrue(address(a) != address(b), "proxies must be distinct");
 
         bytes32 pairA = central.pairId(address(base), address(quote));
         bytes32 pairB = central.pairId(address(base2), address(quote));
 
-        address beacon = address(bsd.I_MORPHO_PAIR_ORACLE_BEACON());
+        address beacon = address(bsd.I_MORPHO_PAIR_ADAPTER_BEACON());
 
         // V1 has no `version()` — both proxies revert on it pre-upgrade.
         (bool okA,) = address(a).staticcall(abi.encodeWithSignature("version()"));
@@ -176,12 +176,12 @@ contract MorphoPairOracleBeaconSetDeployerTest is Test {
         assertFalse(okB, "V1 has no version() (b)");
 
         // One beacon upgrade retargets EVERY proxy off that beacon.
-        MorphoPairOracleV2 v2Impl = new MorphoPairOracleV2(central);
+        MorphoPairAdapterV2 v2Impl = new MorphoPairAdapterV2(central);
         vm.prank(BEACON_OWNER);
         UpgradeableBeacon(beacon).upgradeTo(address(v2Impl));
 
-        assertEq(MorphoPairOracleV2(address(a)).version(), 2, "proxy a retargeted");
-        assertEq(MorphoPairOracleV2(address(b)).version(), 2, "proxy b retargeted");
+        assertEq(MorphoPairAdapterV2(address(a)).version(), 2, "proxy a retargeted");
+        assertEq(MorphoPairAdapterV2(address(b)).version(), 2, "proxy b retargeted");
 
         // Each proxy retains its OWN distinct state across the upgrade.
         assertEq(a.pairId(), pairA, "proxy a keeps its own pairId");

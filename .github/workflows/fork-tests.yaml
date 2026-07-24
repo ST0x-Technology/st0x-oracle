@@ -5,6 +5,8 @@ on: [push]
 # forge's env — the fork tests under test/src/fork/ no-op there. This job
 # wires the RPC_URL_BASE_FORK repo secret to BASE_RPC_URL explicitly and runs
 # the fork tests for real against live Base.
+permissions:
+  contents: read
 jobs:
   fork-tests:
     runs-on: ubuntu-latest
@@ -12,6 +14,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |

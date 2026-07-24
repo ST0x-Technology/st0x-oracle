@@ -9,16 +9,16 @@ import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProx
 import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 
 import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
-import {MorphoPairOracle, ZeroToken, IdenticalTokens} from "../../../../src/concrete/oracle/MorphoPairOracle.sol";
-import {MorphoPairOracleV2} from "../../../mocks/MorphoPairOracleV2.sol";
+import {MorphoPairAdapter, ZeroToken, IdenticalTokens} from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
+import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 
-/// @title MorphoPairOracleTest
-/// @notice Unit coverage for the `MorphoPairOracle` beacon-proxied adapter:
+/// @title MorphoPairAdapterTest
+/// @notice Unit coverage for the `MorphoPairAdapter` beacon-proxied adapter:
 /// the publisher-scale → Morpho-convention rescale (known-answer), central
 /// staleness/unset passthrough, constructor / initializer guards, and the
 /// shared beacon upgrade retargeting every deployed adapter proxy at once.
-contract MorphoPairOracleTest is Test {
+contract MorphoPairAdapterTest is Test {
     uint256 constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
     address SIGNER;
 
@@ -46,8 +46,8 @@ contract MorphoPairOracleTest is Test {
             )
         );
 
-        // The adapter beacon, shared by every MorphoPairOracle proxy.
-        MorphoPairOracle adapterImpl = new MorphoPairOracle(oracle);
+        // The adapter beacon, shared by every MorphoPairAdapter proxy.
+        MorphoPairAdapter adapterImpl = new MorphoPairAdapter(oracle);
         adapterBeacon = new UpgradeableBeacon(address(adapterImpl), ADMIN);
 
         base = new MockERC20Decimals(18);
@@ -59,8 +59,8 @@ contract MorphoPairOracleTest is Test {
     /// ratio; the adapter must return Morpho's `1e36 * 10^loanDec / 10^collDec`
     /// value. base=18dec (collateral), quote=6dec (loan), signed = 42e18 (42.0
     /// loan per collateral) ⇒ price() = 42 * 10^(36 + 6 - 18) = 42e24.
-    function test_MorphoPairOracle_RescalesToMorphoConvention() public {
-        MorphoPairOracle adapter = _deployAdapter(address(base), address(quote));
+    function test_MorphoPairAdapter_RescalesToMorphoConvention() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         assertEq(adapter.pairId(), PAIR_A, "pairId wired");
         assertEq(adapter.baseToken(), address(base), "base wired");
         assertEq(adapter.quoteToken(), address(quote), "quote wired");
@@ -71,10 +71,10 @@ contract MorphoPairOracleTest is Test {
 
     /// @notice A pair with equal base/quote decimals leaves the value at the
     /// bare 1e36 Morpho scale: signed 1e18 (1.0) ⇒ price() = 1e36.
-    function test_MorphoPairOracle_EqualDecimals_BareScale() public {
+    function test_MorphoPairAdapter_EqualDecimals_BareScale() public {
         MockERC20Decimals base18 = new MockERC20Decimals(18);
         MockERC20Decimals quote18 = new MockERC20Decimals(18);
-        MorphoPairOracle adapter = _deployAdapter(address(base18), address(quote18));
+        MorphoPairAdapter adapter = _deployAdapter(address(base18), address(quote18));
         bytes32 id = oracle.pairId(address(base18), address(quote18));
         _push(id, 1e18, block.timestamp);
         assertEq(adapter.price(), 1e36, "1.0 at equal decimals is bare 1e36");
@@ -82,8 +82,8 @@ contract MorphoPairOracleTest is Test {
 
     /// @notice Central staleness / unset reverts pass straight through the
     /// rescale — the adapter never masks them.
-    function test_MorphoPairOracle_CentralRevertsPassThrough() public {
-        MorphoPairOracle adapter = _deployAdapter(address(base), address(quote));
+    function test_MorphoPairAdapter_CentralRevertsPassThrough() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
 
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
         adapter.price();
@@ -94,31 +94,31 @@ contract MorphoPairOracleTest is Test {
         adapter.price();
     }
 
-    function test_MorphoPairOracle_ZeroCentral_Reverts() public {
-        vm.expectRevert(MorphoPairOracle.ZeroCentral.selector);
-        new MorphoPairOracle(ST0xPriceOracle(address(0)));
+    function test_MorphoPairAdapter_ZeroCentral_Reverts() public {
+        vm.expectRevert(MorphoPairAdapter.ZeroCentral.selector);
+        new MorphoPairAdapter(ST0xPriceOracle(address(0)));
     }
 
-    function test_MorphoPairOracle_ZeroToken_Reverts() public {
+    function test_MorphoPairAdapter_ZeroToken_Reverts() public {
         vm.expectRevert(ZeroToken.selector);
         _deployAdapter(address(0), address(quote));
         vm.expectRevert(ZeroToken.selector);
         _deployAdapter(address(base), address(0));
     }
 
-    function test_MorphoPairOracle_IdenticalTokens_Reverts() public {
+    function test_MorphoPairAdapter_IdenticalTokens_Reverts() public {
         vm.expectRevert(IdenticalTokens.selector);
         _deployAdapter(address(base), address(base));
     }
 
-    function test_MorphoPairOracle_InitializeOnlyOnce() public {
-        MorphoPairOracle adapter = _deployAdapter(address(base), address(quote));
+    function test_MorphoPairAdapter_InitializeOnlyOnce() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         adapter.initialize(address(base), address(quote));
     }
 
-    function test_MorphoPairOracle_ImplementationInitializersDisabled() public {
-        MorphoPairOracle impl = new MorphoPairOracle(oracle);
+    function test_MorphoPairAdapter_ImplementationInitializersDisabled() public {
+        MorphoPairAdapter impl = new MorphoPairAdapter(oracle);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(address(base), address(quote));
     }
@@ -126,10 +126,10 @@ contract MorphoPairOracleTest is Test {
     /// @notice The `MainStorage` slot constant is a hardcoded hex literal.
     /// Pin it to the ERC-7201 derivation: after init, the first field
     /// (`baseToken`) must be readable at the recomputed slot.
-    function test_MorphoPairOracle_MainStorageLocationMatchesErc7201Derivation() public {
-        MorphoPairOracle adapter = _deployAdapter(address(base), address(quote));
+    function test_MorphoPairAdapter_MainStorageLocationMatchesErc7201Derivation() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         bytes32 derived =
-            keccak256(abi.encode(uint256(keccak256("st0x.morphopairoracle.main")) - 1)) & ~bytes32(uint256(0xff));
+            keccak256(abi.encode(uint256(keccak256("st0x.morphopairadapter.main")) - 1)) & ~bytes32(uint256(0xff));
         address storedBase = address(uint160(uint256(vm.load(address(adapter), derived))));
         assertEq(storedBase, adapter.baseToken(), "MainStorage must be at the ERC-7201 derived slot");
     }
@@ -137,10 +137,10 @@ contract MorphoPairOracleTest is Test {
     /// @notice One shared-beacon upgrade retargets EVERY deployed adapter
     /// proxy at once, with per-proxy state and the implementation immutable
     /// (`iCentral`) surviving the upgrade.
-    function test_MorphoPairOracle_BeaconUpgradeRetargetsAllProxies() public {
+    function test_MorphoPairAdapter_BeaconUpgradeRetargetsAllProxies() public {
         MockERC20Decimals base2 = new MockERC20Decimals(8);
-        MorphoPairOracle adapterA = _deployAdapter(address(base), address(quote));
-        MorphoPairOracle adapterB = _deployAdapter(address(base2), address(quote));
+        MorphoPairAdapter adapterA = _deployAdapter(address(base), address(quote));
+        MorphoPairAdapter adapterB = _deployAdapter(address(base2), address(quote));
         bytes32 pairB = oracle.pairId(address(base2), address(quote));
 
         // V1 has no `version()` — both proxies revert on it pre-upgrade.
@@ -148,13 +148,13 @@ contract MorphoPairOracleTest is Test {
         assertFalse(okBefore, "V1 has no version()");
 
         // One beacon upgrade...
-        MorphoPairOracleV2 v2Impl = new MorphoPairOracleV2(oracle);
+        MorphoPairAdapterV2 v2Impl = new MorphoPairAdapterV2(oracle);
         vm.prank(ADMIN);
         adapterBeacon.upgradeTo(address(v2Impl));
 
         // ...retargets ALL deployed adapters.
-        assertEq(MorphoPairOracleV2(address(adapterA)).version(), 2, "adapter A retargeted");
-        assertEq(MorphoPairOracleV2(address(adapterB)).version(), 2, "adapter B retargeted");
+        assertEq(MorphoPairAdapterV2(address(adapterA)).version(), 2, "adapter A retargeted");
+        assertEq(MorphoPairAdapterV2(address(adapterB)).version(), 2, "adapter B retargeted");
 
         // Per-proxy state survives the upgrade and forwarding still works.
         assertEq(adapterA.pairId(), PAIR_A, "adapter A proxy state intact");
@@ -166,11 +166,11 @@ contract MorphoPairOracleTest is Test {
 
     // -------- Helpers --------
 
-    function _deployAdapter(address baseToken, address quoteToken) internal returns (MorphoPairOracle) {
-        return MorphoPairOracle(
+    function _deployAdapter(address baseToken, address quoteToken) internal returns (MorphoPairAdapter) {
+        return MorphoPairAdapter(
             address(
                 new BeaconProxy(
-                    address(adapterBeacon), abi.encodeCall(MorphoPairOracle.initialize, (baseToken, quoteToken))
+                    address(adapterBeacon), abi.encodeCall(MorphoPairAdapter.initialize, (baseToken, quoteToken))
                 )
             )
         );

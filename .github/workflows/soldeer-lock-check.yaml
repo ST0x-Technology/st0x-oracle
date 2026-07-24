@@ -1,11 +1,16 @@
 name: Soldeer lock check
-on: [push]
+on:
+  push:
+  pull_request:
 # Audit finding #9: every CI/deploy job runs `forge soldeer install` and
 # proceeds, but nothing verifies the committed soldeer.lock / remappings.txt
 # match what a clean install actually resolves — and in the dangerous
 # direction (a stale/hand-edited lock) the install is silent. This job fails
 # if a clean install would change either file, so the committed dependency
-# record is always the real one.
+# record is always the real one. Runs on pull_request too so fork PRs are
+# validated in the base repo, not only after merge.
+permissions:
+  contents: read
 jobs:
   soldeer-lock-check:
     runs-on: ubuntu-latest
@@ -13,6 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |

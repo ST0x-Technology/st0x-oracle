@@ -7,7 +7,7 @@ import {IERC20Metadata} from "@openzeppelin-contracts-5.6.1/interfaces/IERC20Met
 import {Math} from "@openzeppelin-contracts-5.6.1/utils/math/Math.sol";
 
 import {IOracle} from "../../interface/IOracle.sol";
-import {ST0xPriceOracle} from "./ST0xPriceOracle.sol";
+import {ST0xPriceOracle} from "../oracle/ST0xPriceOracle.sol";
 
 /// @dev Error raised when a zero address is provided for a pair token.
 error ZeroToken();
@@ -17,7 +17,7 @@ error ZeroToken();
 /// configuration error.
 error IdenticalTokens();
 
-/// @title MorphoPairOracle
+/// @title MorphoPairAdapter
 /// @notice Beacon-proxied adapter binding one Morpho Blue market to one pair
 /// on the central `ST0xPriceOracle`, converting the central store's
 /// publisher-scaled value into Morpho Blue's `price()` convention.
@@ -54,9 +54,9 @@ error IdenticalTokens();
 /// adapters at once. The central oracle address is an implementation immutable
 /// (chain-constant, shared by every proxy); per-market state is namespaced
 /// ERC-7201 storage set once in `initialize`.
-contract MorphoPairOracle is Initializable, IOracle {
+contract MorphoPairAdapter is Initializable, IOracle {
     /// @notice The decimal scale the off-chain publisher MUST sign every price
-    /// for a MorphoPairOracle pair at: `signed = wholeQuotePerWholeBase * 1e18`.
+    /// for a MorphoPairAdapter pair at: `signed = wholeQuotePerWholeBase * 1e18`.
     /// This is the load-bearing cross-repo contract between the publisher and
     /// this adapter — do not change without coordinating the publisher.
     uint256 public constant PUBLISHER_DECIMALS = 18;
@@ -66,7 +66,7 @@ contract MorphoPairOracle is Initializable, IOracle {
     /// implementation immutable.
     ST0xPriceOracle public immutable iCentral;
 
-    /// @custom:storage-location erc7201:st0x.morphopairoracle.main
+    /// @custom:storage-location erc7201:st0x.morphopairadapter.main
     struct MainStorage {
         // The Morpho collateral token (`base`) this adapter prices.
         address baseToken;
@@ -80,8 +80,8 @@ contract MorphoPairOracle is Initializable, IOracle {
         uint256 scaleDenominator;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("st0x.morphopairoracle.main")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant MAIN_STORAGE_LOCATION = 0xaf363cb875d4dc854d783d57e2978d109d568bb1a99ce44a07b88964126b9c00;
+    // keccak256(abi.encode(uint256(keccak256("st0x.morphopairadapter.main")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant MAIN_STORAGE_LOCATION = 0x74b4f4941730157fbb9029e5ac16504bafcfacccce2e3df7268ce3b41dcfcc00;
 
     function _main() private pure returns (MainStorage storage $) {
         assembly ("memory-safe") {

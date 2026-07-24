@@ -39,7 +39,7 @@ interface IAuthorizable {
 /// `createSelectFork` failure would red every per-push run. Locally, export
 /// `BASE_RPC_URL=https://mainnet.base.org` to run it.
 contract DIAVaultOracleForkBaseTest is Test {
-    // Live Base deployments (see deployments/base.json + st0x.deploy LibProdTokensBase).
+    // Live Base deployments (see st0x.deploy LibProdTokensBase).
     address constant DIA_FEED = 0xCE521b52513242c5094bc56f57887BB2A05B8129;
     address constant WTCOIN = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204; // StoxWrappedTokenVault (priced)
     address constant TCOIN = 0x626757e6F50675D17fcAd312E82f989aE7A23d38; // receipt vault, ICorporateActionsV1

@@ -31,7 +31,7 @@ import {
     CorporateActionsUnavailable
 } from "../../../mocks/MockRevertingCorporateActions.sol";
 import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
-import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;
@@ -100,6 +100,17 @@ contract DIAVaultOracleTest is Test {
     function testInitRevertsZeroMask() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.actionTypeMask = 0;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice A mask of exactly `ACTION_TYPE_INIT_V1` is non-zero but the
+    /// library strips that bit, so it would never pause. Init must reject it
+    /// (else a "coherently configured" oracle silently never auto-pauses).
+    function testInitRevertsInitOnlyMask() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.actionTypeMask = ACTION_TYPE_INIT_V1;
         DIAVaultOracle oracle = _deployUninit();
         vm.expectRevert(InvalidPauseConfig.selector);
         oracle.initialize(abi.encode(config));

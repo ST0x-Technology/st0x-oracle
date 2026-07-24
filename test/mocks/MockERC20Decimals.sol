@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 /// @title MockERC20Decimals
 /// @dev Minimal token stub exposing only `decimals()` — the sole ERC-20
-/// surface `MorphoPairOracle.initialize` reads to precompute its scale.
+/// surface `MorphoPairAdapter.initialize` reads to precompute its scale.
 contract MockERC20Decimals {
     uint8 internal immutable I_DECIMALS;
 

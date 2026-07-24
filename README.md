@@ -16,7 +16,7 @@ auto-pauses reads around scheduled corporate actions by consulting
 token implements corporate actions, so the auto-pause is mandatory; there is no
 manual pause and no admin.
 
-```
+```text
              ┌───────────────────────────────────┐
 consumers ──▶│           DIAVaultOracle          │   ← canonical address
              │        AggregatorV2V3Interface     │
@@ -110,7 +110,7 @@ Morpho Blue markets:
   EIP-712 domain deliberately binds name + version only, so one signed payload
   serves every chain the oracle is deployed on. Global `signer` / `timeout`
   rotate via `ORACLE_ADMIN_ROLE`-gated setters.
-- **`MorphoPairOracle`** — beacon-proxied adapter exposing one pair on the
+- **`MorphoPairAdapter`** — beacon-proxied adapter exposing one pair on the
   central store through Morpho Blue's `IOracle.price()`. It owns the decimal
   conversion: the publisher signs an 18-decimal (`PUBLISHER_DECIMALS`)
   whole-token ratio and the adapter rescales it into Morpho's
@@ -137,19 +137,20 @@ forge fmt --check        # check formatting
 
 ## Repository Structure
 
-```
+```text
 script/
 └── Deploy.sol                       (DEPLOYMENT_SUITE dispatch for CI deploys)
 src/
 ├── concrete/
 │   ├── oracle/
 │   │   ├── DIAVaultOracle.sol       (prices wtStock + corporate-action auto-pause)
-│   │   ├── ST0xPriceOracle.sol
-│   │   └── MorphoPairOracle.sol
+│   │   └── ST0xPriceOracle.sol      (signed multi-pair price store)
+│   ├── adapter/
+│   │   └── MorphoPairAdapter.sol    (rescales the store into Morpho's price())
 │   └── deploy/
 │       ├── DIAVaultOracleBeaconSetDeployer.sol
 │       ├── ST0xPriceOracleBeaconSetDeployer.sol
-│       └── MorphoPairOracleBeaconSetDeployer.sol
+│       └── MorphoPairAdapterBeaconSetDeployer.sol
 ├── interface/
 │   ├── IDIAOracleV2.sol         (vendored DIA Data Association's published interface)
 │   ├── IAggregatorV2V3.sol      (vendored Chainlink shape)
@@ -159,7 +160,7 @@ src/
 test/
 ├── mocks/
 └── src/
-    ├── concrete/{oracle,deploy}/
+    ├── concrete/{oracle,adapter,deploy}/
     ├── lib/
     ├── script/
     └── e2e/

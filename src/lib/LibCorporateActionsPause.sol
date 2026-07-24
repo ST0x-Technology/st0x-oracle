@@ -67,6 +67,9 @@ library LibCorporateActionsPause {
 
         ICorporateActionsV1 vault = ICorporateActionsV1(corporateActionsVault);
 
+        // The middle return (the matched action's actionType) is deliberately
+        // discarded — the mask already constrained the match, so only the
+        // cursor (match/no-match sentinel) and effectiveTime matter here.
         // slither-disable-next-line unused-return
         (uint256 pendingCursor,, uint64 pendingEffective) =
             vault.earliestActionOfType(effectiveMask, CompletionFilter.PENDING);
@@ -83,6 +86,8 @@ library LibCorporateActionsPause {
             }
         }
 
+        // Middle return (actionType) discarded as above — only cursor +
+        // effectiveTime are needed.
         // slither-disable-next-line unused-return
         (uint256 completedCursor,, uint64 completedEffective) =
             vault.latestActionOfType(effectiveMask, CompletionFilter.COMPLETED);

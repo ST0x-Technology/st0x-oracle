@@ -37,7 +37,7 @@ contract, one address, and no wrapper indirection.
 
 ## 2. Architecture Overview
 
-```
+```text
                  ┌──────────────────────────────────────┐
 consumers ──────▶│            DIAVaultOracle            │   ← single canonical
 (Euler, Aave,    │                                      │     consumer-facing
@@ -127,7 +127,7 @@ string as the key argument to `getValue`.
 
 ### 3.2 Price Formula
 
-```
+```text
                     diaPrice × vault.totalAssets()
 vaultSharePrice  =  ─────────────────────────────────     (then 8dp)
                            vault.totalSupply()
@@ -292,7 +292,7 @@ The library checks two windows independently and pauses if either is open.
 
 **Pre-window** (earliest pending action `A` matching the mask):
 
-```
+```text
 effectiveTime(A) - pauseTimeBefore  ≤  block.timestamp  <  effectiveTime(A)
 ```
 
@@ -302,7 +302,7 @@ has not yet opened, no later one's has either.
 
 **Post-window** (latest completed action `A` matching the mask):
 
-```
+```text
 effectiveTime(A)  ≤  block.timestamp  ≤  effectiveTime(A) + pauseTimeAfter
 ```
 
@@ -455,7 +455,7 @@ and migrate consumers — which is, again, an intentional friction surface.
 | `DIAVaultOracleBeaconSetDeployer` | Owns the `DIAVaultOracle` beacon. Exposes `newDIAVaultOracle(config)` to mint the consumer-facing oracle proxy. |
 
 The signed-price stack (§11) ships its own beacon-set deployers —
-`ST0xPriceOracleBeaconSetDeployer` and `MorphoPairOracleBeaconSetDeployer` — in
+`ST0xPriceOracleBeaconSetDeployer` and `MorphoPairAdapterBeaconSetDeployer` — in
 the same directory; they are independent of the DIA stack.
 
 The `DEPLOYMENT_SUITE` for the DIA stack is `dia-vault-oracle`.
@@ -559,7 +559,7 @@ For any consumer that wraps reads in `try / catch`:
 
 ---
 
-## 11. Signed-Price Stack (`ST0xPriceOracle` + `MorphoPairOracle`)
+## 11. Signed-Price Stack (`ST0xPriceOracle` + `MorphoPairAdapter`)
 
 Alongside the DIA stack, the repo ships a publisher-signed price stack for
 Morpho Blue markets. It shares the beacon-proxy upgrade model (§7) but is
@@ -605,7 +605,7 @@ AccessControl, ERC-7201 namespaced storage).
   exposes the raw stored state (no staleness check) for publishers sizing their
   next timestamp and for monitoring.
 
-### 11.2 `MorphoPairOracle`
+### 11.2 `MorphoPairAdapter`
 
 Beacon-proxied adapter binding one Morpho Blue market to one pair on the central
 store, and — unlike the central store, which treats values as opaque — imposing
@@ -626,7 +626,7 @@ token in loan token, scaled by `1e36 * 10^loanDecimals / 10^collateralDecimals`.
 With `base` = collateral, `quote` = loan, and the publisher's 18-decimal
 whole-token ratio `signed`:
 
-```
+```text
 price() = signed * 10^(36 + quoteDecimals - baseDecimals - 18)
         = mulDiv(signed, 10^(36 + quoteDecimals), 10^(baseDecimals + 18))
 ```
@@ -646,7 +646,7 @@ proxy); per-market state is namespaced ERC-7201 storage set once in
 
 ## 12. Repository Structure
 
-```
+```text
 st0x.oracle/
 ├── script/
 │   └── Deploy.sol                   ← DEPLOYMENT_SUITE dispatch (CI deploys)
@@ -654,12 +654,13 @@ st0x.oracle/
 │   ├── concrete/
 │   │   ├── oracle/
 │   │   │   ├── DIAVaultOracle.sol
-│   │   │   ├── ST0xPriceOracle.sol
-│   │   │   └── MorphoPairOracle.sol
+│   │   │   └── ST0xPriceOracle.sol
+│   │   ├── adapter/
+│   │   │   └── MorphoPairAdapter.sol
 │   │   └── deploy/
 │   │       ├── DIAVaultOracleBeaconSetDeployer.sol
 │   │       ├── ST0xPriceOracleBeaconSetDeployer.sol
-│   │       └── MorphoPairOracleBeaconSetDeployer.sol
+│   │       └── MorphoPairAdapterBeaconSetDeployer.sol
 │   ├── interface/
 │   │   ├── IDIAOracleV2.sol         ← vendored DIA interface
 │   │   ├── IAggregatorV2V3.sol      ← vendored Chainlink shape
@@ -672,13 +673,15 @@ st0x.oracle/
     │   ├── MockCorporateActions.sol
     │   ├── MockERC4626.sol
     │   ├── MockERC20Decimals.sol
-    │   ├── MorphoPairOracleV2.sol
+    │   ├── MorphoPairAdapterV2.sol
     │   └── TestERC1967Proxy.sol
     └── src/
         ├── concrete/
         │   ├── oracle/
+        │   ├── adapter/
         │   └── deploy/
         ├── lib/
+        ├── fork/
         └── e2e/
             └── DIAStackE2E.t.sol
 ```

@@ -12,8 +12,6 @@ evm_version = "cancun"
 bytecode_hash = "none"
 cbor_metadata = false
 
-# Read-only access to the committed deployment records for DeploymentsRecord.t.sol.
-fs_permissions = [{ access = "read", path = "./deployments" }]
 # Fork tests read the Base RPC from the BASE_RPC_URL env var directly (see
 # test/src/fork/) rather than a named rpc_endpoint, so a missing var in the
 # per-push job no-ops loudly instead of erroring on an empty alias.

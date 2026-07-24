@@ -16,9 +16,9 @@ import {
     ST0xPriceOracleBeaconSetDeployerConfig
 } from "../src/concrete/deploy/ST0xPriceOracleBeaconSetDeployer.sol";
 import {
-    MorphoPairOracleBeaconSetDeployer,
-    MorphoPairOracleBeaconSetDeployerConfig
-} from "../src/concrete/deploy/MorphoPairOracleBeaconSetDeployer.sol";
+    MorphoPairAdapterBeaconSetDeployer,
+    MorphoPairAdapterBeaconSetDeployerConfig
+} from "../src/concrete/deploy/MorphoPairAdapterBeaconSetDeployer.sol";
 
 /// @dev Deploys the DIA stack infra: a fresh `DIAVaultOracle` implementation
 /// and its beacon-set deployer. No per-vault proxies are minted — each vault's
@@ -28,7 +28,7 @@ bytes32 constant DEPLOYMENT_SUITE_DIA_VAULT_ORACLE = keccak256("dia-vault-oracle
 
 /// @dev Deploys the signed-price stack infra: a fresh `ST0xPriceOracle`
 /// implementation and its beacon-set deployer, the singleton central store
-/// minted through that deployer, and a `MorphoPairOracleBeaconSetDeployer`
+/// minted through that deployer, and a `MorphoPairAdapterBeaconSetDeployer`
 /// bound to that singleton. No per-market adapter proxies are minted — those
 /// are deployed per Morpho market through the adapter beacon-set deployer with
 /// the correct base/quote for that market.
@@ -80,7 +80,7 @@ contract Deploy is Script {
 
     /// @notice Deploys the signed-price stack infra: a fresh `ST0xPriceOracle`
     /// implementation and its beacon-set deployer, the singleton central store
-    /// minted through that deployer, and a `MorphoPairOracleBeaconSetDeployer`
+    /// minted through that deployer, and a `MorphoPairAdapterBeaconSetDeployer`
     /// bound to that singleton. No per-market adapter proxies are minted here.
     /// Assumes the caller has an active broadcast. Reads the oracle config from
     /// env: `ST0X_ADMIN`, `ST0X_ORACLE_ADMIN`, `ST0X_SIGNER` (addresses) and
@@ -90,7 +90,9 @@ contract Deploy is Script {
         address admin = vm.envAddress("ST0X_ADMIN");
         address oracleAdmin = vm.envAddress("ST0X_ORACLE_ADMIN");
         address signer = vm.envAddress("ST0X_SIGNER");
-        uint64 timeout = uint64(vm.envUint("ST0X_TIMEOUT"));
+        uint256 timeoutRaw = vm.envUint("ST0X_TIMEOUT");
+        require(timeoutRaw <= type(uint64).max, "ST0X_TIMEOUT overflows uint64");
+        uint64 timeout = uint64(timeoutRaw);
 
         ST0xPriceOracle oracleImpl = new ST0xPriceOracle();
         ST0xPriceOracleBeaconSetDeployer oracleBSD = new ST0xPriceOracleBeaconSetDeployer(
@@ -103,14 +105,15 @@ contract Deploy is Script {
         // deployer so its creation is atomic and recorded (Deployment event).
         ST0xPriceOracle central = oracleBSD.newST0xPriceOracle(admin, oracleAdmin, signer, timeout);
 
-        MorphoPairOracleBeaconSetDeployer adapterBSD = new MorphoPairOracleBeaconSetDeployer(
-            MorphoPairOracleBeaconSetDeployerConfig({initialOwner: beaconInitialOwner, central: central})
+        MorphoPairAdapterBeaconSetDeployer adapterBSD = new MorphoPairAdapterBeaconSetDeployer(
+            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: beaconInitialOwner, central: central})
         );
 
         // Postcondition: the central store carries the requested signer and the
         // ORACLE_ADMIN_ROLE grant, so signer/timeout rotation is callable from
         // day one and no post-deploy grant step is left dangling.
         require(central.signer() == signer, "signer mismatch");
+        require(central.timeout() == timeout, "timeout mismatch");
         require(central.hasRole(central.ORACLE_ADMIN_ROLE(), oracleAdmin), "oracle admin role not granted");
 
         // Postcondition: both beacons — which control the implementation behind
@@ -121,7 +124,7 @@ contract Deploy is Script {
             "oracle beacon owner mismatch"
         );
         require(
-            Ownable(address(adapterBSD.I_MORPHO_PAIR_ORACLE_BEACON())).owner() == beaconInitialOwner,
+            Ownable(address(adapterBSD.I_MORPHO_PAIR_ADAPTER_BEACON())).owner() == beaconInitialOwner,
             "adapter beacon owner mismatch"
         );
 

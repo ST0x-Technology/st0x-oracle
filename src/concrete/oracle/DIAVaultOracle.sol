@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {IDIAOracleV2} from "../../interface/IDIAOracleV2.sol";
 import {AggregatorV2V3Interface} from "../../interface/IAggregatorV2V3.sol";
 import {LibCorporateActionsPause} from "../../lib/LibCorporateActionsPause.sol";
+import {ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
@@ -239,8 +240,16 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         address derivedCorporateActionsVault = IERC4626(config.vault).asset();
         if (derivedCorporateActionsVault == address(0)) revert ZeroCorporateActionsVault();
 
-        // Auto-pause is mandatory and must be coherently configured.
-        if (config.actionTypeMask == 0 || (config.pauseTimeBefore == 0 && config.pauseTimeAfter == 0)) {
+        // Auto-pause is mandatory and must be coherently configured. The mask
+        // must retain a real action bit AFTER the library strips
+        // `ACTION_TYPE_INIT_V1` (the bootstrap node is not a real action) — a
+        // mask of exactly `ACTION_TYPE_INIT_V1` would pass a bare `!= 0` check
+        // yet the library short-circuits it to "never pauses", silently
+        // defeating the mandatory auto-pause.
+        if (
+            (config.actionTypeMask & ~ACTION_TYPE_INIT_V1) == 0
+                || (config.pauseTimeBefore == 0 && config.pauseTimeAfter == 0)
+        ) {
             revert InvalidPauseConfig();
         }
 
@@ -340,6 +349,10 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         MainStorage storage $ = _main();
         (value, timestamp) = $.diaOracle.getValue($.symbol);
         if (value == 0 || timestamp == 0) revert DIAPriceNotSet();
+        // Comparing block.timestamp against the DIA push timestamp is the whole
+        // point of the staleness check; sub-maxAge miner drift is immaterial
+        // against a maxAge measured in hours. This is not a false-positive
+        // dependence on block.timestamp for value/authorisation.
         // slither-disable-next-line timestamp
         if (block.timestamp - uint256(timestamp) > $.maxAge) revert DIAPriceStale(uint256(timestamp));
     }

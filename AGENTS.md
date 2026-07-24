@@ -104,7 +104,7 @@ locally. The workflow runs `rainix-sol-artifacts`, which executes
   oracle is minted afterwards through the beacon-set deployer with that vault's
   DIA feed + corporate-action pause config.
 - `signed-price-stack` — the `ST0xPriceOracle` singleton + its beacon-set
-  deployer, and a `MorphoPairOracleBeaconSetDeployer` bound to it.
+  deployer, and a `MorphoPairAdapterBeaconSetDeployer` bound to it.
 
 `BEACON_INITIAL_OWNER` is **required** and must differ from the deploy key: the
 beacon owner controls the implementation behind every proxy (every served
@@ -113,9 +113,9 @@ workflow exposes it as a required dispatch input; a missing value fails the
 deploy loudly.
 
 1. Run the workflow with the target network, suite, and beacon owner
-2. Record the deployed addresses from the workflow logs into
-   `deployments/<network>.json` (see **Deployment records** below) and PR it —
-   CI logs expire, so this committed file is the canonical record
+2. Parse the deployed addresses from the workflow logs; if the repo needs to
+   reference any (e.g. the Base token addresses the fork tests use), keep them
+   as `.sol` constants, not a separate registry file
 3. Use `cast send` with `--interactive` for any onchain calls that need a
    private key
 
@@ -129,23 +129,6 @@ classic no-arg Zoltu pattern is deliberately **not** used: the beacon owner is a
 required runtime input (governance), which is config that cannot be baked into
 fixed init bytecode — CREATE2-salted minting is the determinism compatible with
 runtime-owned beacons.
-
-### Deployment records
-
-Each chain's deployed addresses are committed under `deployments/<network>.json`
-(the impls, beacons, beacon-set deployers, and — once deployed — the
-signed-price singleton), so the canonical record survives the CI logs it was
-parsed from. `DeploymentsRecord.t.sol` asserts the committed record stays
-structurally complete (populated, checksummed, distinct addresses) so it can't
-silently rot to zeros.
-
-Note the recorded Base DIA impls predate this branch's ERC-7201 + hardening
-changes, so on-chain bytecode intentionally differs from current source until a
-redeploy / beacon upgrade reconciles them. A codehash prod-fork test (raindex
-`LibRaindexDeployProd` pattern) is the right follow-up **once the stack is
-redeployed onto the current impls at deterministic addresses** — it needs a live
-deployment that matches source to be green, and a guaranteed Base fork RPC, so
-it belongs in a scheduled workflow rather than the per-push run.
 
 ### Toolchain pins
 
@@ -194,10 +177,10 @@ consumers):
   Permissionless `updatePrice` authorised by the global publisher's EIP-712
   signature; strict per-pair timestamp inequality is the replay defence.
   `ORACLE_ADMIN_ROLE` rotates signer/timeout.
-- **MorphoPairOracle** — beacon-proxied adapter exposing one pair on the central
-  store through Morpho Blue's `IOracle.price()`, owning the publisher→Morpho
-  decimal rescale.
-- **ST0xPriceOracleBeaconSetDeployer / MorphoPairOracleBeaconSetDeployer** —
+- **MorphoPairAdapter** — beacon-proxied adapter exposing one pair on the
+  central store through Morpho Blue's `IOracle.price()`, owning the
+  publisher→Morpho decimal rescale.
+- **ST0xPriceOracleBeaconSetDeployer / MorphoPairAdapterBeaconSetDeployer** —
   deploy the singleton and per-market adapter proxies.
 
 Beacon pattern throughout: implementations are deployed once and proxied; one
