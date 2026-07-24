@@ -358,6 +358,29 @@ contract ST0xPriceOracleTest is Test {
         );
     }
 
+    /// @notice `MAX_TIMEOUT` is the documented 30-day upper bound on the
+    /// global staleness `timeout`. Pin the exact value: a widened bound would
+    /// silently let `price()` serve staler data than the spec permits, and no
+    /// other test asserts it (the range-reject tests read `MAX_TIMEOUT()`
+    /// dynamically, so they float with the constant).
+    function test_MaxTimeout_IsThirtyDays() public view {
+        assertEq(oracle.MAX_TIMEOUT(), 30 days, "MAX_TIMEOUT must be exactly 30 days");
+        assertEq(oracle.MAX_TIMEOUT(), 2592000, "30 days in seconds");
+    }
+
+    /// @notice `ORACLE_ADMIN_ROLE` is the public role identifier off-chain
+    /// tooling and Safe bundles reference. Pin it to its normative
+    /// `keccak256("ORACLE_ADMIN")` derivation so a changed role string
+    /// (which stays internally consistent and passes every behavioural test)
+    /// can never silently break external role grants.
+    function test_OracleAdminRole_MatchesNormativeDerivation() public view {
+        assertEq(
+            oracle.ORACLE_ADMIN_ROLE(),
+            keccak256("ORACLE_ADMIN"),
+            "ORACLE_ADMIN_ROLE must equal keccak256(\"ORACLE_ADMIN\")"
+        );
+    }
+
     /// @notice The ERC-7201 `MainStorage` slot constant is a hardcoded hex
     /// literal with no getter. Pin it to the normative derivation by proving
     /// storage actually lands there: after `initialize`, the first field

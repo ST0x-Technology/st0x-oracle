@@ -7,6 +7,7 @@ import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 import {LibCorporateActionsPause} from "../../../src/lib/LibCorporateActionsPause.sol";
 import {ACTION_TYPE_INIT_V1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
+import {MockRevertingCorporateActions} from "../../mocks/MockRevertingCorporateActions.sol";
 
 contract LibCorporateActionsPauseTest is Test {
     MockCorporateActions internal mock;
@@ -33,6 +34,27 @@ contract LibCorporateActionsPauseTest is Test {
         mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + 60));
         (bool paused, uint64 ts) = LibCorporateActionsPause.inPauseWindow(address(mock), 0, BEFORE, AFTER);
         assertEq(paused, false);
+        assertEq(ts, 0);
+    }
+
+    /// The `effectiveMask == 0` short-circuit must fire BEFORE any vault call.
+    /// A mask of 0 (or exactly `ACTION_TYPE_INIT_V1`, which strips to 0) means
+    /// a real vault would revert `InvalidMask`, so the lib MUST NOT query it —
+    /// it must return `(false, 0)` without touching the vault. Proven against a
+    /// vault that reverts on every read: if the short-circuit is dropped, the
+    /// call reaches the reverting vault and the whole call reverts instead of
+    /// returning false. The `MockCorporateActions`-based tests can't catch this
+    /// because that mock returns no-match (not a revert) on mask 0.
+    function testEmptyEffectiveMaskShortCircuitsBeforeVaultCall() external {
+        MockRevertingCorporateActions reverting = new MockRevertingCorporateActions();
+        // mask == 0 → effectiveMask == 0 → must short-circuit.
+        (bool paused, uint64 ts) = LibCorporateActionsPause.inPauseWindow(address(reverting), 0, BEFORE, AFTER);
+        assertEq(paused, false, "mask 0 must short-circuit without querying the vault");
+        assertEq(ts, 0);
+
+        // mask == ACTION_TYPE_INIT_V1 → strips to 0 → must also short-circuit.
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(address(reverting), ACTION_TYPE_INIT_V1, BEFORE, AFTER);
+        assertEq(paused, false, "INIT-only mask must short-circuit without querying the vault");
         assertEq(ts, 0);
     }
 
@@ -176,6 +198,34 @@ contract LibCorporateActionsPauseTest is Test {
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, 0);
         assertEq(paused, true);
         assertEq(ts, uint64(block.timestamp));
+    }
+
+    /// Cursor `0` is a REAL node (the bootstrap slot), not the no-match
+    /// sentinel — the sentinel is `NODE_NONE = type(uint256).max`. A COMPLETED
+    /// matching action whose cursor happens to be `0` and whose post-window
+    /// contains `now` MUST pause. Guards the completed-branch sentinel check
+    /// `completedCursor != NODE_NONE`: a regression to `completedCursor != 0`
+    /// would treat the legitimate bootstrap-slot node as no-match and fail to
+    /// pause. Uses a real STOCK_SPLIT type (not INIT) so the strip is irrelevant.
+    function testCompletedCursorZeroRealActionStillPauses() external {
+        uint64 effectiveTime = uint64(block.timestamp - AFTER / 2);
+        mock.setLatestCompleted(0, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "completed action with cursor 0 (real bootstrap slot) must pause");
+        assertEq(ts, effectiveTime);
+    }
+
+    /// Symmetric to the above for the PENDING branch: a matching pending action
+    /// with cursor `0` inside its pre-window MUST pause. Guards
+    /// `pendingCursor != NODE_NONE` against a regression to `!= 0`.
+    function testPendingCursorZeroRealActionStillPauses() external {
+        uint64 effectiveTime = uint64(block.timestamp + BEFORE / 2);
+        mock.setEarliestPending(0, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "pending action with cursor 0 (real bootstrap slot) must pause");
+        assertEq(ts, effectiveTime);
     }
 
     // -------- Audit regression: NODE_NONE no-match sentinel --------
