@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
-import {AggregatorV2V3Interface} from "src/interface/IAggregatorV2V3.sol";
+import {IDIAOracleV2} from "../../interface/IDIAOracleV2.sol";
+import {AggregatorV2V3Interface} from "../../interface/IAggregatorV2V3.sol";
+import {LibCorporateActionsPause} from "../../lib/LibCorporateActionsPause.sol";
+import {ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
@@ -24,6 +26,18 @@ error EmptySymbol();
 /// price read is instantly stale, which is never the desired configuration.
 error ZeroMaxAge();
 
+/// @dev Error raised when the priced vault's `asset()` (the tStock that
+/// carries `ICorporateActionsV1`) is the zero address — a broken / non-ST0x
+/// vault. The auto-pause is mandatory, and a zero corporate-actions vault
+/// would silently disable it (serving prices straight across a NAV-rebalance
+/// boundary), so it fails loud at init instead.
+error ZeroCorporateActionsVault();
+
+/// @dev Error raised when the corporate-action pause window is incoherent: a
+/// non-zero `actionTypeMask` and at least one non-zero window are both
+/// required, else the auto-pause never fires despite being "configured".
+error InvalidPauseConfig();
+
 /// @dev Error raised when the DIA feed has never been pushed (value or
 /// timestamp == 0). Distinct from `DIAPriceStale` so integrators can
 /// disambiguate "feed not yet active" from "feed active but late".
@@ -32,6 +46,13 @@ error DIAPriceNotSet();
 /// @dev Error raised when the DIA reading is older than `maxAge` seconds.
 /// @param timestamp The `block.timestamp` of the stale DIA push.
 error DIAPriceStale(uint256 timestamp);
+
+/// @dev Error raised on every read inside a corporate-action pause window.
+/// @param effectiveTime The `effectiveTime` of the action whose window is
+/// currently open. When a pending and a completed action's window overlap
+/// `now`, the pending action's `effectiveTime` is reported — integrators see
+/// the next event coming, not the last one done.
+error OraclePausedCorporateAction(uint64 effectiveTime);
 
 /// @dev Error raised when the vault has zero total supply (no shares minted).
 /// Pricing one share of a zero-supply vault is undefined.
@@ -65,45 +86,83 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// @param maxAge Maximum acceptable DIA push age in seconds.
 /// `block.timestamp - timestamp > maxAge` reverts `DIAPriceStale`. Immutable
 /// after init — redeploy a fresh proxy to change.
+/// @param actionTypeMask Bitmap of action types that trigger the auto-pause.
+/// `ACTION_TYPE_STOCK_SPLIT_V1` for splits only, or `type(uint256).max` for
+/// every present and future action type. Must be non-zero.
+/// @param pauseTimeBefore Seconds before a pending action's `effectiveTime` to
+/// start pausing.
+/// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
+/// keep pausing. At least one of before/after must be non-zero.
+/// @dev The corporate-actions vault is NOT a config field: it is derived as
+/// `IERC4626(vault).asset()` — the tStock the wtStock wraps, which is the
+/// contract that implements `ICorporateActionsV1`. Deriving it removes a
+/// mis-wiring surface (you can't point the auto-pause at the wrong token).
 struct DIAVaultOracleConfig {
     IDIAOracleV2 diaOracle;
     string symbol;
     address vault;
     uint256 maxAge;
+    uint256 actionTypeMask;
+    uint64 pauseTimeBefore;
+    uint64 pauseTimeAfter;
 }
 
 /// @title DIAVaultOracle
-/// @notice Prices ERC-4626 vault shares by reading the underlying asset price
-/// from a DIA Data Association feed and multiplying by the vault's
-/// assets-per-share ratio. Exposes prices via Chainlink's
-/// `AggregatorV2V3Interface` so consumers (Euler, Aave-style lending
-/// protocols) can target the same surface they already use for Chainlink
-/// feeds.
+/// @notice Prices ERC-4626 (`wtStock`) vault shares by reading the underlying
+/// equity price from a DIA Data Association feed and multiplying by the
+/// vault's assets-per-share ratio, and auto-pauses reads around scheduled
+/// corporate actions. Exposes prices via Chainlink's `AggregatorV2V3Interface`
+/// so consumers (Euler, Aave-style lending protocols) can target the same
+/// surface they already use for Chainlink feeds.
 ///
-/// Math: `vaultSharePrice = diaPrice * totalAssets / totalSupply` scaled
-/// to 8 decimals. Performed in Rain float space throughout so neither
-/// operand can overflow uint256 — the conversion to fixed-point 8dp happens
-/// only at the final return.
+/// Math: `vaultSharePrice = diaPrice * totalAssets / totalSupply` scaled to 8
+/// decimals — i.e. the equity's USD price times `convertToAssets(1 share)`, so
+/// the price tracks any NAV change inside the vault (most importantly the
+/// post-split rebalance in the underlying `tStock`). Performed in Rain float
+/// space throughout so neither operand can overflow uint256; the conversion to
+/// fixed-point 8dp happens only at the final return.
 ///
-/// Deliberately stateless beyond config. No admin, no pause flag. Operational
-/// concerns (manual emergency pause, corporate-action-aware auto-pause) live
-/// in `PausableOracleWrapper` so the same wrapper can decorate any
-/// `AggregatorV2V3Interface` source without coupling pause logic to one
-/// oracle provider.
+/// Auto-pause: on every read the oracle consults `ICorporateActionsV1` on the
+/// corporate-actions vault — derived as the priced vault's `asset()`, i.e. the
+/// tStock the wtStock wraps — via `LibCorporateActionsPause`, and reverts
+/// `OraclePausedCorporateAction` inside the pre/post window of any matching
+/// scheduled or completed action, so lending markets can't borrow or liquidate
+/// against a stale-by-construction share price mid-rebalance. The auto-pause is
+/// MANDATORY — every ST0x token implements corporate actions, so there is no
+/// disabled path and no separate wrapper. There is no manual pause and no
+/// admin: config is immutable, set once at initialize; to change anything,
+/// deploy a fresh proxy and migrate consumers.
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
-    /// @dev The DIA Data Association V2 oracle feed for the underlying asset.
-    IDIAOracleV2 public diaOracle;
+    /// @custom:storage-location erc7201:st0x.diavaultoracle.main
+    struct MainStorage {
+        // The DIA Data Association V2 oracle feed for the underlying asset.
+        IDIAOracleV2 diaOracle;
+        // The DIA feed key (bare symbol, e.g. `"COIN"`).
+        string symbol;
+        // The ERC-4626 vault this oracle prices shares for.
+        address vault;
+        // Maximum acceptable DIA push age in seconds.
+        uint256 maxAge;
+        // The ICorporateActionsV1 vault gating the auto-pause.
+        address corporateActionsVault;
+        // Bitmap of action types that trigger the auto-pause.
+        uint256 actionTypeMask;
+        // Seconds before a pending action's effectiveTime to start pausing.
+        uint64 pauseTimeBefore;
+        // Seconds after a completed action's effectiveTime to keep pausing.
+        uint64 pauseTimeAfter;
+    }
 
-    /// @dev The DIA feed key (bare symbol, e.g. `"COIN"`).
-    string public symbol;
+    // keccak256(abi.encode(uint256(keccak256("st0x.diavaultoracle.main")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant MAIN_STORAGE_LOCATION = 0xa6b686aa52190f2ecc306934b0149933ff4f6d9fe65f143c543f7c981a9b1200;
 
-    /// @dev The ERC-4626 vault this oracle prices shares for.
-    address public vault;
-
-    /// @dev Maximum acceptable DIA push age in seconds.
-    uint256 public maxAge;
+    function _main() private pure returns (MainStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := MAIN_STORAGE_LOCATION
+        }
+    }
 
     /// @notice Emitted when the oracle is initialized. Single source of
     /// truth for off-chain indexers — all immutable config in one event.
@@ -113,6 +172,46 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     constructor() {
         _disableInitializers();
+    }
+
+    /// @notice The DIA Data Association V2 oracle feed for the underlying asset.
+    function diaOracle() public view returns (IDIAOracleV2) {
+        return _main().diaOracle;
+    }
+
+    /// @notice The DIA feed key (bare symbol, e.g. `"COIN"`).
+    function symbol() public view returns (string memory) {
+        return _main().symbol;
+    }
+
+    /// @notice The ERC-4626 vault this oracle prices shares for.
+    function vault() public view returns (address) {
+        return _main().vault;
+    }
+
+    /// @notice Maximum acceptable DIA push age in seconds.
+    function maxAge() public view returns (uint256) {
+        return _main().maxAge;
+    }
+
+    /// @notice The `ICorporateActionsV1` vault gating the auto-pause.
+    function corporateActionsVault() public view returns (address) {
+        return _main().corporateActionsVault;
+    }
+
+    /// @notice Bitmap of action types that trigger the auto-pause.
+    function actionTypeMask() public view returns (uint256) {
+        return _main().actionTypeMask;
+    }
+
+    /// @notice Seconds before a pending action's `effectiveTime` to pause.
+    function pauseTimeBefore() public view returns (uint64) {
+        return _main().pauseTimeBefore;
+    }
+
+    /// @notice Seconds after a completed action's `effectiveTime` to pause.
+    function pauseTimeAfter() public view returns (uint64) {
+        return _main().pauseTimeAfter;
     }
 
     /// @notice Documents the typed signature of the initialize function. Per
@@ -135,10 +234,44 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         if (config.vault == address(0)) revert ZeroVault();
         if (config.maxAge == 0) revert ZeroMaxAge();
 
-        diaOracle = config.diaOracle;
-        symbol = config.symbol;
-        vault = config.vault;
-        maxAge = config.maxAge;
+        // The corporate-actions vault is the tStock the wtStock wraps — the
+        // priced vault's own `asset()`. Deriving it (rather than taking a
+        // separate config field) removes a mis-wiring surface.
+        address derivedCorporateActionsVault = IERC4626(config.vault).asset();
+        if (derivedCorporateActionsVault == address(0)) revert ZeroCorporateActionsVault();
+
+        // Auto-pause is mandatory and must be coherently configured. The mask
+        // must retain a real action bit AFTER the library strips
+        // `ACTION_TYPE_INIT_V1` (the bootstrap node is not a real action) — a
+        // mask of exactly `ACTION_TYPE_INIT_V1` would pass a bare `!= 0` check
+        // yet the library short-circuits it to "never pauses", silently
+        // defeating the mandatory auto-pause.
+        if (
+            (config.actionTypeMask & ~ACTION_TYPE_INIT_V1) == 0
+                || (config.pauseTimeBefore == 0 && config.pauseTimeAfter == 0)
+        ) {
+            revert InvalidPauseConfig();
+        }
+
+        // Probe the corporate-actions vault once so an incompatible wiring — a
+        // missing facet (ABI-decode revert) or a mask with no bits in the
+        // upstream VALID_ACTION_TYPES_MASK (InvalidMask) — reverts THIS deploy
+        // transaction rather than every future consumer read against immutable
+        // config. Result discarded; only reachability is asserted.
+        // slither-disable-next-line unused-return
+        LibCorporateActionsPause.inPauseWindow(
+            derivedCorporateActionsVault, config.actionTypeMask, config.pauseTimeBefore, config.pauseTimeAfter
+        );
+
+        MainStorage storage $ = _main();
+        $.diaOracle = config.diaOracle;
+        $.symbol = config.symbol;
+        $.vault = config.vault;
+        $.maxAge = config.maxAge;
+        $.corporateActionsVault = derivedCorporateActionsVault;
+        $.actionTypeMask = config.actionTypeMask;
+        $.pauseTimeBefore = config.pauseTimeBefore;
+        $.pauseTimeAfter = config.pauseTimeAfter;
 
         emit DIAVaultOracleInitialized(msg.sender, config);
 
@@ -147,7 +280,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     /// @inheritdoc AggregatorV2V3Interface
     function description() external view override returns (string memory) {
-        return symbol;
+        return _main().symbol;
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -162,6 +295,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     /// @inheritdoc AggregatorV2V3Interface
     function latestAnswer() external view override returns (int256) {
+        _validateNotPaused();
         (uint128 diaPrice,) = _readDIAChecked();
         return _vaultSharePrice(diaPrice);
     }
@@ -179,6 +313,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         override
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
+        _validateNotPaused();
         (uint128 diaPrice, uint128 timestamp) = _readDIAChecked();
         int256 scaledPrice = _vaultSharePrice(diaPrice);
 
@@ -196,14 +331,30 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         revert HistoricalRoundDataUnsupported(_roundId);
     }
 
+    /// @dev Reverts `OraclePausedCorporateAction` if the current block is
+    /// inside the pre/post window of any matching scheduled or completed
+    /// action on the configured corporate-actions vault.
+    function _validateNotPaused() internal view {
+        MainStorage storage $ = _main();
+        (bool paused, uint64 effectiveTime) = LibCorporateActionsPause.inPauseWindow(
+            $.corporateActionsVault, $.actionTypeMask, $.pauseTimeBefore, $.pauseTimeAfter
+        );
+        if (paused) revert OraclePausedCorporateAction(effectiveTime);
+    }
+
     /// @dev Read DIA and revert on either "never pushed" (DIAPriceNotSet) or
     /// "too old" (DIAPriceStale). DIA's `getValue` returns `(0, 0)` for an
     /// unset feed rather than reverting — we must check explicitly.
     function _readDIAChecked() internal view returns (uint128 value, uint128 timestamp) {
-        (value, timestamp) = diaOracle.getValue(symbol);
+        MainStorage storage $ = _main();
+        (value, timestamp) = $.diaOracle.getValue($.symbol);
         if (value == 0 || timestamp == 0) revert DIAPriceNotSet();
+        // Comparing block.timestamp against the DIA push timestamp is the whole
+        // point of the staleness check; sub-maxAge miner drift is immaterial
+        // against a maxAge measured in hours. This is not a false-positive
+        // dependence on block.timestamp for value/authorisation.
         // slither-disable-next-line timestamp
-        if (block.timestamp - uint256(timestamp) > maxAge) revert DIAPriceStale(uint256(timestamp));
+        if (block.timestamp - uint256(timestamp) > $.maxAge) revert DIAPriceStale(uint256(timestamp));
     }
 
     /// @dev Compute vault share price from a DIA reading via Rain float math
@@ -215,7 +366,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // count 18 to recover the natural quantity.
         Float priceFloat = LibDecimalFloat.fromFixedDecimalLosslessPacked(uint256(diaPrice), 18);
 
-        IERC4626 vaultContract = IERC4626(vault);
+        IERC4626 vaultContract = IERC4626(_main().vault);
         uint256 totalAssets = vaultContract.totalAssets();
         uint256 totalSupply = vaultContract.totalSupply();
 

@@ -4,9 +4,9 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
-import {LibCorporateActionsPause} from "src/lib/LibCorporateActionsPause.sol";
-import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
-import {MockCorporateActions} from "test/mocks/MockCorporateActions.sol";
+import {LibCorporateActionsPause} from "../../../src/lib/LibCorporateActionsPause.sol";
+import {ACTION_TYPE_INIT_V1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
 
 contract LibCorporateActionsPauseTest is Test {
     MockCorporateActions internal mock;
@@ -137,6 +137,28 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, pendingTime, "pending action's effectiveTime should be returned when both windows open");
     }
 
+    /// A PENDING action exists but its pre-window has NOT opened yet
+    /// (`now + pauseTimeBefore < pendingEffective`), so the pending branch
+    /// falls through WITHOUT returning. A COMPLETED action's post-window IS
+    /// open, so the function must return `(true, completedEffective)` — the
+    /// COMPLETED action's time, not the pending one. Guards the fall-through
+    /// from the pending branch into the completed branch: a regression that
+    /// `return`ed early on any present pending (regardless of window) would
+    /// report the pending time and fail this.
+    function testPendingPreWindowClosedFallsThroughToCompleted() external {
+        // Pending action far in the future: now + BEFORE < pendingEffective.
+        uint64 pendingTime = uint64(block.timestamp + 2 * BEFORE + 1);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, pendingTime);
+        // Completed action inside its post-window.
+        uint64 completedTime = uint64(block.timestamp - AFTER / 2);
+        mock.setLatestCompleted(2, ACTION_TYPE_STOCK_SPLIT_V1, completedTime);
+
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "completed post-window must pause after pending falls through");
+        assertEq(ts, completedTime, "fall-through must report the COMPLETED action's effectiveTime");
+    }
+
     // -------- Zero-window edge cases --------
 
     function testZeroBeforeWithExactPendingReturnsFalse() external {
@@ -173,18 +195,41 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, 0);
     }
 
-    /// Wildcard-mask deployment must accept the bootstrap node at cursor 0
-    /// (`ACTION_TYPE_INIT_V1 = 1 << 0`) as a real match. Pre-fix the
-    /// `cursor != 0` check silently dropped it.
-    function testWildcardMaskAcceptsBootstrapCursorZero() external {
-        uint256 INIT = 1 << 0;
+    /// Under a wildcard mask the `ACTION_TYPE_INIT_V1` bootstrap node must NOT
+    /// trigger a pause: it is a price-irrelevant bookkeeping entry that
+    /// completes in the same block as the first `scheduleCorporateAction`, so
+    /// matching it would spuriously auto-pause on routine vault setup (audit
+    /// #41). The library strips the INIT bit before querying.
+    function testWildcardMaskIgnoresBootstrapInitNode() external {
         uint64 effectiveTime = uint64(block.timestamp - 60);
-        // No pending; completed is the bootstrap node at cursor 0.
-        mock.setLatestCompleted(0, INIT, effectiveTime);
+        // The only "action" is the bootstrap INIT node, freshly completed and
+        // well inside the post-window — yet the wildcard mask must not pause.
+        mock.setLatestCompleted(0, ACTION_TYPE_INIT_V1, effectiveTime);
         (bool paused, uint64 ts) =
             LibCorporateActionsPause.inPauseWindow(address(mock), type(uint256).max, BEFORE, AFTER);
-        assertEq(paused, true);
+        assertEq(paused, false, "INIT bootstrap node must not pause");
+        assertEq(ts, 0);
+    }
+
+    /// The INIT strip must not disarm the wildcard mask for REAL actions: a
+    /// completed stock split under `type(uint256).max` still pauses.
+    function testWildcardMaskStillMatchesRealAction() external {
+        uint64 effectiveTime = uint64(block.timestamp - 60);
+        mock.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), type(uint256).max, BEFORE, AFTER);
+        assertEq(paused, true, "real action under wildcard mask still pauses");
         assertEq(ts, effectiveTime);
+    }
+
+    /// A mask of exactly `ACTION_TYPE_INIT_V1` reduces to the empty mask after
+    /// the strip and short-circuits to not-paused.
+    function testInitOnlyMaskShortCircuits() external {
+        mock.setLatestCompleted(0, ACTION_TYPE_INIT_V1, uint64(block.timestamp - 60));
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_INIT_V1, BEFORE, AFTER);
+        assertEq(paused, false, "INIT-only mask short-circuits");
+        assertEq(ts, 0);
     }
 
     // -------- Defensive boundary tests (audit #72) --------
@@ -242,7 +287,7 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, uint64(block.timestamp));
     }
 
-    /// SPEC §16.3: `effectiveTime` is zero iff `paused` is false. Fuzz the
+    /// Invariant: `effectiveTime` is zero iff `paused` is false. Fuzz the
     /// presence and timing of pending and completed actions and assert the
     /// invariant holds.
     function testFuzzPausedFalseImpliesEffectiveTimeZero(

@@ -3,46 +3,45 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin-contracts-5.6.1/proxy/ERC1967/ERC1967Proxy.sol";
-
-/// @dev OZ v5's `ERC1967Proxy` reverts in its constructor when `_data` is
-/// empty. Override `_unsafeAllowUninitialized` so the test harness can stand
-/// the proxy up first and call `initialize(bytes)` explicitly — that lets
-/// every init test go through the same path (`proxy.initialize(...)`) and
-/// keeps return-value assertions on the success hash straightforward.
-contract TestERC1967Proxy is ERC1967Proxy {
-    constructor(address impl) ERC1967Proxy(impl, "") {}
-
-    function _unsafeAllowUninitialized() internal pure override returns (bool) {
-        return true;
-    }
-}
-
 import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {IDIAOracleV2} from "src/interface/IDIAOracleV2.sol";
+import {IDIAOracleV2} from "../../../../src/interface/IDIAOracleV2.sol";
 import {
     DIAVaultOracle,
     DIAVaultOracleConfig,
     ZeroDIAOracle,
     ZeroVault,
     ZeroMaxAge,
+    ZeroCorporateActionsVault,
+    InvalidPauseConfig,
+    OraclePausedCorporateAction,
     EmptySymbol,
     DIAPriceNotSet,
     DIAPriceStale,
     ZeroVaultSupply,
     ZeroVaultSharePrice,
+    VaultSharePriceOverflow,
     HistoricalRoundDataUnsupported
-} from "src/concrete/oracle/DIAVaultOracle.sol";
-import {MockDIAOracle} from "test/mocks/MockDIAOracle.sol";
-import {MockERC4626} from "test/mocks/MockERC4626.sol";
+} from "../../../../src/concrete/oracle/DIAVaultOracle.sol";
+import {MockDIAOracle} from "../../../mocks/MockDIAOracle.sol";
+import {MockERC4626} from "../../../mocks/MockERC4626.sol";
+import {MockCorporateActions} from "../../../mocks/MockCorporateActions.sol";
+import {
+    MockRevertingCorporateActions,
+    CorporateActionsUnavailable
+} from "../../../mocks/MockRevertingCorporateActions.sol";
+import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;
     MockDIAOracle internal diaOracle;
     MockERC4626 internal vault;
+    MockCorporateActions internal actions;
     string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 1 hours;
+    uint64 internal constant PAUSE_BEFORE = 3600;
+    uint64 internal constant PAUSE_AFTER = 3600;
 
     event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
 
@@ -50,6 +49,10 @@ contract DIAVaultOracleTest is Test {
         implementation = new DIAVaultOracle();
         diaOracle = new MockDIAOracle();
         vault = new MockERC4626();
+        actions = new MockCorporateActions();
+        // The oracle derives its corporate-actions vault from the priced
+        // vault's `asset()` (the tStock the wtStock wraps).
+        vault.setAsset(address(actions));
         // Warp far enough in that `block.timestamp - maxAge` doesn't underflow.
         vm.warp(1_000_000);
     }
@@ -70,8 +73,120 @@ contract DIAVaultOracleTest is Test {
 
     function _defaultConfig() internal view returns (DIAVaultOracleConfig memory) {
         return DIAVaultOracleConfig({
-            diaOracle: IDIAOracleV2(address(diaOracle)), symbol: SYMBOL, vault: address(vault), maxAge: MAX_AGE
+            diaOracle: IDIAOracleV2(address(diaOracle)),
+            symbol: SYMBOL,
+            vault: address(vault),
+            maxAge: MAX_AGE,
+            actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
+            pauseTimeBefore: PAUSE_BEFORE,
+            pauseTimeAfter: PAUSE_AFTER
         });
+    }
+
+    // -------- corporate-action auto-pause (mandatory) --------
+
+    /// @notice A vault whose `asset()` is zero (broken / non-ST0x) would leave
+    /// the derived corporate-actions vault zero and silently disable the
+    /// auto-pause — rejected at init.
+    function testInitRevertsWhenVaultAssetIsZero() external {
+        MockERC4626 vaultNoAsset = new MockERC4626(); // asset() defaults to 0
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(vaultNoAsset);
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(ZeroCorporateActionsVault.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    function testInitRevertsZeroMask() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.actionTypeMask = 0;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice A mask of exactly `ACTION_TYPE_INIT_V1` is non-zero but the
+    /// library strips that bit, so it would never pause. Init must reject it
+    /// (else a "coherently configured" oracle silently never auto-pauses).
+    function testInitRevertsInitOnlyMask() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.actionTypeMask = ACTION_TYPE_INIT_V1;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    function testInitRevertsBothWindowsZero() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = 0;
+        config.pauseTimeAfter = 0;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice A corporate-actions vault whose facet reverts must fail the
+    /// DEPLOY transaction (via the init probe), not every future read.
+    function testInitProbesVaultRevertsOnBrokenFacet() external {
+        MockRevertingCorporateActions broken = new MockRevertingCorporateActions();
+        // Point the priced vault's asset() at the broken facet so the derived
+        // corporate-actions vault is the reverting one.
+        MockERC4626 vaultBroken = new MockERC4626();
+        vaultBroken.setAsset(address(broken));
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(vaultBroken);
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(CorporateActionsUnavailable.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice Inside a matching action's window, every price read reverts
+    /// `OraclePausedCorporateAction` with that action's effectiveTime.
+    function testAutoPauseRevertsInsideWindow() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint64(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        // Completed split half a post-window ago → inside the pause window.
+        uint64 effectiveTime = uint64(block.timestamp - PAUSE_AFTER / 2);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestAnswer();
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestRoundData();
+    }
+
+    /// @notice With no action in-window the oracle prices normally — the
+    /// auto-pause gate is off the happy path.
+    function testNoPauseOutsideWindowPricesNormally() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint64(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        // Completed split well outside the post-window.
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp - PAUSE_AFTER - 1));
+        assertEq(oracle.latestAnswer(), 100e8, "prices normally outside the pause window");
+    }
+
+    // -------- ERC-7201 storage-layout pin (beacon-upgrade safety) --------
+
+    /// @notice The `MainStorage` slot constant is a hardcoded hex literal with
+    /// no getter. Pin it to the normative ERC-7201 derivation by proving
+    /// storage actually lands there: after `initialize`, the first field
+    /// (`diaOracle`) must be readable at the recomputed slot. If a future v2
+    /// re-namespaces or drifts the layout, this fails — do not "fix" the test,
+    /// fix the layout (a drift corrupts every live proxy on beacon upgrade).
+    function testMainStorageLocationMatchesErc7201Derivation() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        bytes32 derived =
+            keccak256(abi.encode(uint256(keccak256("st0x.diavaultoracle.main")) - 1)) & ~bytes32(uint256(0xff));
+        // diaOracle is the first member of MainStorage → sits exactly at the slot.
+        address storedDIAOracle = address(uint160(uint256(vm.load(address(oracle), derived))));
+        assertEq(
+            storedDIAOracle, address(oracle.diaOracle()), "MainStorage must be namespaced at the ERC-7201 derived slot"
+        );
     }
 
     // -------- Init validation --------
@@ -221,6 +336,35 @@ contract DIAVaultOracleTest is Test {
         vault.setTotalSupply(1e18);
 
         vm.expectRevert(ZeroVaultSharePrice.selector);
+        oracle.latestAnswer();
+    }
+
+    // -------- latestAnswer overflow --------
+
+    /// @notice Drive the computed 8-decimal share price above `int256.max` so
+    /// the `int256(price8)` cast would be unsafe, and assert the contract
+    /// reverts `VaultSharePriceOverflow` instead of returning a wrapped
+    /// negative price. A regression that dropped the overflow guard (returning
+    /// `int256(price8)` directly) would produce a garbage negative answer and
+    /// fail this test.
+    ///
+    /// Magnitude: the 8dp share price must land strictly BETWEEN int256.max
+    /// (~5.79e76) and uint256.max (~1.16e77) — below the lower bound the value
+    /// fits an int256 and no revert fires; above the upper bound the earlier
+    /// `toFixedDecimalLossy(_, 8)` step itself reverts `FixedDecimalOverflow`
+    /// before the guard is reached. diaPrice raw = 1e38 (natural 1e20 at 18dp),
+    /// totalAssets = 7e48, totalSupply = 1 → natural 7e68 → 8dp 7e76, which sits
+    /// in that window. All operands are clean powers-of-ten so BOTH the
+    /// intermediate `fromFixedDecimalLosslessPacked` and the final 8dp
+    /// conversion are lossless, giving an exact `price8 == 7e76` — so we assert
+    /// the full selector + args rather than the bare selector.
+    function testLatestAnswerRevertsVaultSharePriceOverflow() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 1e38, uint128(block.timestamp));
+        vault.setTotalAssets(7e48);
+        vault.setTotalSupply(1);
+
+        vm.expectRevert(abi.encodeWithSelector(VaultSharePriceOverflow.selector, uint256(7e76)));
         oracle.latestAnswer();
     }
 

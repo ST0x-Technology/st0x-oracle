@@ -1,0 +1,40 @@
+name: Soldeer lock check
+on:
+  push:
+  pull_request:
+# Audit finding #9: every CI/deploy job runs `forge soldeer install` and
+# proceeds, but nothing verifies the committed soldeer.lock / remappings.txt
+# match what a clean install actually resolves — and in the dangerous
+# direction (a stale/hand-edited lock) the install is silent. This job fails
+# if a clean install would change either file, so the committed dependency
+# record is always the real one. Runs on pull_request too so fork PRs are
+# validated in the base repo, not only after merge.
+permissions:
+  contents: read
+jobs:
+  soldeer-lock-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+      - name: forge soldeer install
+        run: nix develop -c forge soldeer install
+      - name: Assert soldeer.lock and remappings.txt are unchanged
+        run: |
+          if ! git diff --exit-code -- soldeer.lock remappings.txt; then
+            echo "::error::soldeer.lock / remappings.txt drifted from a clean 'forge soldeer install'. Commit the regenerated files." >&2
+            exit 1
+          fi

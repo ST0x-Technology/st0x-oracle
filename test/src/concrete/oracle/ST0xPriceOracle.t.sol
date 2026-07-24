@@ -9,7 +9,7 @@ import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProx
 import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 import {IAccessControl} from "@openzeppelin-contracts-5.6.1/access/IAccessControl.sol";
 
-import {ST0xPriceOracle} from "src/concrete/oracle/ST0xPriceOracle.sol";
+import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
 
 /// @title ST0xPriceOracleTest
 /// @notice Unit coverage for the central multi-pair oracle: global signer /
@@ -41,15 +41,13 @@ contract ST0xPriceOracleTest is Test {
         beacon = new UpgradeableBeacon(address(impl), ADMIN);
         oracle = ST0xPriceOracle(
             address(
-                new BeaconProxy(address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, TIMEOUT)))
+                new BeaconProxy(
+                    address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT))
+                )
             )
         );
-        // Cache the role hash first — the `external view` call would
-        // otherwise consume the single `vm.prank`.
-        bytes32 oracleAdminRole = oracle.ORACLE_ADMIN_ROLE();
-        vm.prank(ADMIN);
-        oracle.grantRole(oracleAdminRole, ORACLE_ADMIN);
-
+        // ORACLE_ADMIN receives ORACLE_ADMIN_ROLE atomically at initialize
+        // (no separate grant step) — the rotation tests depend on it.
         PAIR_A = oracle.pairId(BASE_TOKEN, QUOTE_TOKEN);
     }
 
@@ -80,29 +78,99 @@ contract ST0xPriceOracleTest is Test {
         vm.expectEmit();
         emit ST0xPriceOracle.TimeoutSet(TIMEOUT);
         ST0xPriceOracle fresh = ST0xPriceOracle(
-            address(new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, TIMEOUT))))
+            address(
+                new BeaconProxy(
+                    address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT))
+                )
+            )
         );
         assertEq(fresh.signer(), SIGNER, "global signer set");
         assertEq(fresh.timeout(), TIMEOUT, "global timeout set");
+    }
+
+    /// @notice Both roles are granted atomically at initialize — no separate
+    /// grant step. ORACLE_ADMIN can rotate config immediately; DEFAULT_ADMIN
+    /// cannot (rotation authority is not implicitly the role admin).
+    function test_Initialize_GrantsBothRolesAtomically() public {
+        assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), ADMIN), "admin has DEFAULT_ADMIN_ROLE");
+        assertTrue(oracle.hasRole(oracle.ORACLE_ADMIN_ROLE(), ORACLE_ADMIN), "oracleAdmin has ORACLE_ADMIN_ROLE");
+        assertFalse(oracle.hasRole(oracle.ORACLE_ADMIN_ROLE(), ADMIN), "default admin is not implicitly oracle admin");
+        // ORACLE_ADMIN can rotate immediately, with no prior grant tx.
+        vm.prank(ORACLE_ADMIN);
+        oracle.setTimeout(2 hours);
+        assertEq(oracle.timeout(), 2 hours, "oracle admin rotates config at once");
     }
 
     function test_Initialize_ZeroAdmin_Reverts() public {
         ST0xPriceOracle impl = new ST0xPriceOracle();
         UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
         vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
-        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (address(0), SIGNER, TIMEOUT)));
+        new BeaconProxy(
+            address(b), abi.encodeCall(ST0xPriceOracle.initialize, (address(0), ORACLE_ADMIN, SIGNER, TIMEOUT))
+        );
+    }
+
+    function test_Initialize_ZeroOracleAdmin_Reverts() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, address(0), SIGNER, TIMEOUT)));
     }
 
     function test_Initialize_ZeroSigner_Reverts() public {
         ST0xPriceOracle impl = new ST0xPriceOracle();
         UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
         vm.expectRevert(ST0xPriceOracle.ZeroSigner.selector);
-        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, address(0), TIMEOUT)));
+        new BeaconProxy(
+            address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, address(0), TIMEOUT))
+        );
+    }
+
+    function test_Initialize_ZeroTimeout_Reverts() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        vm.expectRevert(ST0xPriceOracle.ZeroTimeout.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, 0)));
+    }
+
+    function test_Initialize_TimeoutTooLarge_Reverts() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        uint64 tooLarge = oracle.MAX_TIMEOUT() + 1;
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, tooLarge));
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, tooLarge)));
+    }
+
+    function test_Initialize_TimeoutAtMax_Ok() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+        uint64 atMax = impl.MAX_TIMEOUT();
+        ST0xPriceOracle fresh = ST0xPriceOracle(
+            address(
+                new BeaconProxy(
+                    address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, atMax))
+                )
+            )
+        );
+        assertEq(fresh.timeout(), atMax, "timeout at MAX_TIMEOUT is accepted");
+    }
+
+    function test_SetTimeout_Zero_Reverts() public {
+        vm.prank(ORACLE_ADMIN);
+        vm.expectRevert(ST0xPriceOracle.ZeroTimeout.selector);
+        oracle.setTimeout(0);
+    }
+
+    function test_SetTimeout_TooLarge_Reverts() public {
+        uint64 tooLarge = oracle.MAX_TIMEOUT() + 1;
+        vm.prank(ORACLE_ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, tooLarge));
+        oracle.setTimeout(tooLarge);
     }
 
     function test_Initialize_OnlyOnce() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        oracle.initialize(RANDO, SIGNER, TIMEOUT);
+        oracle.initialize(RANDO, ORACLE_ADMIN, SIGNER, TIMEOUT);
     }
 
     // -------- updatePrice: applied vs no-op vs revert --------
@@ -186,7 +254,11 @@ contract ST0xPriceOracleTest is Test {
         ST0xPriceOracle impl = new ST0xPriceOracle();
         UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
         ST0xPriceOracle other = ST0xPriceOracle(
-            address(new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, SIGNER, TIMEOUT))))
+            address(
+                new BeaconProxy(
+                    address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT))
+                )
+            )
         );
         assertTrue(other.updatePrice(PAIR_A, 42e18, block.timestamp, sig), "same signature replays cross-chain");
         assertEq(other.price(PAIR_A), 42e18, "replayed price served");
@@ -222,6 +294,45 @@ contract ST0xPriceOracleTest is Test {
             "now is not the future"
         );
         assertEq(oracle.price(PAIR_A), 42e18, "current-timestamp price is servable");
+    }
+
+    /// @notice Per-pair isolation: two DISTINCT pairs each keep their own
+    /// price and timestamp. A regression that collapses the pair mapping to a
+    /// single global slot (or mis-keys writes/reads) would make one pair's
+    /// write clobber the other — this test fails under that mutation.
+    function test_UpdatePrice_TwoPairs_IsolatedState() public {
+        address baseTokenB = address(0xCCC3);
+        address quoteTokenB = address(0xDDD4);
+        bytes32 pairB = oracle.pairId(baseTokenB, quoteTokenB);
+        assertTrue(pairB != PAIR_A, "pairs must be distinct");
+
+        // Distinct prices AND distinct timestamps per pair.
+        uint256 tsA = block.timestamp;
+        vm.warp(block.timestamp + 7);
+        uint256 tsB = block.timestamp;
+
+        _push(PAIR_A, 42e18, tsA);
+        _push(pairB, 99e18, tsB);
+
+        // Each pair reads back exactly its own value — not the other's, and
+        // not a shared last-write.
+        (uint256 priceA, uint256 storedTsA) = oracle.pairPrice(PAIR_A);
+        (uint256 priceB, uint256 storedTsB) = oracle.pairPrice(pairB);
+        assertEq(priceA, 42e18, "pair A price isolated");
+        assertEq(storedTsA, tsA, "pair A timestamp isolated");
+        assertEq(priceB, 99e18, "pair B price isolated");
+        assertEq(storedTsB, tsB, "pair B timestamp isolated");
+
+        assertEq(oracle.price(PAIR_A), 42e18, "price() serves pair A's own value");
+        assertEq(oracle.price(pairB), 99e18, "price() serves pair B's own value");
+
+        // Overwriting pair A with a fresher price must not touch pair B.
+        vm.warp(block.timestamp + 7);
+        _push(PAIR_A, 43e18, block.timestamp);
+        assertEq(oracle.price(PAIR_A), 43e18, "pair A advanced");
+        (uint256 priceBAfter, uint256 storedTsBAfter) = oracle.pairPrice(pairB);
+        assertEq(priceBAfter, 99e18, "pair B price untouched by pair A write");
+        assertEq(storedTsBAfter, tsB, "pair B timestamp untouched by pair A write");
     }
 
     // -------- constant-derivation pins (convention-vs-enforcement) --------

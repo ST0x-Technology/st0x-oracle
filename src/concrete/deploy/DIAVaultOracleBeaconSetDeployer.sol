@@ -6,7 +6,7 @@ import {IBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/IBeacon.sol";
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
 import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProxy.sol";
 import {ICLONEABLE_V2_SUCCESS} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {DIAVaultOracle, DIAVaultOracleConfig} from "src/concrete/oracle/DIAVaultOracle.sol";
+import {DIAVaultOracle, DIAVaultOracleConfig} from "../oracle/DIAVaultOracle.sol";
 
 /// @dev Error raised when a zero address is provided for the implementation.
 error ZeroImplementation();
@@ -41,9 +41,7 @@ struct DIAVaultOracleBeaconSetDeployerConfig {
 contract DIAVaultOracleBeaconSetDeployer {
     /// @notice Emitted when a new DIAVaultOracle proxy is deployed.
     /// @param caller The direct on-chain caller of `newDIAVaultOracle`.
-    /// For oracles created via `DIAOracleUnifiedDeployer` this is the
-    /// unified deployer contract, not the originating EOA. Indexed so
-    /// monitoring can filter by deployer.
+    /// Indexed so monitoring can filter by deployer.
     /// @param oracle The address of the new proxy. Indexed for filtering.
     event Deployment(address indexed caller, address indexed oracle);
 
@@ -63,11 +61,16 @@ contract DIAVaultOracleBeaconSetDeployer {
     }
 
     /// @notice Deploys and initializes a new DIAVaultOracle proxy.
+    /// @dev The proxy is minted via CREATE2 with `salt = keccak256(config)`, so
+    /// its address is a deterministic commitment to its config and a re-run
+    /// with identical config reverts on the CREATE2 collision instead of
+    /// silently forking a second, divergent oracle.
     /// @param config The initialization configuration.
     /// @return oracle The deployed proxy as a typed reference.
     // slither-disable-next-line reentrancy-events
     function newDIAVaultOracle(DIAVaultOracleConfig memory config) external returns (DIAVaultOracle oracle) {
-        oracle = DIAVaultOracle(address(new BeaconProxy(address(I_DIA_VAULT_ORACLE_BEACON), "")));
+        bytes32 salt = keccak256(abi.encode(config));
+        oracle = DIAVaultOracle(address(new BeaconProxy{salt: salt}(address(I_DIA_VAULT_ORACLE_BEACON), "")));
 
         if (oracle.initialize(abi.encode(config)) != ICLONEABLE_V2_SUCCESS) {
             revert InitializeOracleFailed();

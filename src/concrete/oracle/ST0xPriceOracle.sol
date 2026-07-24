@@ -47,6 +47,12 @@ import {MessageHashUtils} from "@openzeppelin-contracts-5.6.1/utils/cryptography
 contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     bytes32 public constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN");
 
+    /// @notice Upper bound on the global staleness `timeout`. A value larger
+    /// than this is a misconfiguration (e.g. a milliseconds figure) that would
+    /// silently disable staleness protection — reject it rather than let
+    /// `price()` serve arbitrarily old values.
+    uint64 public constant MAX_TIMEOUT = 30 days;
+
     /// @notice EIP-712 typehash binding (pairId, price, timestamp). No
     /// nonce — replay protection is the strict timestamp inequality in
     /// `updatePrice`.
@@ -91,30 +97,47 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
 
     error ZeroAdmin();
     error ZeroSigner();
+    /// @dev Raised when a zero `timeout` is set — it would make `price()`
+    /// revert `PriceStale` for every reading past its own block, bricking the
+    /// oracle. Mirrors the DIA stack's `ZeroMaxAge`.
+    error ZeroTimeout();
+    /// @dev Raised when a `timeout` above `MAX_TIMEOUT` is set.
+    /// @param timeout The rejected timeout value.
+    error TimeoutTooLarge(uint64 timeout);
     error PriceUnset(bytes32 pairId);
     error PriceStale(bytes32 pairId);
     error PriceFuture(bytes32 pairId);
     error PriceUpdateInvalidSignature(bytes32 pairId);
 
-    event SignerSet(address signer);
+    event SignerSet(address indexed signer);
     event TimeoutSet(uint64 timeout);
     event PriceUpdated(bytes32 indexed pairId, uint256 price, uint256 timestamp);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
     /// @notice Initialise the singleton. `admin` receives
-    /// `DEFAULT_ADMIN_ROLE` (role administration only — grant
-    /// `ORACLE_ADMIN_ROLE` separately to whoever rotates config). The
-    /// initial global signer and timeout are set here and announced through
-    /// the same events the setters emit.
-    function initialize(address admin, address signer_, uint64 timeout_) external initializer {
-        if (admin == address(0)) revert ZeroAdmin();
+    /// `DEFAULT_ADMIN_ROLE` (role administration only) and `oracleAdmin`
+    /// receives `ORACLE_ADMIN_ROLE` (signer/timeout rotation) — both granted
+    /// atomically so no post-deploy "remember to grant the role" step exists.
+    /// A missing grant would leave `setSigner` uncallable, blocking an
+    /// emergency key rotation behind the `DEFAULT_ADMIN` multisig while the
+    /// compromised signer's permissionless payloads keep landing. The initial
+    /// global signer and timeout are set here and announced through the same
+    /// events the setters emit.
+    /// @param admin Receives `DEFAULT_ADMIN_ROLE`. Cannot be zero.
+    /// @param oracleAdmin Receives `ORACLE_ADMIN_ROLE`. Cannot be zero (may be
+    /// the same address as `admin` if a single multisig holds both).
+    /// @param signer_ The initial global publisher key. Cannot be zero.
+    /// @param timeout_ The initial global staleness bound. `(0, MAX_TIMEOUT]`.
+    function initialize(address admin, address oracleAdmin, address signer_, uint64 timeout_) external initializer {
+        if (admin == address(0) || oracleAdmin == address(0)) revert ZeroAdmin();
         if (signer_ == address(0)) revert ZeroSigner();
+        _validateTimeout(timeout_);
         __AccessControl_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ORACLE_ADMIN_ROLE, oracleAdmin);
 
         MainStorage storage $ = _main();
         $.signer = signer_;
@@ -136,10 +159,19 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
         emit SignerSet(newSigner);
     }
 
-    /// @notice Set the GLOBAL staleness bound applied by `price()`.
+    /// @notice Set the GLOBAL staleness bound applied by `price()`. Bounded to
+    /// `(0, MAX_TIMEOUT]` — zero bricks every read, and an over-large value
+    /// silently disables staleness.
     function setTimeout(uint64 newTimeout) external onlyRole(ORACLE_ADMIN_ROLE) {
+        _validateTimeout(newTimeout);
         _main().timeout = newTimeout;
         emit TimeoutSet(newTimeout);
+    }
+
+    /// @dev Reverts `ZeroTimeout` / `TimeoutTooLarge` for out-of-range values.
+    function _validateTimeout(uint64 newTimeout) private pure {
+        if (newTimeout == 0) revert ZeroTimeout();
+        if (newTimeout > MAX_TIMEOUT) revert TimeoutTooLarge(newTimeout);
     }
 
     // ------------------------------------------------------------------ //
