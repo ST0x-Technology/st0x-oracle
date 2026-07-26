@@ -86,13 +86,23 @@ contract Deploy is Script {
     /// env: `ST0X_ADMIN`, `ST0X_ORACLE_ADMIN`, `ST0X_SIGNER` (addresses) and
     /// `ST0X_TIMEOUT` (uint64).
     /// @param beaconInitialOwner Initial owner of both beacons.
-    function deploySignedPriceStack(address beaconInitialOwner) internal {
+    function deploySignedPriceStack(address beaconInitialOwner, address deployer) internal {
         address admin = vm.envAddress("ST0X_ADMIN");
         address oracleAdmin = vm.envAddress("ST0X_ORACLE_ADMIN");
         address signer = vm.envAddress("ST0X_SIGNER");
         uint256 timeoutRaw = vm.envUint("ST0X_TIMEOUT");
         require(timeoutRaw <= type(uint64).max, "ST0X_TIMEOUT overflows uint64");
         uint64 timeout = uint64(timeoutRaw);
+
+        // ST0X_ADMIN holds DEFAULT_ADMIN_ROLE, the role-admin for
+        // ORACLE_ADMIN_ROLE — so it can grant itself ORACLE_ADMIN_ROLE and
+        // rotate the publisher signer/timeout, i.e. fully control every served
+        // price. It (and ST0X_ORACLE_ADMIN, which rotates them directly) must
+        // therefore be governance, never the hot CI deploy key — the same
+        // separation the beacon owner enforces. Fail the deploy loudly rather
+        // than silently leaving the feed under the deploy key's control.
+        require(admin != deployer, "ST0X_ADMIN must not be the deploy key");
+        require(oracleAdmin != deployer, "ST0X_ORACLE_ADMIN must not be the deploy key");
 
         ST0xPriceOracle oracleImpl = new ST0xPriceOracle();
         ST0xPriceOracleBeaconSetDeployer oracleBSD = new ST0xPriceOracleBeaconSetDeployer(
@@ -159,7 +169,7 @@ contract Deploy is Script {
             vm.stopBroadcast();
         } else if (suite == DEPLOYMENT_SUITE_SIGNED_PRICE_STACK) {
             vm.startBroadcast(deploymentKey);
-            deploySignedPriceStack(beaconInitialOwner);
+            deploySignedPriceStack(beaconInitialOwner, deployer);
             vm.stopBroadcast();
         } else {
             revert("Unknown deployment suite");

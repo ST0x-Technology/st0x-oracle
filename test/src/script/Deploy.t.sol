@@ -16,6 +16,7 @@ contract DeployTest is Test {
     DeployExposed internal deploy;
 
     address internal constant BEACON_OWNER = address(0x6074E12);
+    address internal constant DEPLOYER = address(0xDEB10E);
 
     function setUp() public {
         deploy = new DeployExposed();
@@ -36,22 +37,35 @@ contract DeployTest is Test {
     }
 
     /// @notice The signed-price helper reads its config from env, mints the
-    /// singleton central store through its beacon-set deployer, and owns BOTH
-    /// beacons with the requested owner. Asserts the security postconditions
-    /// `deploySignedPriceStack` require()s: the singleton carries the requested
-    /// signer, `oracleAdmin` holds `ORACLE_ADMIN_ROLE`, and both beacons are
-    /// owned by the requested owner (never the deploy key).
-    function testDeploySignedPriceStackWiresOracleAndBeacons() external {
-        address stAdmin = address(0x57ADAD);
-        address stOracleAdmin = address(0x57ADDD);
-        address stSigner = address(0x57516E);
-        uint64 stTimeout = 1 hours;
-        vm.setEnv("ST0X_ADMIN", vm.toString(stAdmin));
-        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(stOracleAdmin));
-        vm.setEnv("ST0X_SIGNER", vm.toString(stSigner));
-        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(stTimeout)));
+    /// singleton central store through its beacon-set deployer, and enforces the
+    /// deploy-key-separation guards. All three scenarios live in ONE test
+    /// function on purpose: `deploySignedPriceStack` reads its config from
+    /// PROCESS env (`vm.setEnv`), which is global and not rolled back per test,
+    /// so splitting the scenarios into separate test functions lets forge's
+    /// concurrent test execution race the shared `ST0X_*` vars and flake. Kept
+    /// sequential here, the env mutations are deterministic.
+    function testDeploySignedPriceStackEnvConfigAndKeySeparation() external {
+        vm.setEnv("ST0X_ADMIN", vm.toString(address(0x57ADAD)));
+        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(address(0x57ADDD)));
+        vm.setEnv("ST0X_SIGNER", vm.toString(address(0x57516E)));
+        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(1 hours)));
 
-        deploy.exposedDeploySignedPriceStack(BEACON_OWNER);
+        // Happy path: admin/oracleAdmin both distinct from the deploy key, so
+        // the guards pass and the stack deploys (internal require()s enforce the
+        // signer/role/beacon-owner postconditions).
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
+
+        // Guard: ST0X_ADMIN holds DEFAULT_ADMIN_ROLE (can rotate the publisher
+        // signer), so it must never be the hot deploy key.
+        vm.setEnv("ST0X_ADMIN", vm.toString(DEPLOYER));
+        vm.expectRevert("ST0X_ADMIN must not be the deploy key");
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
+
+        // Guard: ST0X_ORACLE_ADMIN rotates signer/timeout directly — same rule.
+        vm.setEnv("ST0X_ADMIN", vm.toString(address(0x57ADAD)));
+        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(DEPLOYER));
+        vm.expectRevert("ST0X_ORACLE_ADMIN must not be the deploy key");
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
     }
 
     /// @notice `run()` REQUIRES `BEACON_INITIAL_OWNER != deploy key`: the beacon
