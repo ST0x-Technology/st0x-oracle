@@ -89,13 +89,15 @@ library LibCorporateActionsPause {
             // trivially true for any `pauseTimeBefore` and spuriously open a
             // pre-window on a phantom action. Skip such a node — cleanly
             // degrade to "no pending action", never revert.
-            if (uint256(pendingEffective) <= block.timestamp) {
-                // Phantom pending: treat as no pending action.
-            } else if (block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)) {
-                // We compare via addition on uint256-promoted operands so
-                // neither underflow nor overflow is possible for any realistic
-                // timestamp.
-                // slither-disable-next-line timestamp
+            // A phantom pending (`pendingEffective <= now`) fails the first
+            // conjunct and is skipped. The window addition is on uint256-promoted
+            // operands so neither underflow nor overflow is possible.
+            // slither-disable-start timestamp
+            if (
+                uint256(pendingEffective) > block.timestamp
+                    && block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)
+            ) {
+                // slither-disable-end timestamp
                 return (true, pendingEffective);
             }
         }
@@ -113,10 +115,14 @@ library LibCorporateActionsPause {
             // "COMPLETED" action whose effectiveTime is in the future, skip it
             // rather than open a phantom post-window. Cleanly degrade to "no
             // completed action", never revert.
-            if (uint256(completedEffective) > block.timestamp) {
-                // Phantom completed: treat as no completed action.
-            } else if (block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)) {
-                // slither-disable-next-line timestamp
+            // A phantom completed (`completedEffective > now`) fails the first
+            // conjunct and is skipped.
+            // slither-disable-start timestamp
+            if (
+                uint256(completedEffective) <= block.timestamp
+                    && block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)
+            ) {
+                // slither-disable-end timestamp
                 return (true, completedEffective);
             }
         }
