@@ -53,9 +53,14 @@ library DeployRecordLib {
     /// @param salt The CREATE2 salt (`keccak256(abi.encode(config))`).
     /// @return The deterministically-derived proxy address.
     function deriveBeaconProxyAddress(address deployer, address beacon, bytes32 salt) internal pure returns (address) {
+        // `type(BeaconProxy).creationCode` inlines the proxy bytecode; slither's
+        // too-many-digits detector flags the embedded literal. This is the
+        // canonical CREATE2 init-code-hash derivation, not a magic number.
+        // slither-disable-start too-many-digits
         bytes32 initCodeHash =
             keccak256(abi.encodePacked(type(BeaconProxy).creationCode, abi.encode(beacon, bytes(""))));
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, initCodeHash)))));
+        // slither-disable-end too-many-digits
     }
 
     /// @notice Assert a beacon proxy landed at its deterministically-derived
