@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: Copyright (c) 2024 DIA Foundation
-pragma solidity =0.8.25;
+pragma solidity ^0.8.25;
 
 // SYNC NOTE: This interface mirrors DIA Data Association's canonical
 // `IDIAOracleV2` (the on-chain feed surface exposed by their oracle

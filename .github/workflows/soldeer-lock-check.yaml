@@ -1,6 +1,12 @@
 name: Soldeer lock check
 on:
+  # Same-repo branch pushes are covered by the pull_request event, so scope
+  # push to main only (post-merge validation). This avoids the identical
+  # nix-heavy job running twice concurrently on every push to a branch with an
+  # open PR. pull_request still fires so fork PRs are validated in the base
+  # repo, not only after merge.
   push:
+    branches: [main]
   pull_request:
 # Audit finding #9: every CI/deploy job runs `forge soldeer install` and
 # proceeds, but nothing verifies the committed soldeer.lock / remappings.txt

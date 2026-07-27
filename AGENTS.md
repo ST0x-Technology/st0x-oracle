@@ -154,6 +154,18 @@ Per-network secrets/vars follow the `CI_DEPLOY_<NETWORK>_<SUFFIX>` pattern:
 - `CI_DEPLOY_BASE_VERIFIER_URL` (use
   `https://api.etherscan.io/v2/api?chainid=8453`)
 
+`manual-sol-artifacts.yaml` offers four network choices — `base`,
+`base_sepolia`, `ethereum`, `sepolia` — and derives every secret name
+dynamically as `CI_DEPLOY_${network^^}_<SUFFIX>`. The same five suffixes above
+(`RPC_URL`, `ETHERSCAN_API_KEY`, `VERIFY`, `VERIFIER`, `VERIFIER_URL`) must be
+provisioned per network you dispatch to — substitute the uppercased network in,
+e.g. `CI_DEPLOY_ETHEREUM_RPC_URL`, `CI_DEPLOY_SEPOLIA_VERIFIER_URL`,
+`CI_DEPLOY_BASE_SEPOLIA_ETHERSCAN_API_KEY`. **Hazard:** a missing secret
+resolves to empty (`''`) and the deploy proceeds anyway — unverified rather than
+erroring — so confirm all five exist before dispatching a non-`base` network.
+Use the etherscan v2 verifier URL with each network's chainid (`?chainid=<id>`):
+Base 8453, Base Sepolia 84532, Ethereum 1, Sepolia 11155111.
+
 ## Architecture
 
 Two stacks share the repo — see `README.md` for the full picture.
