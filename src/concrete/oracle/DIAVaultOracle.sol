@@ -141,6 +141,48 @@ struct DIAVaultOracleConfig {
 /// space throughout so neither operand can overflow uint256; the conversion to
 /// fixed-point 8dp happens only at the final return.
 ///
+/// Vault trust model (donation / share-price inflation): the priced `vault` is
+/// a `wtStock` wrapper whose `totalAssets()` IS raw
+/// `IERC20(asset()).balanceOf(vault)` — `StoxWrappedTokenVault` overrides only
+/// `name()`/`symbol()` and inherits the OZ ERC-4626 default. Direct transfers
+/// into the vault ("donations") therefore DO move the share ratio, and the
+/// transfer path is permissionless: the upstream authorizer allows any
+/// `TRANSFER_SHARES` while certification is valid (it only fails closed on a
+/// system-wide certification lapse), so anyone holding tStock can donate.
+///
+/// This is deliberate and is NOT a manipulation surface, because a donation is
+/// value-additive and irreversible:
+///
+/// - The assets are really in the vault. Every share genuinely redeems for
+///   more. A borrower's collateral is not phantom — it is worth what the
+///   oracle says it is worth. NAV bumps (dividend reinvestment, post-action
+///   rebalances) are delivered as exactly such transfers, so this is the
+///   normal mechanism, not an attack.
+/// - A donor gets nothing back. A bare ERC-20 transfer mints no shares, so the
+///   value spreads pro-rata across existing holders and cannot be withdrawn.
+///   Donating `D` buys at most `LTV * yourShareOfSupply * D` of extra
+///   borrowing power against a cost of `D` — strictly negative-EV unless you
+///   already own essentially the whole supply, in which case it is circular.
+///
+/// The classic ERC-4626 donation attack is a ROUNDING attack on depositors (a
+/// near-empty vault plus a donation makes the next depositor's shares round to
+/// zero). It lives in the vault's own share accounting, harms depositors
+/// rather than price consumers, and is not addressable from an oracle — no
+/// check here would prevent it. It is out of scope for this contract.
+///
+/// Deliberately NOT mitigated here: no sanity band, drift limit or ratio
+/// anchor gates reads. Such a gate would fail closed on a legitimate NAV move
+/// (a large dividend or redemption), and an oracle that stops answering is
+/// strictly worse for a lending market than one that answers correctly —
+/// liquidations halt while positions keep moving, which accrues bad debt. The
+/// real stale-ratio risk is the corporate-action rebalance, and that is
+/// handled by the mandatory auto-pause below.
+///
+/// Pointing this oracle at an arbitrary third-party ERC-4626 remains
+/// unsupported — not because of donations, but because nothing outside the
+/// ST0x stack guarantees the corporate-action wiring the auto-pause depends
+/// on. See `_vaultSharePrice` for the per-function note.
+///
 /// Auto-pause: on every read the oracle consults `ICorporateActionsV1` on the
 /// corporate-actions vault — derived as the priced vault's `asset()`, i.e. the
 /// tStock the wtStock wraps — via `LibCorporateActionsPause`, and reverts
@@ -334,6 +376,12 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
     }
 
     /// @inheritdoc AggregatorV2V3Interface
+    /// @dev Deliberate deviation from the Chainlink-style pair-string
+    /// convention: this returns the BARE DIA feed symbol (e.g. `"COIN"`), NOT
+    /// a `"SYMBOL / USD"` pair string, because DIA keys its feeds by the bare
+    /// symbol and that is the single source of truth here. Integrators that
+    /// expect a Chainlink-formatted pair string must adjust. The interface
+    /// NatSpec is worded so it does not contradict this.
     function description() external view override returns (string memory) {
         return _main().symbol;
     }
@@ -404,23 +452,48 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         MainStorage storage $ = _main();
         (value, timestamp) = $.diaOracle.getValue($.symbol);
         if (value == 0 || timestamp == 0) revert DIAPriceNotSet();
-        // Comparing block.timestamp against the DIA push timestamp is the whole
-        // point of the staleness check; sub-maxAge miner drift is immaterial
-        // against a maxAge measured in hours. This is not a false-positive
-        // dependence on block.timestamp for value/authorisation. The edge
-        // instant fails closed (`>=`): a push exactly `maxAge` old is STALE.
-        // This is deliberate — it is what makes the cross-epoch invariant
+        // Slither `timestamp` is a FALSE POSITIVE here: the detector flags
+        // block.timestamp comparisons because miner-influenceable time can be
+        // gamed for value or authorisation. Neither applies — block.timestamp
+        // is used purely as the local clock to age a DIA push, which is the
+        // entire purpose of a staleness check, and the seconds of drift a
+        // proposer can induce are immaterial against a maxAge measured in
+        // hours. No value or permission decision reads the clock.
+        //
+        // A push timestamped at or before `now` applies the `maxAge` window. A
+        // push timestamped in the FUTURE (a feed running slightly ahead, or a
+        // chain-time regression / reorg) is treated as fresh (age 0), never
+        // stale: the `<= block.timestamp` guard short-circuits the subtraction
+        // so it can never underflow into a bare `Panic(0x11)` that integrators
+        // cannot disambiguate from `DIAPriceStale` / `DIAPriceNotSet`.
+        //
+        // The staleness edge fails closed (`>=`): a push exactly `maxAge` old is
+        // STALE. This is deliberate — it makes the cross-epoch invariant
         // (`pauseTimeAfter >= maxAge`, see the contract NatSpec) airtight at the
-        // exact-equality boundary, and it matches the fail-closed staleness
+        // exact-equality boundary, and matches the fail-closed staleness
         // convention (the edge counts as stale).
         // slither-disable-next-line timestamp
-        if (block.timestamp - uint256(timestamp) >= $.maxAge) revert DIAPriceStale(uint256(timestamp));
+        if (uint256(timestamp) <= block.timestamp && block.timestamp - uint256(timestamp) >= $.maxAge) {
+            revert DIAPriceStale(uint256(timestamp));
+        }
     }
 
     /// @dev Compute vault share price from a DIA reading via Rain float math
     /// so neither operand can overflow uint256. DIA prices are 18-decimal
     /// `uint128`. The vault ratio is `totalAssets / totalSupply`. Output is
     /// 8-decimal `int256` per Chainlink `latestAnswer` convention.
+    ///
+    /// Donation / share-inflation: this reads `totalAssets()` directly, and on
+    /// the production `wtStock` that IS raw `IERC20(asset()).balanceOf(vault)`,
+    /// so a direct transfer into the vault does move the ratio. That is
+    /// intentional and not a manipulation surface — a donation adds real assets
+    /// the shares genuinely redeem for, mints the donor nothing, and cannot be
+    /// withdrawn, so it is value-additive and negative-EV for the donor. No
+    /// sanity band gates this read; halting the oracle on an unexpected ratio
+    /// would stop liquidations, which is worse for a lending market than
+    /// pricing the (real) NAV. See the contract NatSpec ("Vault trust model")
+    /// for the full argument and for what IS mitigated — the corporate-action
+    /// rebalance, via the mandatory auto-pause.
     function _vaultSharePrice(uint128 diaPrice) internal view returns (int256) {
         // DIA's value is 18-decimal uint128 — pack as a float with decimal
         // count 18 to recover the natural quantity.
