@@ -38,6 +38,16 @@ error ZeroCorporateActionsVault();
 /// required, else the auto-pause never fires despite being "configured".
 error InvalidPauseConfig();
 
+/// @dev Error raised when `pauseTimeAfter < maxAge`. The post-action pause MUST
+/// last at least as long as the DIA staleness window, otherwise a
+/// stale-but-not-yet-`maxAge` pre-action DIA price can be served against the
+/// already-rebalanced post-action vault ratio once the pause lifts — mispricing
+/// collateral across a corporate-action boundary. See the contract NatSpec
+/// ("Cross-epoch safety invariant") for the full argument.
+/// @param pauseTimeAfter The configured post-action pause (seconds).
+/// @param maxAge The configured DIA staleness window (seconds).
+error PauseTimeAfterBelowMaxAge(uint256 pauseTimeAfter, uint256 maxAge);
+
 /// @dev Error raised when the DIA feed has never been pushed (value or
 /// timestamp == 0). Distinct from `DIAPriceStale` so integrators can
 /// disambiguate "feed not yet active" from "feed active but late".
@@ -85,14 +95,21 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// captures the post-corporate-action NAV bump.
 /// @param maxAge Maximum acceptable DIA push age in seconds.
 /// `block.timestamp - timestamp > maxAge` reverts `DIAPriceStale`. Immutable
-/// after init — redeploy a fresh proxy to change.
+/// after init — redeploy a fresh proxy to change. MUST be `<= pauseTimeAfter`
+/// (see `pauseTimeAfter`).
 /// @param actionTypeMask Bitmap of action types that trigger the auto-pause.
 /// `ACTION_TYPE_STOCK_SPLIT_V1` for splits only, or `type(uint256).max` for
 /// every present and future action type. Must be non-zero.
 /// @param pauseTimeBefore Seconds before a pending action's `effectiveTime` to
 /// start pausing.
 /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
-/// keep pausing. At least one of before/after must be non-zero.
+/// keep pausing. At least one of before/after must be non-zero, AND
+/// `pauseTimeAfter >= maxAge` is REQUIRED and enforced at init
+/// (`PauseTimeAfterBelowMaxAge`) — the post-action pause must outlast the DIA
+/// staleness window so a pre-action price can never be served against the
+/// post-action ratio. Set it with a margin above `maxAge`, not exactly equal
+/// (the boundary is only safe if DIA never times a push at the exact
+/// `effectiveTime` instant).
 /// @dev The corporate-actions vault is NOT a config field: it is derived as
 /// `IERC4626(vault).asset()` — the tStock the wtStock wraps, which is the
 /// contract that implements `ICorporateActionsV1`. Deriving it removes a
@@ -132,6 +149,21 @@ struct DIAVaultOracleConfig {
 /// disabled path and no separate wrapper. There is no manual pause and no
 /// admin: config is immutable, set once at initialize; to change anything,
 /// deploy a fresh proxy and migrate consumers.
+///
+/// Cross-epoch safety invariant (`pauseTimeAfter >= maxAge`, enforced at init):
+/// the share price multiplies a DIA equity price by the vault's LIVE
+/// `totalAssets/totalSupply` ratio. Those two inputs must belong to the same
+/// corporate-action epoch. When an action completes, the vault ratio rebalances
+/// atomically, but DIA keeps serving the pre-action equity price until its next
+/// push — up to `maxAge` seconds. The post-window pause is the only barrier
+/// between the two epochs. If `pauseTimeAfter < maxAge` the pause lifts while a
+/// pre-action DIA price is still within `maxAge` (hence accepted by the
+/// staleness check), and that stale price pairs with the already-rebalanced
+/// ratio: on a 2:1 split the share is valued at ~2x, letting a borrower draw
+/// against phantom collateral (bad debt). Requiring `pauseTimeAfter >= maxAge`
+/// makes the oldest still-fresh push at pause-lift no older than the action's
+/// `effectiveTime`, so only same-epoch (post-action) prices are ever served.
+/// The staleness check alone is NOT sufficient — it bounds age, not epoch.
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
@@ -251,6 +283,21 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
                 || (config.pauseTimeBefore == 0 && config.pauseTimeAfter == 0)
         ) {
             revert InvalidPauseConfig();
+        }
+
+        // Cross-epoch safety invariant: the post-action pause must outlast the
+        // DIA staleness window. The vault's NAV ratio rebalances the instant a
+        // corporate action completes, but DIA may still serve the pre-action
+        // equity price for up to `maxAge` seconds afterwards. The pause is the
+        // only thing separating those two epochs; if it lifts while a pre-action
+        // price is still "fresh" (`pauseTimeAfter < maxAge`), that price pairs
+        // with the post-action ratio and misprices the share (e.g. ~2x on a 2:1
+        // split → over-borrow → bad debt). `pauseTimeAfter >= maxAge` guarantees
+        // that once the pause lifts, the oldest still-acceptable DIA push was
+        // timestamped at or after the action's `effectiveTime`. See the
+        // contract NatSpec for the full argument.
+        if (config.pauseTimeAfter < config.maxAge) {
+            revert PauseTimeAfterBelowMaxAge(config.pauseTimeAfter, config.maxAge);
         }
 
         // Probe the corporate-actions vault once so an incompatible wiring — a

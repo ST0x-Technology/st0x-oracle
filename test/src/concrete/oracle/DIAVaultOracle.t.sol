@@ -14,6 +14,7 @@ import {
     ZeroMaxAge,
     ZeroCorporateActionsVault,
     InvalidPauseConfig,
+    PauseTimeAfterBelowMaxAge,
     OraclePausedCorporateAction,
     EmptySymbol,
     DIAPriceNotSet,
@@ -125,23 +126,25 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
-    /// @notice Per config NatSpec, at least ONE of before/after must be
-    /// non-zero — a single-sided window is a valid config. Init must SUCCEED
-    /// with only a pre-window (`pauseTimeAfter == 0`) and, symmetrically, with
-    /// only a post-window (`pauseTimeBefore == 0`). Guards the reject predicate
-    /// `before == 0 && after == 0`: a regression to `before == 0 || after == 0`
-    /// would wrongly reject these valid single-sided configs.
-    function testInitSucceedsWithOnlyPreWindow() external {
+    /// @notice A pre-window-ONLY config (`pauseTimeAfter == 0`) is REJECTED: it
+    /// violates the cross-epoch invariant `pauseTimeAfter >= maxAge`. With no
+    /// post-window, the oracle would resume serving the instant a split
+    /// completes, pairing a still-fresh pre-split DIA price with the
+    /// already-rebalanced post-split ratio — the exact mispricing the invariant
+    /// exists to prevent. (Guards against a regression that treated a single
+    /// pre-window as sufficient.)
+    function testInitRevertsPreWindowOnlyBelowMaxAge() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = PAUSE_BEFORE;
         config.pauseTimeAfter = 0;
         DIAVaultOracle oracle = _deployUninit();
-        bytes32 ok = oracle.initialize(abi.encode(config));
-        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pre-window-only config must be accepted");
-        assertEq(oracle.pauseTimeBefore(), PAUSE_BEFORE);
-        assertEq(oracle.pauseTimeAfter(), 0);
+        vm.expectRevert(abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(0), MAX_AGE));
+        oracle.initialize(abi.encode(config));
     }
 
+    /// @notice A post-window-only config (`pauseTimeBefore == 0`) is valid as
+    /// long as `pauseTimeAfter >= maxAge`. The default `PAUSE_AFTER == MAX_AGE`
+    /// sits exactly on the boundary, which init accepts.
     function testInitSucceedsWithOnlyPostWindow() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = 0;
@@ -151,6 +154,29 @@ contract DIAVaultOracleTest is Test {
         assertEq(ok, ICLONEABLE_V2_SUCCESS, "post-window-only config must be accepted");
         assertEq(oracle.pauseTimeBefore(), 0);
         assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER);
+    }
+
+    /// @notice The cross-epoch invariant is enforced at init: `pauseTimeAfter`
+    /// strictly below `maxAge` reverts `PauseTimeAfterBelowMaxAge`, and the
+    /// exact boundary `pauseTimeAfter == maxAge` is accepted.
+    function testInitRevertsWhenPauseAfterBelowMaxAge() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 2 hours;
+        config.pauseTimeAfter = uint64(2 hours) - 1; // one second short
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(
+            abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(2 hours) - 1, uint256(2 hours))
+        );
+        oracle.initialize(abi.encode(config));
+    }
+
+    function testInitAcceptsPauseAfterEqualToMaxAge() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 2 hours;
+        config.pauseTimeAfter = uint64(2 hours); // exactly on the boundary
+        DIAVaultOracle oracle = _deployUninit();
+        bytes32 ok = oracle.initialize(abi.encode(config));
+        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pauseTimeAfter == maxAge is on the safe boundary");
     }
 
     /// @notice A corporate-actions vault whose facet reverts must fail the

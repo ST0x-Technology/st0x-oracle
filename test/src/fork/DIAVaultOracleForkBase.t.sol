@@ -45,9 +45,12 @@ contract DIAVaultOracleForkBaseTest is Test {
     address constant TCOIN = 0x626757e6F50675D17fcAd312E82f989aE7A23d38; // receipt vault, ICorporateActionsV1
 
     uint64 constant PAUSE_BEFORE = 1 hours;
-    uint64 constant PAUSE_AFTER = 1 hours;
-    // Generous so the live DIA push is never stale at the fork block.
-    uint256 constant MAX_AGE = 3650 days;
+    // The cross-epoch invariant requires `pauseTimeAfter >= maxAge`. DIA's
+    // heartbeat is ~1h, so a 6h maxAge comfortably clears the live push at the
+    // (latest-block) fork while keeping the post-window short enough not to
+    // catch a stale completed action.
+    uint256 constant MAX_AGE = 6 hours;
+    uint64 constant PAUSE_AFTER = 6 hours;
 
     function _deployOracle() internal returns (DIAVaultOracle) {
         DIAVaultOracleBeaconSetDeployer bsd = new DIAVaultOracleBeaconSetDeployer(

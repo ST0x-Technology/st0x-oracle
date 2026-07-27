@@ -58,6 +58,19 @@ deviation OR 1 hour elapsed (whichever first). Volatile periods get pushes every
 few minutes; the 1-hour heartbeat is the dead-market floor. Recommended
 `maxAge = 2 hours` (one missed heartbeat tolerance).
 
+> **⚠️ Required config invariant: `pauseTimeAfter >= maxAge`** (enforced at
+> `initialize` — a violating config reverts `PauseTimeAfterBelowMaxAge`). The
+> share price multiplies the DIA equity price by the vault's _live_ NAV ratio,
+> and both must belong to the same corporate-action epoch. When an action
+> completes the ratio rebalances instantly, but DIA can keep serving the
+> pre-action price for up to `maxAge`. Only the post-window pause separates the
+> two; if it lifts while a pre-action price is still fresh, that price pairs
+> with the post-action ratio — on a 2:1 split the share reads ~2× its true
+> value, enabling over-borrow (bad debt). Setting `pauseTimeAfter >= maxAge`
+> guarantees only same-epoch prices are served. **Set a margin above `maxAge`,
+> don't sit on the boundary** — `pauseTimeAfter == maxAge` is only safe if DIA
+> never timestamps a push at the exact `effectiveTime` instant.
+
 **DIA on Base mainnet:** the canonical oracle contract is
 `0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol feeds are all served
 from this single contract via `getValue(string key)` and the key is the bare
@@ -76,7 +89,7 @@ DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
         maxAge:          2 hours,
         actionTypeMask:  type(uint256).max,
         pauseTimeBefore: 1 hours,
-        pauseTimeAfter:  2 hours
+        pauseTimeAfter:  3 hours  // >= maxAge, with a margin (see invariant above)
     })
 );
 ```
