@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-DCL-1.0
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
-pragma solidity =0.8.25;
+pragma solidity ^0.8.25;
 
 import {ICorporateActionsV1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {CompletionFilter, NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
@@ -76,12 +76,26 @@ library LibCorporateActionsPause {
         // `NODE_NONE = type(uint256).max` is the documented no-match sentinel
         // from `ICorporateActionsV1` — cursor `0` is a real bootstrap node and
         // must NOT be treated as "no match".
-        if (pendingCursor != NODE_NONE) {
-            // pendingEffective > now is guaranteed by the PENDING filter.
-            // We compare via addition on uint256-promoted operands so neither
-            // underflow nor overflow is possible for any realistic timestamp.
-            // slither-disable-next-line timestamp
-            if (block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)) {
+        // `effectiveTime == 0` is the documented sentinel for a cancelled
+        // (unlinked) node; under the upstream unlinking contract such a node
+        // is never returned by the traversal API, but we reject it here as
+        // defence-in-depth so a leaked cancelled node cannot yield `(true, 0)`.
+        if (pendingCursor != NODE_NONE && pendingEffective != 0) {
+            // Defence-in-depth: re-assert the PENDING filter's invariant
+            // locally. `pendingEffective > now` is guaranteed server-side by
+            // the PENDING completion filter; if a regressed vault returned a
+            // "PENDING" action whose effectiveTime is already in the past, the
+            // pre-window predicate `now + before >= pendingEffective` would be
+            // trivially true for any `pauseTimeBefore` and spuriously open a
+            // pre-window on a phantom action. Skip such a node — cleanly
+            // degrade to "no pending action", never revert.
+            if (uint256(pendingEffective) <= block.timestamp) {
+                // Phantom pending: treat as no pending action.
+            } else if (block.timestamp + uint256(pauseTimeBefore) >= uint256(pendingEffective)) {
+                // We compare via addition on uint256-promoted operands so
+                // neither underflow nor overflow is possible for any realistic
+                // timestamp.
+                // slither-disable-next-line timestamp
                 return (true, pendingEffective);
             }
         }
@@ -91,10 +105,18 @@ library LibCorporateActionsPause {
         // slither-disable-next-line unused-return
         (uint256 completedCursor,, uint64 completedEffective) =
             vault.latestActionOfType(effectiveMask, CompletionFilter.COMPLETED);
-        if (completedCursor != NODE_NONE) {
-            // completedEffective <= now is guaranteed by the COMPLETED filter.
-            // slither-disable-next-line timestamp
-            if (block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)) {
+        // Same `effectiveTime == 0` cancelled-node guard as the pending branch.
+        if (completedCursor != NODE_NONE && completedEffective != 0) {
+            // Defence-in-depth: re-assert the COMPLETED filter's invariant
+            // locally. `completedEffective <= now` is guaranteed server-side by
+            // the COMPLETED completion filter; if a regressed vault returned a
+            // "COMPLETED" action whose effectiveTime is in the future, skip it
+            // rather than open a phantom post-window. Cleanly degrade to "no
+            // completed action", never revert.
+            if (uint256(completedEffective) > block.timestamp) {
+                // Phantom completed: treat as no completed action.
+            } else if (block.timestamp <= uint256(completedEffective) + uint256(pauseTimeAfter)) {
+                // slither-disable-next-line timestamp
                 return (true, completedEffective);
             }
         }

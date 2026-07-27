@@ -7,7 +7,11 @@ import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 import {LibCorporateActionsPause} from "../../../src/lib/LibCorporateActionsPause.sol";
 import {ACTION_TYPE_INIT_V1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
-import {MockRevertingCorporateActions} from "../../mocks/MockRevertingCorporateActions.sol";
+import {
+    MockRevertingCorporateActions,
+    CorporateActionsUnavailable
+} from "../../mocks/MockRevertingCorporateActions.sol";
+import {MockStringRevertingCorporateActions} from "../../mocks/MockStringRevertingCorporateActions.sol";
 
 contract LibCorporateActionsPauseTest is Test {
     MockCorporateActions internal mock;
@@ -56,6 +60,45 @@ contract LibCorporateActionsPauseTest is Test {
         (paused, ts) = LibCorporateActionsPause.inPauseWindow(address(reverting), ACTION_TYPE_INIT_V1, BEFORE, AFTER);
         assertEq(paused, false, "INIT-only mask must short-circuit without querying the vault");
         assertEq(ts, 0);
+    }
+
+    // -------- Reverting / bad vault on the read paths (audit #74) --------
+
+    /// A non-zero vault that reverts on the read paths must propagate the
+    /// underlying revert, not swallow it. `inPauseWindow` makes external calls
+    /// to `earliestActionOfType` / `latestActionOfType`; if the vault reverts
+    /// (paused impl, wrong ABI, etc.) the whole price read must revert with the
+    /// underlying reason. This is the deliberate opposite of the mask-0
+    /// short-circuit test (which proves the vault is NOT called): here a
+    /// non-zero mask reaches a real read path against a reverting vault, so a
+    /// regression adding a `try/catch` that returned `(false, 0)` would be
+    /// caught. Closes audit #74.
+    function testRevertingVaultPropagates() external {
+        MockStringRevertingCorporateActions reverting = new MockStringRevertingCorporateActions();
+        // Route through an external boundary so `vm.expectRevert` unambiguously
+        // targets the `inPauseWindow` call rather than any inlined sub-call.
+        vm.expectRevert("vault-reverts");
+        this.callInPauseWindow(address(reverting), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+    }
+
+    /// A custom-error-reverting vault (typed revert, no string) must likewise
+    /// propagate the exact custom error selector. Complements the string-revert
+    /// case above and pins that the propagation is reason-preserving for both
+    /// revert encodings. #74.
+    function testCustomErrorRevertingVaultPropagates() external {
+        MockRevertingCorporateActions reverting = new MockRevertingCorporateActions();
+        vm.expectRevert(CorporateActionsUnavailable.selector);
+        this.callInPauseWindow(address(reverting), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+    }
+
+    /// External wrapper around the internal library call so revert-propagation
+    /// tests can point `vm.expectRevert` at a single external call boundary.
+    function callInPauseWindow(address vault, uint256 mask, uint64 pauseBefore, uint64 pauseAfter)
+        external
+        view
+        returns (bool, uint64)
+    {
+        return LibCorporateActionsPause.inPauseWindow(vault, mask, pauseBefore, pauseAfter);
     }
 
     // -------- No actions --------
@@ -245,6 +288,51 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, 0);
     }
 
+    // -------- Audit #200: cancelled-node effectiveTime==0 sentinel guard --------
+
+    /// `effectiveTime == 0` is the documented sentinel for a cancelled
+    /// (unlinked) node. Under the upstream unlinking contract such a node is
+    /// never returned by the traversal API, but if a future regression leaked
+    /// one through with a real (non-`NODE_NONE`) cursor, the naive predicate
+    /// `now + before >= 0` would be trivially true and the library would return
+    /// `(true, 0)` — a spurious pause reporting a zero effectiveTime. The
+    /// defensive `pendingEffective != 0` guard rejects it. Closes audit #200
+    /// (pending side).
+    function testPendingCancelledSentinelEffectiveZeroDoesNotPause() external {
+        // Leaked cancelled node: real cursor, effectiveTime unlinked to 0.
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, 0);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, false, "cancelled-node sentinel (effectiveTime==0) must not pause on the pending branch");
+        assertEq(ts, 0);
+    }
+
+    /// Symmetric to the above for the COMPLETED branch: a leaked cancelled node
+    /// with a real cursor and `effectiveTime == 0` must not open a post-window.
+    /// The predicate `now <= 0 + after` would otherwise be false only for
+    /// `after < now`; at boot / low timestamps it could pause spuriously. Guard
+    /// via `completedEffective != 0`. Closes audit #200 (completed side).
+    function testCompletedCancelledSentinelEffectiveZeroDoesNotPause() external {
+        mock.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, 0);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, type(uint64).max);
+        assertEq(paused, false, "cancelled-node sentinel (effectiveTime==0) must not pause on the completed branch");
+        assertEq(ts, 0);
+    }
+
+    /// A leaked cancelled PENDING sentinel must be skipped WITHOUT swallowing a
+    /// legitimately-open COMPLETED post-window — proves the pending guard
+    /// degrades to "no pending action" and falls through. #200.
+    function testPendingCancelledSentinelFallsThroughToCompleted() external {
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, 0);
+        uint64 completedTime = uint64(block.timestamp - AFTER / 2);
+        mock.setLatestCompleted(2, ACTION_TYPE_STOCK_SPLIT_V1, completedTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "cancelled pending sentinel must fall through to a real completed post-window");
+        assertEq(ts, completedTime);
+    }
+
     /// Under a wildcard mask the `ACTION_TYPE_INIT_V1` bootstrap node must NOT
     /// trigger a pause: it is a price-irrelevant bookkeeping entry that
     /// completes in the same block as the first `scheduleCorporateAction`, so
@@ -284,24 +372,64 @@ contract LibCorporateActionsPauseTest is Test {
 
     // -------- Defensive boundary tests (audit #72) --------
 
-    /// Per the library's comment, `pendingEffective > block.timestamp` is
-    /// guaranteed by the PENDING completion filter on the upstream vault, not
-    /// re-validated here. If a misbehaving upstream returned a pending action
-    /// with `effectiveTime <= now`, the pre-window predicate `now + before >=
-    /// pendingEffective` is trivially satisfied for any non-negative
-    /// `pauseTimeBefore`, so the oracle would pause. Pin this behaviour so a
-    /// future refactor that adds a local guard surfaces as a deliberate test
-    /// update. Closes audit #72 (a).
-    function testPendingEffectiveAtNowStillPausesDefensive() external {
+    /// Defence-in-depth (audit #199): `pendingEffective > block.timestamp` is
+    /// guaranteed server-side by the PENDING completion filter, and the library
+    /// now re-asserts it locally. If a misbehaving upstream returned a "PENDING"
+    /// action with `effectiveTime == now`, the pre-window predicate `now +
+    /// before >= pendingEffective` would be trivially satisfied for any
+    /// `pauseTimeBefore` and spuriously open a pre-window. The local guard skips
+    /// such a phantom node and cleanly degrades to "no pending action" — it must
+    /// NOT pause and must NOT revert. Closes audit #72 (a) / #199 (pending side).
+    function testPendingEffectiveAtNowDoesNotPauseDefensive() external {
         // Upstream invariant violation: PENDING action with effective time at
         // exactly `now`.
         uint64 effectiveTime = uint64(block.timestamp);
         mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
         (bool paused, uint64 ts) =
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
-        // Current behaviour: pauses because `now + BEFORE >= now`.
-        assertEq(paused, true, "current lib pauses when upstream returns pendingEffective <= now");
-        assertEq(ts, effectiveTime);
+        assertEq(paused, false, "phantom PENDING (effectiveTime <= now) must be skipped, not paused");
+        assertEq(ts, 0);
+    }
+
+    /// Symmetric to the above with a strictly-past effectiveTime: a "PENDING"
+    /// action whose effectiveTime is well before `now` must be skipped by the
+    /// local re-assertion rather than spuriously opening a pre-window. #199.
+    function testPendingEffectiveInPastDoesNotPauseDefensive() external {
+        uint64 effectiveTime = uint64(block.timestamp - 1);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, type(uint64).max, AFTER);
+        assertEq(paused, false, "phantom PENDING with past effectiveTime must not open a pre-window");
+        assertEq(ts, 0);
+    }
+
+    /// Symmetric post-window defence (#199): a "COMPLETED" action whose
+    /// effectiveTime is in the future is a filter regression — the library must
+    /// skip it rather than open a phantom post-window. Cleanly degrades to "no
+    /// completed action", never reverts.
+    function testCompletedEffectiveInFutureDoesNotPauseDefensive() external {
+        uint64 effectiveTime = uint64(block.timestamp + 1);
+        mock.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, type(uint64).max);
+        assertEq(paused, false, "phantom COMPLETED with future effectiveTime must not open a post-window");
+        assertEq(ts, 0);
+    }
+
+    /// A phantom PENDING (effectiveTime <= now) must be skipped WITHOUT
+    /// swallowing a legitimately-open COMPLETED post-window. Proves the pending
+    /// re-assertion degrades to "no pending action" and falls through to the
+    /// completed branch rather than returning early. #199.
+    function testPhantomPendingFallsThroughToCompleted() external {
+        // Phantom PENDING at exactly now.
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp));
+        // Real COMPLETED inside its post-window.
+        uint64 completedTime = uint64(block.timestamp - AFTER / 2);
+        mock.setLatestCompleted(2, ACTION_TYPE_STOCK_SPLIT_V1, completedTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "phantom pending must fall through to a real completed post-window");
+        assertEq(ts, completedTime);
     }
 
     /// `pauseTimeAfter == type(uint64).max` must not overflow the post-window
@@ -318,6 +446,21 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, effectiveTime);
     }
 
+    /// Symmetric before-side overflow guard (audit #255). The completed branch
+    /// has `testMaxPauseTimeAfterDoesNotOverflow`; the pending pre-window
+    /// arithmetic `block.timestamp + uint256(pauseTimeBefore)` must likewise be
+    /// promoted to uint256 so `pauseTimeBefore == type(uint64).max` neither
+    /// overflows nor wraps and silently flips the pre-window predicate. A
+    /// regression narrowing the addition to uint64 would wrap and fail this.
+    function testMaxPauseTimeBeforeDoesNotOverflow() external {
+        uint64 effectiveTime = uint64(block.timestamp + 10 days);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, type(uint64).max, AFTER);
+        assertEq(paused, true, "max pauseTimeBefore must not overflow and must open the pre-window");
+        assertEq(ts, effectiveTime);
+    }
+
     /// `pauseTimeBefore == 0` collapses the pre-window to a single instant:
     /// the predicate `block.timestamp + 0 >= pendingEffective` is true iff
     /// `pendingEffective <= now`. When the upstream honours the PENDING
@@ -325,16 +468,16 @@ contract LibCorporateActionsPauseTest is Test {
     /// oracle does not pause — already covered by
     /// `testZeroBeforeWithExactPendingReturnsFalse`. The symmetric boundary,
     /// where `pendingEffective` equals exactly `now`, is the upstream-
-    /// invariant edge: lib trusts the filter, but if the filter ever
-    /// included an `effectiveTime == now` action as PENDING, the oracle
-    /// would pause. Closes audit #72 (c).
-    function testZeroBeforeWithPendingAtNowPauses() external {
+    /// invariant edge. Before audit #199 the naive predicate `now + 0 >= now`
+    /// would have paused on this phantom; the local re-assertion of the PENDING
+    /// filter (`effectiveTime > now`) now skips it, so the oracle does NOT
+    /// pause. Closes audit #72 (c), tightened by #199.
+    function testZeroBeforeWithPendingAtNowDoesNotPause() external {
         mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp));
         (bool paused, uint64 ts) =
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 0, AFTER);
-        // `now + 0 >= now` is true, so the pre-window matches at the instant.
-        assertEq(paused, true);
-        assertEq(ts, uint64(block.timestamp));
+        assertEq(paused, false, "phantom PENDING at exactly now must be skipped by the local filter re-assertion");
+        assertEq(ts, 0);
     }
 
     /// Invariant: `effectiveTime` is zero iff `paused` is false. Fuzz the
@@ -370,7 +513,7 @@ contract LibCorporateActionsPauseTest is Test {
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter);
 
         if (!paused) {
-            assertEq(ts, 0, "SPEC 16.3: paused=false must imply effectiveTime=0");
+            assertEq(ts, 0, "paused=false must imply effectiveTime=0");
         } else {
             assertGt(ts, 0, "paused=true must report a non-zero effectiveTime");
         }
