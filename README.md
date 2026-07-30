@@ -67,9 +67,11 @@ few minutes; the 1-hour heartbeat is the dead-market floor. Recommended
 > two; if it lifts while a pre-action price is still fresh, that price pairs
 > with the post-action ratio — on a 2:1 split the share reads ~2× its true
 > value, enabling over-borrow (bad debt). Setting `pauseTimeAfter >= maxAge`
-> guarantees only same-epoch prices are served. **Set a margin above `maxAge`,
-> don't sit on the boundary** — `pauseTimeAfter == maxAge` is only safe if DIA
-> never timestamps a push at the exact `effectiveTime` instant.
+> guarantees only same-epoch prices are served. The exact boundary
+> (`pauseTimeAfter == maxAge`) is airtight because the staleness check rejects
+> the `maxAge` edge (`age >= maxAge` is stale), so at pause-lift the oldest
+> still-fresh push is strictly newer than `effectiveTime`. A margin above
+> `maxAge` is still recommended as defence-in-depth.
 
 **DIA on Base mainnet:** the canonical oracle contract is
 `0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol feeds are all served

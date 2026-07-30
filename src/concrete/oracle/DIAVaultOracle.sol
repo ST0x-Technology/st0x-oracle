@@ -94,7 +94,8 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// applied on top of the DIA price. For a wtStock-style wrapper this
 /// captures the post-corporate-action NAV bump.
 /// @param maxAge Maximum acceptable DIA push age in seconds.
-/// `block.timestamp - timestamp > maxAge` reverts `DIAPriceStale`. Immutable
+/// `block.timestamp - timestamp >= maxAge` reverts `DIAPriceStale` (the edge
+/// instant fails closed — a push exactly `maxAge` old is stale). Immutable
 /// after init — redeploy a fresh proxy to change. MUST be `<= pauseTimeAfter`
 /// (see `pauseTimeAfter`).
 /// @param actionTypeMask Bitmap of action types that trigger the auto-pause.
@@ -107,9 +108,10 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// `pauseTimeAfter >= maxAge` is REQUIRED and enforced at init
 /// (`PauseTimeAfterBelowMaxAge`) — the post-action pause must outlast the DIA
 /// staleness window so a pre-action price can never be served against the
-/// post-action ratio. Set it with a margin above `maxAge`, not exactly equal
-/// (the boundary is only safe if DIA never times a push at the exact
-/// `effectiveTime` instant).
+/// post-action ratio. The exact-equality boundary (`pauseTimeAfter == maxAge`)
+/// is safe: the staleness check rejects the `maxAge` edge, so at pause-lift the
+/// oldest still-acceptable push is strictly newer than `effectiveTime`. A
+/// margin above `maxAge` is still recommended as defence-in-depth.
 /// @dev The corporate-actions vault is NOT a config field: it is derived as
 /// `IERC4626(vault).asset()` — the tStock the wtStock wraps, which is the
 /// contract that implements `ICorporateActionsV1`. Deriving it removes a
@@ -161,9 +163,15 @@ struct DIAVaultOracleConfig {
 /// staleness check), and that stale price pairs with the already-rebalanced
 /// ratio: on a 2:1 split the share is valued at ~2x, letting a borrower draw
 /// against phantom collateral (bad debt). Requiring `pauseTimeAfter >= maxAge`
-/// makes the oldest still-fresh push at pause-lift no older than the action's
-/// `effectiveTime`, so only same-epoch (post-action) prices are ever served.
-/// The staleness check alone is NOT sufficient — it bounds age, not epoch.
+/// makes the oldest still-acceptable push at pause-lift STRICTLY NEWER than the
+/// action's `effectiveTime`: the staleness check rejects the exact-`maxAge`
+/// edge (`age >= maxAge` is stale), so at the pause-lift instant
+/// `t = effectiveTime + pauseTimeAfter` any served push is timestamped
+/// `> t - maxAge >= effectiveTime`. The equal boundary (`pauseTimeAfter ==
+/// maxAge`) is therefore airtight — no same-instant ambiguity — so only
+/// same-epoch (post-action) prices are ever served. The staleness check alone
+/// is NOT sufficient — it bounds age, not epoch; the invariant plus the
+/// edge-rejecting staleness together are what close the window.
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
@@ -399,9 +407,14 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // Comparing block.timestamp against the DIA push timestamp is the whole
         // point of the staleness check; sub-maxAge miner drift is immaterial
         // against a maxAge measured in hours. This is not a false-positive
-        // dependence on block.timestamp for value/authorisation.
+        // dependence on block.timestamp for value/authorisation. The edge
+        // instant fails closed (`>=`): a push exactly `maxAge` old is STALE.
+        // This is deliberate — it is what makes the cross-epoch invariant
+        // (`pauseTimeAfter >= maxAge`, see the contract NatSpec) airtight at the
+        // exact-equality boundary, and it matches the fail-closed staleness
+        // convention (the edge counts as stale).
         // slither-disable-next-line timestamp
-        if (block.timestamp - uint256(timestamp) > $.maxAge) revert DIAPriceStale(uint256(timestamp));
+        if (block.timestamp - uint256(timestamp) >= $.maxAge) revert DIAPriceStale(uint256(timestamp));
     }
 
     /// @dev Compute vault share price from a DIA reading via Rain float math

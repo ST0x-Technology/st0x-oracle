@@ -380,16 +380,31 @@ contract DIAVaultOracleTest is Test {
         oracle.latestAnswer();
     }
 
-    function testLatestAnswerAtMaxAgeBoundaryNotStale() external {
-        // `block.timestamp - timestamp > maxAge` reverts — equal is OK.
+    /// @notice The staleness edge fails closed: a push aged EXACTLY `maxAge`
+    /// reverts `DIAPriceStale` (`age >= maxAge` is stale). This edge-rejection
+    /// is what makes the cross-epoch invariant airtight at `pauseTimeAfter ==
+    /// maxAge` — see the contract NatSpec.
+    function testLatestAnswerAtMaxAgeBoundaryIsStale() external {
         DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         uint128 boundary = uint128(block.timestamp - MAX_AGE);
         diaOracle.setValue(SYMBOL, 100e18, boundary);
         vault.setTotalAssets(1e18);
         vault.setTotalSupply(1e18);
 
-        int256 answer = oracle.latestAnswer();
-        assertEq(answer, int256(100e8));
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(boundary)));
+        oracle.latestAnswer();
+    }
+
+    /// @notice One second inside the window (`age == maxAge - 1`) is still
+    /// fresh and prices normally — pins the just-inside side of the edge.
+    function testLatestAnswerJustInsideMaxAgeNotStale() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 justFresh = uint128(block.timestamp - MAX_AGE + 1);
+        diaOracle.setValue(SYMBOL, 100e18, justFresh);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        assertEq(oracle.latestAnswer(), int256(100e8));
     }
 
     /// @notice `_readDIAChecked` reverts `DIAPriceNotSet` when the DIA value is
