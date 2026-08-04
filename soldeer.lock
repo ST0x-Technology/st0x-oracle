@@ -27,13 +27,6 @@ checksum = "6b02e2b87983e196bc88cb8fb802a2720b252783429567864cd13336167c369d"
 integrity = "be6a3343d0ea247d8b495b584cd21c3bf64f0a1396ca21aaa8ce31715df29842"
 
 [[dependencies]]
-name = "rain-intorastring"
-version = "0.1.0"
-url = "https://soldeer-revisions.s3.amazonaws.com/rain-intorastring/0_1_0_12-05-2026_19:21:48_rain.zip"
-checksum = "6cd4b0e5ea0a7ffc8adef762b3687d180e4c1408ec4ff8bf8d88d5f9712bf5af"
-integrity = "cad9d7a463dd388f73b1f2cf85dd212fd46320203f8d39cb0938ffb451295384"
-
-[[dependencies]]
 name = "rain-math-float"
 version = "0.1.1"
 url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-float/0_1_1_13-05-2026_13:48:34_rain.math.zip"
