@@ -15,7 +15,7 @@ contract DeployExposed is Deploy {
         return deployDIAStackInfra(beaconInitialOwner);
     }
 
-    function exposedDeploySignedPriceStack(address beaconInitialOwner) external {
-        deploySignedPriceStack(beaconInitialOwner);
+    function exposedDeploySignedPriceStack(address beaconInitialOwner, address deployer) external {
+        deploySignedPriceStack(beaconInitialOwner, deployer);
     }
 }

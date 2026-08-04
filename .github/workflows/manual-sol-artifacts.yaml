@@ -22,6 +22,26 @@ on:
         description: 'Beacon owner (governance multisig, checksummed). Must NOT be the deploy key.'
         required: true
         type: string
+      st0x-admin:
+        description: 'signed-price-stack ONLY: DEFAULT_ADMIN_ROLE holder (governance, checksummed). Must NOT be the deploy key.'
+        required: false
+        type: string
+        default: ''
+      st0x-oracle-admin:
+        description: 'signed-price-stack ONLY: ORACLE_ADMIN_ROLE holder (governance, checksummed). Must NOT be the deploy key.'
+        required: false
+        type: string
+        default: ''
+      st0x-signer:
+        description: 'signed-price-stack ONLY: global publisher signer address (checksummed).'
+        required: false
+        type: string
+        default: ''
+      st0x-timeout:
+        description: 'signed-price-stack ONLY: global staleness timeout in seconds (must be <= 30 days).'
+        required: false
+        type: string
+        default: ''
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -59,6 +79,12 @@ jobs:
         env:
           DEPLOYMENT_SUITE: ${{ inputs.suite }}
           BEACON_INITIAL_OWNER: ${{ inputs.beacon-initial-owner }}
+          # Required by the signed-price-stack suite only; the dia-vault-oracle
+          # suite never reads them, so empty defaults are harmless there.
+          ST0X_ADMIN: ${{ inputs.st0x-admin }}
+          ST0X_ORACLE_ADMIN: ${{ inputs.st0x-oracle-admin }}
+          ST0X_SIGNER: ${{ inputs.st0x-signer }}
+          ST0X_TIMEOUT: ${{ inputs.st0x-timeout }}
           DEPLOY_BROADCAST: '1'
           DEPLOYMENT_KEY: ${{ github.ref == 'refs/heads/main' && secrets.PRIVATE_KEY || secrets.PRIVATE_KEY_DEV }}
           ETH_RPC_URL: ${{ secrets[env.rpc_secret_name] || vars[env.rpc_secret_name] || '' }}
