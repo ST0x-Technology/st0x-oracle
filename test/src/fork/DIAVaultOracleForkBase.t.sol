@@ -45,9 +45,13 @@ contract DIAVaultOracleForkBaseTest is Test {
     address constant TCOIN = 0x626757e6F50675D17fcAd312E82f989aE7A23d38; // receipt vault, ICorporateActionsV1
 
     uint64 constant PAUSE_BEFORE = 1 hours;
+    // Satisfies the cross-epoch invariant `pauseTimeAfter >= maxAge`. The DIA
+    // feed is mocked to a fresh value for the pre-schedule read (see
+    // `_seedFreshDIA`), so `maxAge` no longer depends on how recently the LIVE
+    // DIA `COIN` feed was pushed at the fork block — the fork test's real
+    // subject is the corporate-action vault, not DIA.
+    uint256 constant MAX_AGE = 1 hours;
     uint64 constant PAUSE_AFTER = 1 hours;
-    // Generous so the live DIA push is never stale at the fork block.
-    uint256 constant MAX_AGE = 3650 days;
 
     function _deployOracle() internal returns (DIAVaultOracle) {
         DIAVaultOracleBeaconSetDeployer bsd = new DIAVaultOracleBeaconSetDeployer(
@@ -76,6 +80,20 @@ contract DIAVaultOracleForkBaseTest is Test {
         vm.mockCall(authorizer, abi.encodeWithSelector(IAuthorizeV1.authorize.selector), "");
     }
 
+    /// @dev Mock the DIA feed to a fresh (age-0) COIN value so the pre-schedule
+    /// read is deterministic regardless of how stale the LIVE feed is at the
+    /// fork block. DIA is not what this fork test validates — the real
+    /// corporate-action vault and its pause traversal are — so mocking the price
+    /// source removes a live-feed-freshness CI dependency without weakening the
+    /// pause assertions (the pause gate reverts before the DIA read anyway).
+    function _seedFreshDIA() internal {
+        vm.mockCall(
+            DIA_FEED,
+            abi.encodeWithSelector(IDIAOracleV2.getValue.selector),
+            abi.encode(uint128(100e18), uint128(block.timestamp))
+        );
+    }
+
     /// @dev Schedule a real 2:1 stock split on the live tCOIN receipt vault,
     /// effective `secondsFromNow` in the future. Returns the effectiveTime.
     function _scheduleSplit(uint256 secondsFromNow) internal returns (uint64 effectiveTime) {
@@ -97,13 +115,15 @@ contract DIAVaultOracleForkBaseTest is Test {
         // The corporate-actions vault is derived as wtCOIN.asset() == tCOIN.
         assertEq(oracle.corporateActionsVault(), TCOIN, "derived corporate-actions vault is the tStock");
 
-        // No action in-window right now: the live oracle prices (a positive
-        // 8-decimal answer). Guard on live supply so a not-yet-seeded vault
-        // doesn't make this vacuous.
+        // No action in-window right now: the oracle prices (a positive
+        // 8-decimal answer) off the REAL vault ratio and a fresh mocked DIA
+        // price. Guard on live supply so a not-yet-seeded vault doesn't make
+        // this vacuous.
+        _seedFreshDIA();
         uint256 supply = _liveTotalSupply();
         if (supply > 0) {
             int256 answer = oracle.latestAnswer();
-            assertGt(answer, int256(0), "live oracle prices a positive answer pre-schedule");
+            assertGt(answer, int256(0), "oracle prices a positive answer pre-schedule");
         }
 
         // Schedule a REAL 2:1 split 30 minutes out — squarely inside the 1h

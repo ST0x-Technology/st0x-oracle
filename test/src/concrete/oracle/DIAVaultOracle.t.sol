@@ -14,6 +14,7 @@ import {
     ZeroMaxAge,
     ZeroCorporateActionsVault,
     InvalidPauseConfig,
+    PauseTimeAfterBelowMaxAge,
     OraclePausedCorporateAction,
     EmptySymbol,
     DIAPriceNotSet,
@@ -125,23 +126,25 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
-    /// @notice Per config NatSpec, at least ONE of before/after must be
-    /// non-zero — a single-sided window is a valid config. Init must SUCCEED
-    /// with only a pre-window (`pauseTimeAfter == 0`) and, symmetrically, with
-    /// only a post-window (`pauseTimeBefore == 0`). Guards the reject predicate
-    /// `before == 0 && after == 0`: a regression to `before == 0 || after == 0`
-    /// would wrongly reject these valid single-sided configs.
-    function testInitSucceedsWithOnlyPreWindow() external {
+    /// @notice A pre-window-ONLY config (`pauseTimeAfter == 0`) is REJECTED: it
+    /// violates the cross-epoch invariant `pauseTimeAfter >= maxAge`. With no
+    /// post-window, the oracle would resume serving the instant a split
+    /// completes, pairing a still-fresh pre-split DIA price with the
+    /// already-rebalanced post-split ratio — the exact mispricing the invariant
+    /// exists to prevent. (Guards against a regression that treated a single
+    /// pre-window as sufficient.)
+    function testInitRevertsPreWindowOnlyBelowMaxAge() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = PAUSE_BEFORE;
         config.pauseTimeAfter = 0;
         DIAVaultOracle oracle = _deployUninit();
-        bytes32 ok = oracle.initialize(abi.encode(config));
-        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pre-window-only config must be accepted");
-        assertEq(oracle.pauseTimeBefore(), PAUSE_BEFORE);
-        assertEq(oracle.pauseTimeAfter(), 0);
+        vm.expectRevert(abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(0), MAX_AGE));
+        oracle.initialize(abi.encode(config));
     }
 
+    /// @notice A post-window-only config (`pauseTimeBefore == 0`) is valid as
+    /// long as `pauseTimeAfter >= maxAge`. The default `PAUSE_AFTER == MAX_AGE`
+    /// sits exactly on the boundary, which init accepts.
     function testInitSucceedsWithOnlyPostWindow() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = 0;
@@ -151,6 +154,29 @@ contract DIAVaultOracleTest is Test {
         assertEq(ok, ICLONEABLE_V2_SUCCESS, "post-window-only config must be accepted");
         assertEq(oracle.pauseTimeBefore(), 0);
         assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER);
+    }
+
+    /// @notice The cross-epoch invariant is enforced at init: `pauseTimeAfter`
+    /// strictly below `maxAge` reverts `PauseTimeAfterBelowMaxAge`, and the
+    /// exact boundary `pauseTimeAfter == maxAge` is accepted.
+    function testInitRevertsWhenPauseAfterBelowMaxAge() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 2 hours;
+        config.pauseTimeAfter = uint64(2 hours) - 1; // one second short
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(
+            abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(2 hours) - 1, uint256(2 hours))
+        );
+        oracle.initialize(abi.encode(config));
+    }
+
+    function testInitAcceptsPauseAfterEqualToMaxAge() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 2 hours;
+        config.pauseTimeAfter = uint64(2 hours); // exactly on the boundary
+        DIAVaultOracle oracle = _deployUninit();
+        bytes32 ok = oracle.initialize(abi.encode(config));
+        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pauseTimeAfter == maxAge is on the safe boundary");
     }
 
     /// @notice A corporate-actions vault whose facet reverts must fail the
@@ -354,16 +380,149 @@ contract DIAVaultOracleTest is Test {
         oracle.latestAnswer();
     }
 
-    function testLatestAnswerAtMaxAgeBoundaryNotStale() external {
-        // `block.timestamp - timestamp > maxAge` reverts — equal is OK.
+    /// @notice The staleness edge fails closed: a push aged EXACTLY `maxAge`
+    /// reverts `DIAPriceStale` (`age >= maxAge` is stale). This edge-rejection
+    /// is what makes the cross-epoch invariant airtight at `pauseTimeAfter ==
+    /// maxAge` — see the contract NatSpec.
+    function testLatestAnswerAtMaxAgeBoundaryIsStale() external {
         DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         uint128 boundary = uint128(block.timestamp - MAX_AGE);
         diaOracle.setValue(SYMBOL, 100e18, boundary);
         vault.setTotalAssets(1e18);
         vault.setTotalSupply(1e18);
 
-        int256 answer = oracle.latestAnswer();
-        assertEq(answer, int256(100e8));
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(boundary)));
+        oracle.latestAnswer();
+    }
+
+    /// @notice One second inside the window (`age == maxAge - 1`) is still
+    /// fresh and prices normally — pins the just-inside side of the edge.
+    function testLatestAnswerJustInsideMaxAgeNotStale() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 justFresh = uint128(block.timestamp - MAX_AGE + 1);
+        diaOracle.setValue(SYMBOL, 100e18, justFresh);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        assertEq(oracle.latestAnswer(), int256(100e8));
+    }
+
+    /// @notice The composed cross-epoch invariant: the pause and staleness
+    /// guards hand over with no gap, so a PRE-action DIA push is never served
+    /// once the pause lifts.
+    ///
+    /// The two guards are pinned independently above; this drives the real
+    /// `MockCorporateActions` through the handover instant and proves the
+    /// windows abut rather than leaving a servable instant between them. With a
+    /// completed split at `effectiveTime` and the last pre-action push
+    /// timestamped at `effectiveTime`:
+    /// - at `effectiveTime + pauseTimeAfter` (the last paused instant — the
+    ///   post-window is inclusive) the pause gate rejects the read;
+    /// - at `effectiveTime + pauseTimeAfter + 1` (the first unpaused instant)
+    ///   the pause is off, but the push is now aged `pauseTimeAfter + 1`, which
+    ///   under the enforced `pauseTimeAfter >= maxAge` exceeds `maxAge`, so the
+    ///   staleness check rejects it.
+    ///
+    /// A gap here is exactly the HIGH this branch fixes: serving a pre-split
+    /// price after a 2:1 split reads 2x the true value and mints bad debt in
+    /// downstream lending markets.
+    ///
+    /// Note this concrete case documents the handover mechanics readably but
+    /// sits one second off the tight edge (the inclusive post-window leaves a
+    /// second of slack at `pauseTimeAfter == maxAge`). The tight guarantee — no
+    /// servable instant for ANY valid config — is fuzzed in
+    /// `testFuzzPreActionPriceNeverServed` below; both are needed.
+    function testPreActionPriceNeverServedAcrossPauseHandover() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        uint64 effectiveTime = uint64(block.timestamp);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        // The last push of the OLD epoch, timestamped exactly at the action.
+        diaOracle.setValue(SYMBOL, 100e18, effectiveTime);
+
+        // Last paused instant — the pause gate rejects, ahead of any DIA read.
+        vm.warp(uint256(effectiveTime) + PAUSE_AFTER);
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestAnswer();
+
+        // First unpaused instant — pause is off, so staleness must catch it.
+        vm.warp(uint256(effectiveTime) + PAUSE_AFTER + 1);
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(effectiveTime)));
+        oracle.latestAnswer();
+
+        // Positive control: at that same instant a strictly POST-action push is
+        // served normally, so the handover rejects only genuinely pre-action
+        // data rather than bricking the oracle outright.
+        diaOracle.setValue(SYMBOL, 50e18, uint64(block.timestamp - MAX_AGE + 1));
+        assertEq(oracle.latestAnswer(), int256(50e8), "post-action price prices normally once the pause lifts");
+    }
+
+    /// @notice The cross-epoch invariant in its strongest form: for ANY config
+    /// accepted by `initialize` and at ANY instant from the action onward, a DIA
+    /// push timestamped at or before a completed action's `effectiveTime` is
+    /// never served — the read always reverts, either paused or stale.
+    ///
+    /// This is the property the `pauseTimeAfter >= maxAge` init check exists to
+    /// buy, and fuzzing it is what makes it airtight: the concrete handover test
+    /// above only pins the default 1h/1h config, where the inclusive post-window
+    /// leaves a second of slack. Here `pauseTimeAfter` is driven right down onto
+    /// `maxAge` and the read swept across the whole paused-to-stale transition,
+    /// so any widening of the staleness edge or narrowing of the pause window
+    /// opens a servable instant and fails this test.
+    ///
+    /// Reverting is the whole assertion: a returned price at any point in this
+    /// range is a pre-action equity price paired with a post-action NAV ratio.
+    function testFuzzPreActionPriceNeverServed(
+        uint64 maxAgeSeconds,
+        uint64 extraPause,
+        uint64 pauseBefore,
+        uint64 pushOffset,
+        uint64 elapsed
+    ) external {
+        maxAgeSeconds = uint64(bound(maxAgeSeconds, 1, 30 days));
+        // `pauseTimeAfter >= maxAge` is the enforced invariant. Keep the margin
+        // TIGHT: the property can only break where the two windows meet, and a
+        // wide margin is the trivially-safe case the fuzzer would waste runs on.
+        extraPause = uint64(bound(extraPause, 0, 3));
+        uint64 pauseAfter = maxAgeSeconds + extraPause;
+        pauseBefore = uint64(bound(pauseBefore, 0, 30 days));
+        // The push is pre-action: at or just before `effectiveTime`. Pushes far
+        // earlier are strictly staler, so the tight offsets are the hard cases.
+        pushOffset = uint64(bound(pushOffset, 0, 3));
+        // Sweep a tight neighbourhood of the pause-lift instant. Outside it the
+        // read is trivially paused (earlier) or trivially stale (later — age
+        // only grows), so widening this only dilutes the runs that matter.
+        uint256 lift = uint256(pauseAfter);
+        elapsed = uint64(bound(elapsed, lift > 4 ? lift - 4 : 0, lift + 4));
+
+        // Base far enough in that no timestamp arithmetic underflows.
+        uint64 effectiveTime = uint64(365 days * 10);
+        vm.warp(effectiveTime);
+
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = maxAgeSeconds;
+        config.pauseTimeBefore = pauseBefore;
+        config.pauseTimeAfter = pauseAfter;
+        DIAVaultOracle oracle = _deployProxy(config);
+
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        diaOracle.setValue(SYMBOL, 100e18, effectiveTime - pushOffset);
+
+        vm.warp(uint256(effectiveTime) + elapsed);
+
+        (bool served, bytes memory ret) = address(oracle).staticcall(abi.encodeCall(DIAVaultOracle.latestAnswer, ()));
+        assertFalse(served, "pre-action DIA push must never be served after the action");
+        // And it must fail for one of the two intended reasons, not incidentally
+        // (e.g. an arithmetic revert), which would mask a real gap.
+        bytes4 reason = bytes4(ret);
+        assertTrue(
+            reason == OraclePausedCorporateAction.selector || reason == DIAPriceStale.selector,
+            "must revert paused or stale, not incidentally"
+        );
     }
 
     /// @notice `_readDIAChecked` reverts `DIAPriceNotSet` when the DIA value is

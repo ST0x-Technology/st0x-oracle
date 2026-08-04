@@ -103,9 +103,11 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         vm.expectRevert();
         bsd.newDIAVaultOracle(_defaultOracleConfig());
 
-        // Differing config → different deterministic address.
+        // Differing config → different deterministic address. Vary
+        // `pauseTimeAfter` (not `maxAge`) so the cross-epoch invariant
+        // `pauseTimeAfter >= maxAge` still holds for the second config.
         DIAVaultOracleConfig memory other = _defaultOracleConfig();
-        other.maxAge = _defaultOracleConfig().maxAge + 1;
+        other.pauseTimeAfter = _defaultOracleConfig().pauseTimeAfter + 1;
         DIAVaultOracle second = bsd.newDIAVaultOracle(other);
         assertTrue(address(first) != address(second), "distinct config gives distinct address");
     }

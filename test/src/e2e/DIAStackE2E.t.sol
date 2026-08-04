@@ -37,7 +37,8 @@ contract DIAStackE2ETest is Test {
     string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 2 hours;
     uint64 internal constant PAUSE_BEFORE = 1 hours;
-    uint64 internal constant PAUSE_AFTER = 1 hours;
+    // Cross-epoch invariant: pauseTimeAfter >= maxAge.
+    uint64 internal constant PAUSE_AFTER = 2 hours;
 
     function setUp() public {
         diaOracle = new MockDIAOracle();
@@ -146,7 +147,7 @@ contract DIAStackE2ETest is Test {
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
         oracle.latestAnswer();
 
-        // Warp past `effectiveTime` but stay inside the 1-hour post-window;
+        // Warp past `effectiveTime` but stay inside the post-window;
         // transition the mock from pending to completed as the real vault would.
         vm.warp(uint256(effectiveTime) + 15 minutes);
         _freshDIAAt100();
@@ -156,7 +157,7 @@ contract DIAStackE2ETest is Test {
         vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
         oracle.latestAnswer();
 
-        // Warp past the 1-hour post-window. Reads work again — at the bumped
+        // Warp past the post-window. Reads work again — at the bumped
         // NAV if one landed.
         vm.warp(uint256(effectiveTime) + uint256(PAUSE_AFTER) + 1);
         _freshDIAAt100();
