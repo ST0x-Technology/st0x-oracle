@@ -293,7 +293,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     /// (e.g. Morpho collateral priced at zero). Guarded symmetrically with the
     /// other degenerate-value reverts, and the pair stays unset.
     function test_UpdatePrice_ZeroPrice_Reverts() public {
-        bytes memory sig = _sign(PAIR_A, 0, block.timestamp);
+        bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, block.timestamp);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceZero.selector, PAIR_A));
         oracle.updatePrice(PAIR_A, 0, block.timestamp, sig);
 
@@ -311,7 +311,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     function test_UpdatePrice_WronglySignedFuturePayload_RevertsInvalidSignatureNotFuture() public {
         uint256 wrongPk = uint256(keccak256("wrong-signer"));
         uint256 future = block.timestamp + 1 hours;
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, _digest(PAIR_A, 42e18, future));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, future));
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
         oracle.updatePrice(PAIR_A, 42e18, future, abi.encodePacked(r, s, v));
     }
