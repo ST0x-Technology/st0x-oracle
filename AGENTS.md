@@ -84,14 +84,17 @@ Do not use lowercase addresses from transaction receipts directly.
   everything else).
 - `test/src/e2e/DIAStackE2E.t.sol` exercises the full DIA stack (deployers →
   proxies → reads) without forking.
-- **Fork tests** (`test/src/fork/`) fork live Base from the `BASE_RPC_URL` env
-  var. The dedicated `.github/workflows/fork-tests.yaml` job wires this from the
-  `RPC_URL_BASE_FORK` repo secret and runs them for real; the per-push rainix
-  reusable job (cross-org) doesn't inject that RPC, so there the fork tests
-  loudly log + no-op (they can't `vm.skip` — it's banned org-wide — and a hard
-  fork failure would red every run). Locally,
-  `export
-  BASE_RPC_URL=https://mainnet.base.org` before `forge test`.
+- **Fork tests** (`test/src/fork/`) fork live Base via the `base` alias in
+  `foundry.toml`'s `[rpc_endpoints]` — `vm.createSelectFork("base")`, never a
+  raw env read. This is the rainix convention and needs no dedicated workflow:
+  `rainix-sol.yaml` passes the `RPC_URL_BASE_FORK` secret to the reusable
+  workflow, whose `rpc-preflight` step probes every network the repo references
+  in `[rpc_endpoints]`, picks a healthy archive candidate, and exports it as
+  `BASE_RPC_URL` before `forge test` runs. So fork tests run for real in the
+  ordinary `rainix-sol / test` job, with upstream failover. Referencing the
+  network in `[rpc_endpoints]` is what opts the repo into that probe — add an
+  alias there before adding fork tests for a new chain. Locally,
+  `export BASE_RPC_URL=https://mainnet.base.org` before `forge test`.
 
 ## Deployment
 

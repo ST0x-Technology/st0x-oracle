@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test, console2} from "forge-std-1.16.1/src/Test.sol";
+import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {IDIAOracleV2} from "../../../src/interface/IDIAOracleV2.sol";
 import {
     DIAVaultOracle,
@@ -33,13 +33,12 @@ interface IAuthorizable {
 /// an actual stock split on the deployed tCOIN receipt vault and asserts the
 /// oracle — pointed at the wtCOIN wrapper — reverts `OraclePausedCorporateAction`.
 ///
-/// Forks Base from `BASE_RPC_URL`. The dedicated `fork-tests.yaml` workflow
-/// wires this from the `RPC_URL_BASE_FORK` repo secret and runs it for real in
-/// CI. The per-push rainix job doesn't inject that RPC (it's a cross-org
-/// reusable workflow), so when `BASE_RPC_URL` is unset this loudly logs and
-/// returns rather than erroring — `no-ignored-tests` bans `vm.skip`, and a hard
-/// `createSelectFork` failure would red every per-push run. Locally, export
-/// `BASE_RPC_URL=https://mainnet.base.org` to run it.
+/// Forks Base through the `base` alias in `foundry.toml`'s `[rpc_endpoints]`,
+/// per the rainix convention. In CI the reusable `rainix-sol` test job's
+/// rpc-preflight step binds that alias to a healthy archive endpoint from the
+/// `RPC_URL_BASE_FORK` secret pool, so this runs for real on every push
+/// alongside the rest of `forge test` — no dedicated workflow. Locally, export
+/// `BASE_RPC_URL=https://mainnet.base.org` before `forge test`.
 contract DIAVaultOracleForkBaseTest is Test {
     // Live Base deployments. Token vaults are imported from the pinned
     // st0x-deploy `LibProdTokensBase` so an st0x-deploy version bump that
@@ -108,19 +107,12 @@ contract DIAVaultOracleForkBaseTest is Test {
     }
 
     function testForkOracleAutoPausesOnRealScheduledSplit() external {
-        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            // The dedicated fork job sets FORK_TESTS=1 (see fork-tests.yaml).
-            // There a missing RPC is a misconfiguration (e.g. a lapsed repo
-            // secret) and MUST fail loudly rather than silently no-op —
-            // otherwise the only real-vault auto-pause proof would pass having
-            // verified nothing. On the per-push rainix job FORK_TESTS is unset,
-            // so this is an unambiguous non-run (no assertions were made).
-            require(vm.envOr("FORK_TESTS", uint256(0)) == 0, "BASE_RPC_URL unset in fork job");
-            console2.log("SKIP testForkOracleAutoPausesOnRealScheduledSplit: BASE_RPC_URL unset (per-push job)");
-            return;
-        }
-        vm.createSelectFork(rpc);
+        // Named alias, not a raw env read: foundry resolves `base` from
+        // `[rpc_endpoints]`, and in CI rpc-preflight has already bound it to a
+        // probed-healthy archive node. A missing endpoint fails loudly here
+        // rather than no-opping, so this real-vault auto-pause proof can never
+        // pass having verified nothing.
+        vm.createSelectFork("base");
 
         DIAVaultOracle oracle = _deployOracle();
 
