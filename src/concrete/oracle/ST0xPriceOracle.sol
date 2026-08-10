@@ -209,10 +209,16 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     /// strictly-newer payload timestamped in the FUTURE (`> block.timestamp`)
     /// reverts `PriceFuture` — it would strand `price()` behind an arithmetic
     /// underflow. A strictly-newer payload carrying a zero `price` reverts
-    /// `PriceZero`. An invalid signature on a strictly-newer payload is
-    /// malformed input and reverts `PriceUpdateInvalidSignature`; the
-    /// signature is verified before the future/zero content checks, so an
-    /// unauthenticated payload always reverts the signature error.
+    /// `PriceZero`. The signature is verified before the future/zero content
+    /// checks, so an unauthenticated payload never reverts a content-check
+    /// selector. A payload whose signature RECOVERS to a non-signer address
+    /// reverts `PriceUpdateInvalidSignature`. A SYNTACTICALLY malformed
+    /// signature (wrong length, `s` in the upper half-order, `v` not in
+    /// {27,28}) reverts inside `ECDSA.recover` FIRST, with OpenZeppelin's own
+    /// `ECDSAInvalidSignatureLength` / `ECDSAInvalidSignatureS` /
+    /// `ECDSAInvalidSignature` — so monitoring keyed on the revert selector must
+    /// treat those three as equivalent to `PriceUpdateInvalidSignature`. Every
+    /// path is fail-closed: no unsigned or malformed payload is ever applied.
     function updatePrice(bytes32 id, uint256 newPrice, uint256 newTimestamp, bytes calldata signature)
         external
         returns (bool applied)
