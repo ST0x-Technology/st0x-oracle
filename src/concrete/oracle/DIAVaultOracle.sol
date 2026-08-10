@@ -38,12 +38,15 @@ error ZeroCorporateActionsVault();
 /// required, else the auto-pause never fires despite being "configured".
 error InvalidPauseConfig();
 
-/// @dev Error raised when `pauseTimeAfter < maxAge`. The post-action pause MUST
-/// last at least as long as the DIA staleness window, otherwise a
+/// @dev Error raised when `pauseTimeAfter <= maxAge`. The post-action pause MUST
+/// last STRICTLY longer than the DIA staleness window, otherwise a
 /// stale-but-not-yet-`maxAge` pre-action DIA price can be served against the
 /// already-rebalanced post-action vault ratio once the pause lifts — mispricing
-/// collateral across a corporate-action boundary. See the contract NatSpec
-/// ("Cross-epoch safety invariant") for the full argument.
+/// collateral across a corporate-action boundary. Equality (`pauseTimeAfter ==
+/// maxAge`) tolerates zero forward feed clock skew and is rejected; the margin
+/// `pauseTimeAfter - maxAge` must exceed the DIA feed's worst-case forward skew.
+/// See the contract NatSpec ("Cross-epoch safety invariant") for the full
+/// argument.
 /// @param pauseTimeAfter The configured post-action pause (seconds).
 /// @param maxAge The configured DIA staleness window (seconds).
 error PauseTimeAfterBelowMaxAge(uint256 pauseTimeAfter, uint256 maxAge);
@@ -72,7 +75,12 @@ error ZeroVaultSupply();
 /// price is never a valid Chainlink-compatible answer.
 error ZeroVaultSharePrice();
 
-/// @dev Error raised when the vault share price overflows int256.
+/// @dev Error raised when the vault share price, though it fits uint256,
+/// exceeds `int256.max` and so cannot be returned as the signed Chainlink
+/// answer. A price so large it overflows uint256 during the 8-decimal scaling
+/// aborts EARLIER inside `LibDecimalFloat` with its own `FixedDecimalOverflow`
+/// error, not this one — both are fail-closed, but only this int256-band case
+/// carries the contract's own selector.
 /// @param price8 The unsigned 8-decimal share price that wouldn't fit.
 error VaultSharePriceOverflow(uint256 price8);
 
@@ -105,13 +113,17 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// start pausing.
 /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
 /// keep pausing. At least one of before/after must be non-zero, AND
-/// `pauseTimeAfter >= maxAge` is REQUIRED and enforced at init
+/// `pauseTimeAfter > maxAge` (STRICTLY) is REQUIRED and enforced at init
 /// (`PauseTimeAfterBelowMaxAge`) — the post-action pause must outlast the DIA
 /// staleness window so a pre-action price can never be served against the
-/// post-action ratio. The exact-equality boundary (`pauseTimeAfter == maxAge`)
-/// is safe: the staleness check rejects the `maxAge` edge, so at pause-lift the
-/// oldest still-acceptable push is strictly newer than `effectiveTime`. A
-/// margin above `maxAge` is still recommended as defence-in-depth.
+/// post-action ratio. The margin `pauseTimeAfter - maxAge` is the maximum
+/// forward DIA feed clock skew this config tolerates: because staleness is aged
+/// from the push's own (skewable) source timestamp, a feed running `skew`
+/// seconds fast can present a pre-action observation stamped up to `skew` after
+/// `effectiveTime`, and only a margin exceeding `skew` guarantees every
+/// still-acceptable push at pause-lift was observed at or after `effectiveTime`.
+/// Size the margin above the feed's worst-case forward skew (the prod config's
+/// 1h margin over a 2h `maxAge` is the reference).
 /// @dev The corporate-actions vault is NOT a config field: it is derived as
 /// `IERC4626(vault).asset()` — the tStock the wtStock wraps, which is the
 /// contract that implements `ICorporateActionsV1`. Deriving it removes a
@@ -179,9 +191,15 @@ struct DIAVaultOracleConfig {
 /// handled by the mandatory auto-pause below.
 ///
 /// Pointing this oracle at an arbitrary third-party ERC-4626 remains
-/// unsupported — not because of donations, but because nothing outside the
-/// ST0x stack guarantees the corporate-action wiring the auto-pause depends
-/// on. See `_vaultSharePrice` for the per-function note.
+/// unsupported, for TWO reasons. First, nothing outside the ST0x stack
+/// guarantees the corporate-action wiring the auto-pause depends on. Second,
+/// `_vaultSharePrice` uses the RAW `totalAssets/totalSupply` as assets-per-
+/// share, which only holds when the vault's share decimals equal its asset
+/// decimals (a zero ERC-4626 decimals offset, as the production `wtStock`
+/// has). A vault with a non-zero decimals offset is mispriced by `10^offset`
+/// in one orientation and bricks (`ZeroVaultSharePrice`) in the other — so
+/// "unsupported" here means mispriced, not merely un-pausable. See
+/// `_vaultSharePrice` for the per-function note.
 ///
 /// Auto-pause: on every read the oracle consults `ICorporateActionsV1` on the
 /// corporate-actions vault — derived as the priced vault's `asset()`, i.e. the
@@ -194,26 +212,34 @@ struct DIAVaultOracleConfig {
 /// admin: config is immutable, set once at initialize; to change anything,
 /// deploy a fresh proxy and migrate consumers.
 ///
-/// Cross-epoch safety invariant (`pauseTimeAfter >= maxAge`, enforced at init):
-/// the share price multiplies a DIA equity price by the vault's LIVE
+/// Cross-epoch safety invariant (`pauseTimeAfter > maxAge` STRICTLY, enforced at
+/// init): the share price multiplies a DIA equity price by the vault's LIVE
 /// `totalAssets/totalSupply` ratio. Those two inputs must belong to the same
 /// corporate-action epoch. When an action completes, the vault ratio rebalances
 /// atomically, but DIA keeps serving the pre-action equity price until its next
 /// push — up to `maxAge` seconds. The post-window pause is the only barrier
-/// between the two epochs. If `pauseTimeAfter < maxAge` the pause lifts while a
-/// pre-action DIA price is still within `maxAge` (hence accepted by the
-/// staleness check), and that stale price pairs with the already-rebalanced
-/// ratio: on a 2:1 split the share is valued at ~2x, letting a borrower draw
-/// against phantom collateral (bad debt). Requiring `pauseTimeAfter >= maxAge`
-/// makes the oldest still-acceptable push at pause-lift STRICTLY NEWER than the
-/// action's `effectiveTime`: the staleness check rejects the exact-`maxAge`
-/// edge (`age >= maxAge` is stale), so at the pause-lift instant
-/// `t = effectiveTime + pauseTimeAfter` any served push is timestamped
-/// `> t - maxAge >= effectiveTime`. The equal boundary (`pauseTimeAfter ==
-/// maxAge`) is therefore airtight — no same-instant ambiguity — so only
-/// same-epoch (post-action) prices are ever served. The staleness check alone
-/// is NOT sufficient — it bounds age, not epoch; the invariant plus the
-/// edge-rejecting staleness together are what close the window.
+/// between the two epochs. If the pause lifts while a pre-action DIA price is
+/// still within `maxAge` (hence accepted by the staleness check), that stale
+/// price pairs with the already-rebalanced ratio: on a 2:1 split the share is
+/// valued at ~2x, letting a borrower draw against phantom collateral (bad debt).
+///
+/// The subtlety is which CLOCK ages the push. Staleness is measured from the
+/// push's own DIA SOURCE timestamp, not from when it landed on chain, and that
+/// source clock is outside our control. A feed running `skew` seconds fast
+/// stamps a pre-action observation as far as `skew` AFTER `effectiveTime`, so at
+/// the pause-lift instant `t = effectiveTime + pauseTimeAfter` a served push is
+/// only guaranteed timestamped `> t - maxAge`, i.e. `> effectiveTime +
+/// (pauseTimeAfter - maxAge)` in source time — which corresponds to a real
+/// OBSERVATION at or after `effectiveTime` only when the margin `pauseTimeAfter
+/// - maxAge` exceeds the feed's forward skew. Equality (`pauseTimeAfter ==
+/// maxAge`) leaves a zero margin: a feed even one second fast reopens the
+/// window (a 2s skew serves the pre-split price at 2x — verified). Init
+/// therefore REQUIRES a strictly positive margin (`pauseTimeAfter > maxAge`),
+/// and operators MUST size that margin above their feed's worst-case forward
+/// clock skew — the strict check is the enforceable floor, not a guarantee that
+/// any positive margin suffices. The staleness check alone is NOT sufficient —
+/// it bounds age, not epoch; the invariant, the edge-rejecting staleness, and a
+/// skew-covering margin together are what close the window.
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
@@ -335,18 +361,30 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
             revert InvalidPauseConfig();
         }
 
-        // Cross-epoch safety invariant: the post-action pause must outlast the
-        // DIA staleness window. The vault's NAV ratio rebalances the instant a
-        // corporate action completes, but DIA may still serve the pre-action
-        // equity price for up to `maxAge` seconds afterwards. The pause is the
-        // only thing separating those two epochs; if it lifts while a pre-action
-        // price is still "fresh" (`pauseTimeAfter < maxAge`), that price pairs
-        // with the post-action ratio and misprices the share (e.g. ~2x on a 2:1
-        // split → over-borrow → bad debt). `pauseTimeAfter >= maxAge` guarantees
-        // that once the pause lifts, the oldest still-acceptable DIA push was
-        // timestamped at or after the action's `effectiveTime`. See the
-        // contract NatSpec for the full argument.
-        if (config.pauseTimeAfter < config.maxAge) {
+        // Cross-epoch safety invariant: the post-action pause must STRICTLY
+        // outlast the DIA staleness window. The vault's NAV ratio rebalances the
+        // instant a corporate action completes, but DIA may still serve the
+        // pre-action equity price for up to `maxAge` seconds afterwards. The
+        // pause is the only thing separating those two epochs; if it lifts while
+        // a pre-action price is still "fresh" that price pairs with the
+        // post-action ratio and misprices the share (e.g. ~2x on a 2:1 split →
+        // over-borrow → bad debt).
+        //
+        // The staleness age is measured from the DIA push's OWN source
+        // timestamp, NOT from when it landed on chain, so a feed whose clock
+        // runs forward by `skew` stamps a pre-action observation as far as
+        // `skew` seconds AFTER `effectiveTime` — and that push is then accepted
+        // for the whole `maxAge` window past its (skewed) timestamp. The margin
+        // `pauseTimeAfter - maxAge` is exactly the forward feed skew this config
+        // tolerates: at pause-lift the oldest still-acceptable push was OBSERVED
+        // at or after `effectiveTime` only if that margin exceeds the feed's max
+        // forward skew. `>=` (equality) tolerates ZERO skew and is therefore
+        // rejected — a strictly positive margin is required, and operators MUST
+        // size it above their feed's worst-case forward clock error (the prod
+        // config's 1h margin over a 2h maxAge is the reference). See the
+        // contract NatSpec ("Cross-epoch safety invariant") for the full
+        // argument.
+        if (config.pauseTimeAfter <= config.maxAge) {
             revert PauseTimeAfterBelowMaxAge(config.pauseTimeAfter, config.maxAge);
         }
 
@@ -405,11 +443,21 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
 
     /// @inheritdoc AggregatorV2V3Interface
     /// @dev `roundId` and `answeredInRound` are derived from the DIA push
-    /// `timestamp` (truncated to `uint80`) so they advance monotonically per
-    /// Chainlink convention without adding storage. Integrators that diff
-    /// `roundId` between calls to detect a fresh update will see a different
-    /// value whenever DIA has produced a new push. The `uint80` window
-    /// covers every plausible deployment lifetime.
+    /// `timestamp` (truncated to `uint80`) so they change whenever DIA produces
+    /// a new push, without adding storage. They are a FRESHNESS token, not a
+    /// strictly monotonic counter: if DIA ever republishes a lower source
+    /// timestamp (a corrected push, a source-clock regression) the id moves
+    /// backwards, so integrators should diff for inequality — NOT assert
+    /// `roundId > lastSeen`. The `uint80` window covers every plausible
+    /// deployment lifetime.
+    ///
+    /// `startedAt`/`updatedAt` are the push's source timestamp CLAMPED to
+    /// `block.timestamp`. `_readDIAChecked` deliberately accepts a future-dated
+    /// push (a feed running slightly ahead) as fresh; returning that raw
+    /// future timestamp here would make a Chainlink-style consumer computing
+    /// `block.timestamp - updatedAt` underflow-revert. Clamping reports such a
+    /// fresh push as age 0 — which is what "fresh" means — and never emits a
+    /// timestamp ahead of the block clock.
     function latestRoundData()
         external
         view
@@ -421,7 +469,14 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         int256 scaledPrice = _vaultSharePrice(diaPrice);
 
         uint80 round = uint80(timestamp);
-        return (round, scaledPrice, timestamp, timestamp, round);
+        // Slither `timestamp` FALSE POSITIVE: block.timestamp is used only to
+        // CLAMP the reported push time to the local clock (so a future-dated
+        // push never reports an age below zero to a consumer), not for any value
+        // or authorisation decision. Proposer drift on block.timestamp only
+        // shifts the clamp point by seconds.
+        // slither-disable-next-line timestamp
+        uint256 reportedAt = uint256(timestamp) > block.timestamp ? block.timestamp : uint256(timestamp);
+        return (round, scaledPrice, reportedAt, reportedAt, round);
     }
 
     /// @inheritdoc AggregatorV2V3Interface
@@ -468,10 +523,12 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // cannot disambiguate from `DIAPriceStale` / `DIAPriceNotSet`.
         //
         // The staleness edge fails closed (`>=`): a push exactly `maxAge` old is
-        // STALE. This is deliberate — it makes the cross-epoch invariant
-        // (`pauseTimeAfter >= maxAge`, see the contract NatSpec) airtight at the
-        // exact-equality boundary, and matches the fail-closed staleness
-        // convention (the edge counts as stale).
+        // STALE. This is deliberate — it tightens the cross-epoch invariant by
+        // one second (see the contract NatSpec) and matches the fail-closed
+        // staleness convention (the edge counts as stale). It does NOT on its
+        // own make the invariant "airtight" — the margin `pauseTimeAfter -
+        // maxAge` must still cover the feed's forward source-clock skew, which
+        // is why init requires that margin to be strictly positive.
         // slither-disable-next-line timestamp
         if (uint256(timestamp) <= block.timestamp && block.timestamp - uint256(timestamp) >= $.maxAge) {
             revert DIAPriceStale(uint256(timestamp));

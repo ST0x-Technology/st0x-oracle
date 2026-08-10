@@ -49,13 +49,13 @@ contract DIAVaultOracleForkBaseTest is Test {
     address constant TCOIN = LibProdTokensBase.COIN_RECEIPT_VAULT; // receipt vault, ICorporateActionsV1
 
     uint64 constant PAUSE_BEFORE = 1 hours;
-    // Satisfies the cross-epoch invariant `pauseTimeAfter >= maxAge`. The DIA
-    // feed is mocked to a fresh value for the pre-schedule read (see
-    // `_seedFreshDIA`), so `maxAge` no longer depends on how recently the LIVE
-    // DIA `COIN` feed was pushed at the fork block — the fork test's real
-    // subject is the corporate-action vault, not DIA.
+    // Satisfies the cross-epoch invariant `pauseTimeAfter > maxAge` (strict, with
+    // a positive skew margin). The DIA feed is mocked to a fresh value for the
+    // pre-schedule read (see `_seedFreshDIA`), so `maxAge` no longer depends on
+    // how recently the LIVE DIA `COIN` feed was pushed at the fork block — the
+    // fork test's real subject is the corporate-action vault, not DIA.
     uint256 constant MAX_AGE = 1 hours;
-    uint64 constant PAUSE_AFTER = 1 hours;
+    uint64 constant PAUSE_AFTER = 2 hours;
 
     function _deployOracle() internal returns (DIAVaultOracle) {
         DIAVaultOracleBeaconSetDeployer bsd = new DIAVaultOracleBeaconSetDeployer(

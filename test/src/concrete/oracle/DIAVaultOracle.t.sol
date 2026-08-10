@@ -44,7 +44,10 @@ contract DIAVaultOracleTest is Test {
     string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 1 hours;
     uint64 internal constant PAUSE_BEFORE = 3600;
-    uint64 internal constant PAUSE_AFTER = 3600;
+    // Strictly greater than MAX_AGE: the cross-epoch invariant now requires a
+    // positive margin (`pauseTimeAfter > maxAge`) to cover DIA feed forward
+    // clock skew, so the default config carries a 1h margin over the 1h maxAge.
+    uint64 internal constant PAUSE_AFTER = 2 hours;
 
     event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
 
@@ -129,7 +132,7 @@ contract DIAVaultOracleTest is Test {
     }
 
     /// @notice A pre-window-ONLY config (`pauseTimeAfter == 0`) is REJECTED: it
-    /// violates the cross-epoch invariant `pauseTimeAfter >= maxAge`. With no
+    /// violates the cross-epoch invariant `pauseTimeAfter > maxAge`. With no
     /// post-window, the oracle would resume serving the instant a split
     /// completes, pairing a still-fresh pre-split DIA price with the
     /// already-rebalanced post-split ratio — the exact mispricing the invariant
@@ -145,8 +148,8 @@ contract DIAVaultOracleTest is Test {
     }
 
     /// @notice A post-window-only config (`pauseTimeBefore == 0`) is valid as
-    /// long as `pauseTimeAfter >= maxAge`. The default `PAUSE_AFTER == MAX_AGE`
-    /// sits exactly on the boundary, which init accepts.
+    /// long as `pauseTimeAfter > maxAge`. The default `PAUSE_AFTER` carries a
+    /// positive margin over `MAX_AGE`, which init accepts.
     function testInitSucceedsWithOnlyPostWindow() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = 0;
@@ -159,8 +162,8 @@ contract DIAVaultOracleTest is Test {
     }
 
     /// @notice The cross-epoch invariant is enforced at init: `pauseTimeAfter`
-    /// strictly below `maxAge` reverts `PauseTimeAfterBelowMaxAge`, and the
-    /// exact boundary `pauseTimeAfter == maxAge` is accepted.
+    /// below `maxAge` reverts `PauseTimeAfterBelowMaxAge`, and one second above
+    /// `maxAge` (the minimum positive margin) is accepted.
     function testInitRevertsWhenPauseAfterBelowMaxAge() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.maxAge = 2 hours;
@@ -170,15 +173,25 @@ contract DIAVaultOracleTest is Test {
             abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(2 hours) - 1, uint256(2 hours))
         );
         oracle.initialize(abi.encode(config));
+
+        // One second of margin over maxAge is the minimum init accepts.
+        config.pauseTimeAfter = uint64(2 hours) + 1;
+        DIAVaultOracle ok = _deployUninit();
+        assertEq(ok.initialize(abi.encode(config)), ICLONEABLE_V2_SUCCESS, "strictly-positive margin is accepted");
     }
 
-    function testInitAcceptsPauseAfterEqualToMaxAge() external {
+    /// @notice `pauseTimeAfter == maxAge` (zero margin) is REJECTED. A zero
+    /// margin tolerates zero forward feed clock skew, so a feed running even one
+    /// second fast could serve a pre-action price at pause-lift — the exact
+    /// cross-epoch mispricing this invariant closes. Init requires a strictly
+    /// positive margin.
+    function testInitRejectsPauseAfterEqualToMaxAge() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.maxAge = 2 hours;
-        config.pauseTimeAfter = uint64(2 hours); // exactly on the boundary
+        config.pauseTimeAfter = uint64(2 hours); // exactly on the boundary — now rejected
         DIAVaultOracle oracle = _deployUninit();
-        bytes32 ok = oracle.initialize(abi.encode(config));
-        assertEq(ok, ICLONEABLE_V2_SUCCESS, "pauseTimeAfter == maxAge is on the safe boundary");
+        vm.expectRevert(abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(2 hours), uint256(2 hours)));
+        oracle.initialize(abi.encode(config));
     }
 
     /// @notice A corporate-actions vault whose facet reverts must fail the
@@ -697,18 +710,16 @@ contract DIAVaultOracleTest is Test {
     ///   post-window is inclusive) the pause gate rejects the read;
     /// - at `effectiveTime + pauseTimeAfter + 1` (the first unpaused instant)
     ///   the pause is off, but the push is now aged `pauseTimeAfter + 1`, which
-    ///   under the enforced `pauseTimeAfter >= maxAge` exceeds `maxAge`, so the
+    ///   under the enforced `pauseTimeAfter > maxAge` exceeds `maxAge`, so the
     ///   staleness check rejects it.
     ///
-    /// A gap here is exactly the HIGH this branch fixes: serving a pre-split
-    /// price after a 2:1 split reads 2x the true value and mints bad debt in
-    /// downstream lending markets.
+    /// A gap here is exactly the HIGH this file's fix addresses: serving a
+    /// pre-split price after a 2:1 split reads 2x the true value and mints bad
+    /// debt in downstream lending markets.
     ///
-    /// Note this concrete case documents the handover mechanics readably but
-    /// sits one second off the tight edge (the inclusive post-window leaves a
-    /// second of slack at `pauseTimeAfter == maxAge`). The tight guarantee — no
-    /// servable instant for ANY valid config — is fuzzed in
-    /// `testFuzzPreActionPriceNeverServed` below; both are needed.
+    /// This concrete case pins pushes stamped at or before `effectiveTime`;
+    /// the all-config version is fuzzed in `testFuzzPreActionPriceNeverServed`,
+    /// and the forward-skew case in `testForwardSkewIsRejectedWithinMargin`.
     function testPreActionPriceNeverServedAcrossPauseHandover() external {
         DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         vault.setTotalAssets(1e18);
@@ -741,13 +752,16 @@ contract DIAVaultOracleTest is Test {
     /// push timestamped at or before a completed action's `effectiveTime` is
     /// never served — the read always reverts, either paused or stale.
     ///
-    /// This is the property the `pauseTimeAfter >= maxAge` init check exists to
-    /// buy, and fuzzing it is what makes it airtight: the concrete handover test
-    /// above only pins the default 1h/1h config, where the inclusive post-window
-    /// leaves a second of slack. Here `pauseTimeAfter` is driven right down onto
-    /// `maxAge` and the read swept across the whole paused-to-stale transition,
-    /// so any widening of the staleness edge or narrowing of the pause window
-    /// opens a servable instant and fails this test.
+    /// This is the property the `pauseTimeAfter > maxAge` init check exists to
+    /// buy for pushes observed no later than the action. Fuzzing it sweeps the
+    /// read across the whole paused-to-stale transition at a tight positive
+    /// margin, so any widening of the staleness edge or narrowing of the pause
+    /// window opens a servable instant and fails this test.
+    ///
+    /// Scope: the push here is stamped at or BEFORE `effectiveTime`. A push
+    /// stamped AFTER `effectiveTime` by forward feed clock skew is a separate
+    /// case whose tolerance is the config margin — see
+    /// `testForwardSkewIsRejectedWithinMargin`.
     ///
     /// Reverting is the whole assertion: a returned price at any point in this
     /// range is a pre-action equity price paired with a post-action NAV ratio.
@@ -759,10 +773,11 @@ contract DIAVaultOracleTest is Test {
         uint64 elapsed
     ) external {
         maxAgeSeconds = uint64(bound(maxAgeSeconds, 1, 30 days));
-        // `pauseTimeAfter >= maxAge` is the enforced invariant. Keep the margin
-        // TIGHT: the property can only break where the two windows meet, and a
-        // wide margin is the trivially-safe case the fuzzer would waste runs on.
-        extraPause = uint64(bound(extraPause, 0, 3));
+        // `pauseTimeAfter > maxAge` (strict) is the enforced invariant, so the
+        // margin is at least 1. Keep it TIGHT: the property can only break where
+        // the two windows meet, and a wide margin is the trivially-safe case the
+        // fuzzer would waste runs on.
+        extraPause = uint64(bound(extraPause, 1, 4));
         uint64 pauseAfter = maxAgeSeconds + extraPause;
         pauseBefore = uint64(bound(pauseBefore, 0, 30 days));
         // The push is pre-action: at or just before `effectiveTime`. Pushes far
@@ -800,6 +815,54 @@ contract DIAVaultOracleTest is Test {
             reason == OraclePausedCorporateAction.selector || reason == DIAPriceStale.selector,
             "must revert paused or stale, not incidentally"
         );
+    }
+
+    /// @notice The cross-epoch fix in its precise form: the config margin
+    /// (`pauseTimeAfter - maxAge`) is exactly the forward feed clock skew the
+    /// deployment tolerates. A pre-action push stamped up to `margin` seconds
+    /// AFTER `effectiveTime` (as a fast feed would stamp a last pre-split
+    /// observation) is rejected at pause-lift; a push skewed BEYOND the margin
+    /// is the residual the operator must size the margin against.
+    ///
+    /// This is what enforcing a strictly-positive margin buys, and why equality
+    /// (zero margin, zero skew tolerance) is rejected at init. With margin M, a
+    /// push stamped `E + δ` has age `pauseTimeAfter + 1 - δ` at the first
+    /// unpaused instant, which is `>= maxAge` (stale) exactly while `δ <= M + 1`.
+    function testForwardSkewIsRejectedWithinMargin() external {
+        // maxAge 1h, pauseAfter 1h + 10s: this config tolerates ~10s of skew.
+        uint64 maxAge = 1 hours;
+        uint64 margin = 10;
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = maxAge;
+        config.pauseTimeAfter = maxAge + margin;
+
+        uint64 E = uint64(block.timestamp);
+
+        // A pre-action observation stamped `margin` seconds ahead by a fast
+        // feed. Within tolerance -> must be rejected (stale) at pause-lift.
+        DIAVaultOracle o1 = _deployProxy(config);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, E);
+        diaOracle.setValue(SYMBOL, 100e18, uint128(uint256(E) + margin));
+        vault.setTotalAssets(2e18); // 2:1 split
+        vm.warp(uint256(E) + uint256(config.pauseTimeAfter) + 1);
+        (bool served,) = address(o1).staticcall(abi.encodeCall(DIAVaultOracle.latestAnswer, ()));
+        assertFalse(served, "a push skewed within the margin must be rejected, not served at 2x");
+
+        // Skewed BEYOND the margin (margin + 2): this is the documented residual
+        // — the operator's margin was too small for this feed's skew, so the
+        // stale pre-split price IS served. Pinning it keeps the tolerance
+        // boundary honest rather than implying any positive margin is safe.
+        vm.warp(E);
+        DIAVaultOracle o2 = _deployProxy(config);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, E);
+        diaOracle.setValue(SYMBOL, 100e18, uint128(uint256(E) + margin + 2));
+        vault.setTotalAssets(2e18);
+        vm.warp(uint256(E) + uint256(config.pauseTimeAfter) + 1);
+        assertEq(o2.latestAnswer(), int256(200e8), "skew beyond the margin is the operator-owned residual");
     }
 
     /// @notice `_readDIAChecked` reverts `DIAPriceNotSet` when the DIA value is
@@ -910,6 +973,26 @@ contract DIAVaultOracleTest is Test {
         assertEq(uint256(answeredInRound), uint256(timestamp));
         assertEq(startedAt, uint256(timestamp));
         assertEq(updatedAt, uint256(timestamp));
+    }
+
+    /// @notice A future-dated DIA push (a feed running ahead — accepted as fresh
+    /// by `_readDIAChecked`) must NOT propagate a future `updatedAt`/`startedAt`
+    /// through `latestRoundData`: they are clamped to `block.timestamp` so a
+    /// Chainlink-style consumer computing `block.timestamp - updatedAt` reads
+    /// age 0 instead of underflow-reverting. `roundId` still reflects the raw
+    /// push timestamp (freshness token). Issue: C3.
+    function testLatestRoundDataClampsFutureTimestamp() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        uint128 futureTs = uint128(block.timestamp + 100);
+        diaOracle.setValue(SYMBOL, 100e18, futureTs);
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        (uint80 roundId,, uint256 startedAt, uint256 updatedAt,) = oracle.latestRoundData();
+        assertEq(updatedAt, block.timestamp, "updatedAt clamped to now, never ahead of the block clock");
+        assertEq(startedAt, block.timestamp, "startedAt clamped identically");
+        assertLe(updatedAt, block.timestamp, "updatedAt must never exceed block.timestamp");
+        assertEq(uint256(roundId), uint256(futureTs), "roundId still tracks the raw push timestamp");
     }
 
     function testLatestRoundDataMatchesLatestAnswer() external {

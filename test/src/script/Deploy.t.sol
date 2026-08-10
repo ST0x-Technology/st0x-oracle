@@ -76,7 +76,7 @@ contract DeployTest is Test {
             maxAge: 1 hours,
             actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
             pauseTimeBefore: 3600,
-            pauseTimeAfter: 3600
+            pauseTimeAfter: 7200 // > maxAge (strict cross-epoch margin)
         });
     }
 
