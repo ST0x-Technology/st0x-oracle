@@ -58,7 +58,7 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
             maxAge: MAX_AGE,
             actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
             pauseTimeBefore: 3600,
-            pauseTimeAfter: 3600
+            pauseTimeAfter: 7200 // > maxAge (strict cross-epoch margin)
         });
     }
 
@@ -112,7 +112,7 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
 
         // Differing config → different deterministic address. Vary
         // `pauseTimeAfter` (not `maxAge`) so the cross-epoch invariant
-        // `pauseTimeAfter >= maxAge` still holds for the second config.
+        // `pauseTimeAfter > maxAge` still holds for the second config.
         DIAVaultOracleConfig memory other = _defaultOracleConfig();
         other.pauseTimeAfter = _defaultOracleConfig().pauseTimeAfter + 1;
         DIAVaultOracle second = bsd.newDIAVaultOracle(other);

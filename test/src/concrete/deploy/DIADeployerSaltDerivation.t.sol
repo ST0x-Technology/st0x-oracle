@@ -56,7 +56,7 @@ contract DIADeployerSaltDerivationTest is Test {
             maxAge: MAX_AGE,
             actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
             pauseTimeBefore: 3600,
-            pauseTimeAfter: 3600
+            pauseTimeAfter: 7200 // > maxAge (strict cross-epoch margin)
         });
     }
 

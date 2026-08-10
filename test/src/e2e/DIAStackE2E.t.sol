@@ -37,8 +37,8 @@ contract DIAStackE2ETest is Test {
     string internal constant SYMBOL = "COIN";
     uint256 internal constant MAX_AGE = 2 hours;
     uint64 internal constant PAUSE_BEFORE = 1 hours;
-    // Cross-epoch invariant: pauseTimeAfter >= maxAge.
-    uint64 internal constant PAUSE_AFTER = 2 hours;
+    // Cross-epoch invariant: pauseTimeAfter > maxAge (strict, positive margin).
+    uint64 internal constant PAUSE_AFTER = 3 hours;
 
     function setUp() public {
         diaOracle = new MockDIAOracle();
