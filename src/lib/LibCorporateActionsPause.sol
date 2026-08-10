@@ -77,9 +77,17 @@ library LibCorporateActionsPause {
         // from `ICorporateActionsV1` — cursor `0` is a real bootstrap node and
         // must NOT be treated as "no match".
         // `effectiveTime == 0` is the documented sentinel for a cancelled
-        // (unlinked) node; under the upstream unlinking contract such a node
-        // is never returned by the traversal API, but we reject it here as
-        // defence-in-depth so a leaked cancelled node cannot yield `(true, 0)`.
+        // (unlinked) node; under the upstream unlinking contract such a node is
+        // never returned by the traversal API. On THIS (pending) branch the
+        // `pendingEffective != 0` conjunct is belt-and-suspenders that is
+        // actually SUBSUMED by the `pendingEffective > block.timestamp`
+        // re-assertion below: `0 > block.timestamp` is false, so a leaked
+        // cancelled node is rejected by that check regardless. The conjunct is
+        // kept for symmetry and self-documentation, but note it is the
+        // `> block.timestamp` re-assertion — not the `!= 0` term — that closes
+        // the phantom-node hole here. (On the COMPLETED branch the `!= 0` twin
+        // IS load-bearing, because there the re-assertion is `<= block.timestamp`,
+        // which `0` satisfies.)
         if (pendingCursor != NODE_NONE && pendingEffective != 0) {
             // Defence-in-depth: re-assert the PENDING filter's invariant
             // locally. `pendingEffective > now` is guaranteed server-side by
