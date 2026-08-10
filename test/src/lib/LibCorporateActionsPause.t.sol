@@ -12,6 +12,7 @@ import {
     CorporateActionsUnavailable
 } from "../../mocks/MockRevertingCorporateActions.sol";
 import {MockStringRevertingCorporateActions} from "../../mocks/MockStringRevertingCorporateActions.sol";
+import {MockMalformedCorporateActions} from "../../mocks/MockMalformedCorporateActions.sol";
 
 contract LibCorporateActionsPauseTest is Test {
     MockCorporateActions internal mock;
@@ -166,6 +167,51 @@ contract LibCorporateActionsPauseTest is Test {
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
         assertEq(paused, true);
         assertEq(ts, effectiveTime);
+    }
+
+    /// Every other completed-branch test runs with `pauseTimeBefore ==
+    /// pauseTimeAfter` (both `3600`), so swapping the two parameters inside the
+    /// post-window predicate is invisible to them — only a fuzz run in the
+    /// consumer suite happened to catch it, which is seed-dependent. This pins
+    /// deterministically that the POST-window is sized by `pauseTimeAfter`
+    /// alone, using deliberately asymmetric windows in BOTH directions:
+    ///   (a) a short `before` and long `after` must still pause on a completed
+    ///       action 100s old (the mutation `+ pauseTimeBefore` would compute
+    ///       `now <= now - 100 + 10` and NOT pause), and
+    ///   (b) a long `before` and short `after` must NOT pause on that same
+    ///       action (the mutation would compute `now <= now - 100 + 3600` and
+    ///       spuriously pause).
+    function testPostWindowIsSizedByPauseTimeAfterNotBefore() external {
+        uint64 effectiveTime = uint64(block.timestamp - 100);
+        mock.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        // (a) after = 3600 covers the 100s-old action; before = 10 is irrelevant.
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 10, 3600);
+        assertEq(paused, true, "post-window must be sized by pauseTimeAfter (3600 > 100)");
+        assertEq(ts, effectiveTime);
+
+        // (b) after = 10 does NOT cover it; the large before must not leak in.
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 3600, 10);
+        assertEq(paused, false, "pauseTimeBefore must not widen the post-window (10 < 100)");
+        assertEq(ts, 0);
+    }
+
+    /// Mirror of the above for the PRE-window: it is sized by `pauseTimeBefore`
+    /// alone. (a) before = 3600 opens on a pending action 100s out even when
+    /// after = 10; (b) before = 10 does not, even when after = 3600.
+    function testPreWindowIsSizedByPauseTimeBeforeNotAfter() external {
+        uint64 effectiveTime = uint64(block.timestamp + 100);
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 3600, 10);
+        assertEq(paused, true, "pre-window must be sized by pauseTimeBefore (3600 > 100)");
+        assertEq(ts, effectiveTime);
+
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 10, 3600);
+        assertEq(paused, false, "pauseTimeAfter must not widen the pre-window (10 < 100)");
+        assertEq(ts, 0);
     }
 
     // -------- Mask filtering --------
@@ -349,6 +395,27 @@ contract LibCorporateActionsPauseTest is Test {
         assertEq(ts, 0);
     }
 
+    /// The INIT strip must be applied to the PENDING query too, not just the
+    /// COMPLETED one. `testWildcardMaskIgnoresBootstrapInitNode` only exercises
+    /// the completed side, so passing the raw (un-stripped) `mask` to
+    /// `earliestActionOfType` while stripping it for `latestActionOfType` goes
+    /// unnoticed. An INIT-typed node that is still PENDING is exactly the shape
+    /// the strip exists to suppress — the bootstrap entry is a price-irrelevant
+    /// bookkeeping row, so it must not open a pre-window under the recommended
+    /// `type(uint256).max` mask either. Discriminating value: not paused with a
+    /// zero effectiveTime, versus `(true, effectiveTime)` if the pending query
+    /// forwards the unstripped mask.
+    function testWildcardMaskIgnoresInitNodeOnPendingQuery() external {
+        uint64 effectiveTime = uint64(block.timestamp + BEFORE / 2);
+        // The only "action" is an INIT-typed node sitting squarely inside the
+        // pre-window; the wildcard mask must still not pause on it.
+        mock.setEarliestPending(1, ACTION_TYPE_INIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), type(uint256).max, BEFORE, AFTER);
+        assertEq(paused, false, "INIT node must not open a pre-window: the PENDING query must strip the INIT bit");
+        assertEq(ts, 0);
+    }
+
     /// The INIT strip must not disarm the wildcard mask for REAL actions: a
     /// completed stock split under `type(uint256).max` still pauses.
     function testWildcardMaskStillMatchesRealAction() external {
@@ -477,6 +544,46 @@ contract LibCorporateActionsPauseTest is Test {
         (bool paused, uint64 ts) =
             LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, 0, AFTER);
         assertEq(paused, false, "phantom PENDING at exactly now must be skipped by the local filter re-assertion");
+        assertEq(ts, 0);
+    }
+
+    // -------- Cursor is authoritative over effectiveTime --------
+
+    /// The CURSOR is the no-match sentinel, not the effectiveTime. A vault that
+    /// returned the incoherent pair `(NODE_NONE, type, futureTime)` — no-match
+    /// cursor next to a live-looking pre-window effectiveTime — must be read as
+    /// "no pending action". `MockCorporateActions` cannot express this pair (it
+    /// derives no-match from the cursor and always zeroes the tuple), so a
+    /// regression loosening the guard to `pendingCursor != NODE_NONE ||
+    /// pendingEffective != 0` would enter the branch on a pure sentinel and
+    /// pause on a phantom whose "effectiveTime" is really the traversal's
+    /// zero-value padding. Discriminating value: `(false, 0)` rather than
+    /// `(true, effectiveTime)`.
+    function testNodeNoneCursorWithLiveEffectiveTimeIsNoMatchPending() external {
+        MockMalformedCorporateActions malformed = new MockMalformedCorporateActions();
+        uint64 effectiveTime = uint64(block.timestamp + BEFORE / 2);
+        malformed.setEarliestRaw(NODE_NONE, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        // Completed side left at the coherent no-match default (cursor 0 is a
+        // real slot, so zero its effectiveTime to keep it inert).
+        malformed.setLatestRaw(NODE_NONE, 0, 0);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(malformed), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, false, "NODE_NONE pending cursor must be no-match even with a live-looking effectiveTime");
+        assertEq(ts, 0);
+    }
+
+    /// Symmetric to the above on the COMPLETED branch: a `NODE_NONE` cursor
+    /// paired with an effectiveTime whose post-window contains `now` is still
+    /// no-match. Pins that the completed guard is a conjunction, so the cursor
+    /// sentinel alone is sufficient to reject.
+    function testNodeNoneCursorWithLiveEffectiveTimeIsNoMatchCompleted() external {
+        MockMalformedCorporateActions malformed = new MockMalformedCorporateActions();
+        uint64 effectiveTime = uint64(block.timestamp - AFTER / 2);
+        malformed.setEarliestRaw(NODE_NONE, 0, 0);
+        malformed.setLatestRaw(NODE_NONE, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(malformed), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, false, "NODE_NONE completed cursor must be no-match even with an in-window effectiveTime");
         assertEq(ts, 0);
     }
 

@@ -150,6 +150,60 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         assertEq(adapter.price(), 1, "mulDiv must floor (round DOWN), not ceil");
     }
 
+    /// @notice The NatSpec pins the rescale as `mulDiv(signed, 10^(36 +
+    /// quoteDecimals), 10^(baseDecimals + 18))` and claims the form "does the
+    /// division last (no precision loss beyond the final integer floor)". That
+    /// is only true because `Math.mulDiv` carries a FULL-WIDTH (512-bit)
+    /// intermediate: a plain `(signed * numerator) / denominator` reverts
+    /// whenever the product exceeds `2^256`, even when the quotient fits
+    /// comfortably. base=18dec / quote=6dec ⇒ numerator 10^42, denominator
+    /// 10^36. A central value of 1e40 makes the product 1e82 — far past `2^256`
+    /// (~1.16e77) — while the true quotient 1e40 * 10^(36+6-18-18) = 1e46 is a
+    /// perfectly ordinary uint256. Serving it proves the intermediate is not
+    /// truncated to 256 bits.
+    function test_MorphoPairAdapter_MulDivCarriesFullWidthIntermediate() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
+        _push(PAIR_A, 1e40, block.timestamp);
+        assertEq(adapter.price(), 1e46, "product overflows 256 bits; the quotient must still be served");
+    }
+
+    /// @notice Fail-closed at READ time, the counterpart to the init-time
+    /// decimals guards. The NatSpec is explicit that surviving `initialize`
+    /// does not guarantee `price()` can never overflow, and that when it does
+    /// the market is "bricked (fail-closed revert, never a wrong price)". Pin
+    /// the revert: base=18dec / quote=6dec rescales by 10^6, so a central value
+    /// of 1e72 implies 1e78 — past `2^256`. `Math.mulDiv` must panic rather
+    /// than wrap and hand Morpho a silently-truncated collateral price.
+    function test_MorphoPairAdapter_PriceOverflow_FailsClosedNotWrapped() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
+        _push(PAIR_A, 1e72, block.timestamp);
+        vm.expectRevert(stdError.arithmeticError);
+        adapter.price();
+    }
+
+    /// @notice The NatSpec states the EXACT fail-closed decimals boundaries as
+    /// `quoteDecimals >= 42` and `baseDecimals >= 60`. The two
+    /// `AbsurdDecimals` tests pin the rejected side (42 / 60); this pins the
+    /// ACCEPTED side, so a boundary that silently tightens to 41 / 59 (or a
+    /// wrong exponent constant on either side) is caught. Both known answers
+    /// are re-derived from Morpho's convention, not from the implementation:
+    ///  - base 18dec, quote 41dec: 1.0 signed as 1e18 ⇒ 1e18 * 10^(36+41-18-18)
+    ///    = 10^59.
+    ///  - base 59dec, quote 6dec: central 1e40 ⇒ 1e40 * 10^(36+6-59-18) = 1e5.
+    function test_MorphoPairAdapter_DecimalsAcceptanceBoundary() public {
+        MockERC20Decimals quote41 = new MockERC20Decimals(41);
+        MorphoPairAdapter maxQuote = _deployAdapter(address(base), address(quote41));
+        bytes32 idQ = oracle.pairId(address(base), address(quote41));
+        _push(idQ, 1e18, block.timestamp);
+        assertEq(maxQuote.price(), 10 ** 59, "quoteDecimals 41 is the largest accepted");
+
+        MockERC20Decimals base59 = new MockERC20Decimals(59);
+        MorphoPairAdapter maxBase = _deployAdapter(address(base59), address(quote));
+        bytes32 idB = oracle.pairId(address(base59), address(quote));
+        _push(idB, 1e40, block.timestamp);
+        assertEq(maxBase.price(), 1e5, "baseDecimals 59 is the largest accepted");
+    }
+
     function test_MorphoPairAdapter_InitializeOnlyOnce() public {
         MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         vm.expectRevert(Initializable.InvalidInitialization.selector);

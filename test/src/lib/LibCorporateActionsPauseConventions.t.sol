@@ -11,6 +11,7 @@ import {
 } from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {InvalidMask} from "st0x-deploy-0.1.1/src/error/ErrCorporateAction.sol";
 import {CorporateActionsListHarness} from "../../mocks/CorporateActionsListHarness.sol";
+import {LibCorporateActionsPause} from "../../../src/lib/LibCorporateActionsPause.sol";
 
 /// @title LibCorporateActionsPauseConventions
 /// @notice Enumeration test (audit #216) pinning every `ICorporateActionsV1`
@@ -144,6 +145,105 @@ contract LibCorporateActionsPauseConventionsTest is Test {
             harness.earliestActionOfType(ACTION_TYPE_STOCK_SPLIT_V1, CompletionFilter.PENDING);
         assertTrue(cursorAfter != earlier, "cancelled node must be unlinked from traversal");
         assertEq(effAfter, nowTs + 15 days, "earliest pending after cancel is the surviving node");
+    }
+
+    /// End-to-end window semantics against the REAL upstream list, not a mock.
+    /// Every other `inPauseWindow` test drives `MockCorporateActions`, which
+    /// re-encodes beliefs about the traversal; this one schedules a real action
+    /// and walks `block.timestamp` across every boundary instant the NatSpec
+    /// specifies, asserting the exact `(paused, effectiveTime)` pair at each:
+    ///
+    ///   E-before-1 : not paused          (pre-window not yet open)
+    ///   E-before   : paused, ts == E     (pre-window lower bound INCLUSIVE)
+    ///   E-1        : paused, ts == E     (still pending)
+    ///   E          : paused, ts == E     (HANDOVER — upstream flips the action
+    ///                                     from PENDING to COMPLETED exactly
+    ///                                     here, and the post-window's lower
+    ///                                     bound is inclusive, so there is no
+    ///                                     one-second hole at the single most
+    ///                                     price-sensitive instant)
+    ///   E+after    : paused, ts == E     (post-window upper bound INCLUSIVE)
+    ///   E+after+1  : not paused          (post-window closed)
+    ///
+    /// The handover instant is the load-bearing one: the library's defensive
+    /// `pendingEffective > now` re-assertion means the pending branch stops
+    /// matching at exactly `E`, so coverage there depends entirely on upstream
+    /// classifying `effectiveTime == now` as COMPLETED (`effectiveTime <= now`).
+    /// A mock cannot prove that; this does.
+    function testInPauseWindowBoundariesAgainstRealList() external {
+        uint64 pauseBefore = 1 hours;
+        uint64 pauseAfter = 2 hours;
+        uint64 effectiveTime = uint64(block.timestamp) + 1 days;
+        harness.schedule(ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        bool paused;
+        uint64 ts;
+
+        vm.warp(effectiveTime - pauseBefore - 1);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, false, "one second before the pre-window opens: not paused");
+        assertEq(ts, 0);
+
+        vm.warp(effectiveTime - pauseBefore);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, true, "pre-window lower bound is inclusive");
+        assertEq(ts, effectiveTime, "pre-window reports the pending action's effectiveTime");
+
+        vm.warp(uint256(effectiveTime) - 1);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, true, "still inside the pre-window one second before effect");
+        assertEq(ts, effectiveTime);
+
+        vm.warp(effectiveTime);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, true, "handover instant: PENDING->COMPLETED must leave no coverage gap");
+        assertEq(ts, effectiveTime);
+
+        vm.warp(uint256(effectiveTime) + pauseAfter);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, true, "post-window upper bound is inclusive");
+        assertEq(ts, effectiveTime);
+
+        vm.warp(uint256(effectiveTime) + pauseAfter + 1);
+        (paused, ts) = LibCorporateActionsPause.inPauseWindow(
+            address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, pauseAfter
+        );
+        assertEq(paused, false, "one second after the post-window closes: not paused");
+        assertEq(ts, 0);
+    }
+
+    /// The library's NatSpec claims cancelled nodes need no explicit filter
+    /// because upstream unlinks them from traversal. `testCancelUnlinksActionFromTraversal`
+    /// proves the unlink at the primitive level; this proves the CONSEQUENCE the
+    /// library actually relies on — an action inside its pre-window pauses, and
+    /// after `cancel` the very same instant does not. End-to-end, real list.
+    function testCancelStopsPauseThroughInPauseWindow() external {
+        uint64 pauseBefore = 1 hours;
+        uint64 effectiveTime = uint64(block.timestamp) + 1 days;
+        uint256 actionId = harness.schedule(ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        vm.warp(uint256(effectiveTime) - 30 minutes);
+        (bool paused, uint64 ts) =
+            LibCorporateActionsPause.inPauseWindow(address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, 1 hours);
+        assertEq(paused, true, "scheduled action inside its pre-window pauses");
+        assertEq(ts, effectiveTime);
+
+        harness.cancel(actionId);
+
+        (paused, ts) =
+            LibCorporateActionsPause.inPauseWindow(address(harness), ACTION_TYPE_STOCK_SPLIT_V1, pauseBefore, 1 hours);
+        assertEq(paused, false, "a cancelled action must stop pausing at the same instant");
+        assertEq(ts, 0, "cancelled action must not leak an effectiveTime");
     }
 
     /// Convention 4b: cancelling the ONLY pending node returns the list to a

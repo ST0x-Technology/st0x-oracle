@@ -114,6 +114,13 @@ contract DIAVaultOracleForkBaseTest is Test {
         // pass having verified nothing.
         vm.createSelectFork("base");
 
+        // `DIA_FEED` is mocked below (`_seedFreshDIA`), and `vm.mockCall`
+        // answers for ANY address — including an address with no code. So
+        // assert the pinned `DIA_FEED_BASE` is a live contract on Base BEFORE
+        // the mock is installed; otherwise a drifted/fat-fingered feed constant
+        // would sail through this fork test unnoticed.
+        assertGt(DIA_FEED.code.length, 0, "DIA_FEED_BASE must be a deployed contract on Base");
+
         DIAVaultOracle oracle = _deployOracle();
 
         // The corporate-actions vault is derived as wtCOIN.asset() == tCOIN.

@@ -3,11 +3,19 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
+import {Vm} from "forge-std-1.16.1/src/Vm.sol";
 import {Ownable} from "@openzeppelin-contracts-5.6.1/access/Ownable.sol";
+import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
 import {DIAVaultOracleBeaconSetDeployer} from "../../../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
 import {ST0xPriceOracleBeaconSetDeployer} from "../../../src/concrete/deploy/ST0xPriceOracleBeaconSetDeployer.sol";
 import {MorphoPairAdapterBeaconSetDeployer} from "../../../src/concrete/deploy/MorphoPairAdapterBeaconSetDeployer.sol";
 import {ST0xPriceOracle} from "../../../src/concrete/oracle/ST0xPriceOracle.sol";
+import {DIAVaultOracle, DIAVaultOracleConfig} from "../../../src/concrete/oracle/DIAVaultOracle.sol";
+import {IDIAOracleV2} from "../../../src/interface/IDIAOracleV2.sol";
+import {MockDIAOracle} from "../../mocks/MockDIAOracle.sol";
+import {MockERC4626} from "../../mocks/MockERC4626.sol";
+import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
+import {ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {DeployExposed} from "./DeployExposed.sol";
 
 /// @title DeployTest
@@ -29,22 +37,81 @@ contract DeployTest is Test {
     address internal constant ST0X_SIGNER = address(0x57516E);
     uint64 internal constant ST0X_TIMEOUT = uint64(1 hours);
 
+    /// @dev Signature of the beacon-set deployers' `Deployment` event. Used to
+    /// discriminate WHICH suite `run()` actually dispatched to: the DIA suite
+    /// mints no proxies (zero `Deployment` logs) while the signed-price suite
+    /// mints exactly one — the singleton central store.
+    bytes32 internal constant DEPLOYMENT_EVENT_SIG = keccak256("Deployment(address,address)");
+
+    MockDIAOracle internal diaOracle;
+    MockERC4626 internal vault;
+    MockCorporateActions internal actions;
+
     function setUp() public {
         deploy = new DeployExposed();
+        diaOracle = new MockDIAOracle();
+        vault = new MockERC4626();
+        actions = new MockCorporateActions();
+        // The oracle derives its corporate-actions vault from vault.asset().
+        vault.setAsset(address(actions));
+        vm.warp(1_000_000);
     }
 
-    /// @notice The helper deploys the DIA beacon-set deployer and owns its
-    /// beacon with the requested owner (never the deploy key) — the security
-    /// postcondition `run()` require()s.
+    /// @dev Counts `Deployment(address,address)` logs recorded since the last
+    /// `vm.recordLogs()`.
+    function _countDeploymentLogs() internal returns (uint256 count) {
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        for (uint256 i = 0; i < entries.length; i++) {
+            if (entries[i].topics.length > 0 && entries[i].topics[0] == DEPLOYMENT_EVENT_SIG) {
+                count++;
+            }
+        }
+    }
+
+    function _diaOracleConfig() internal view returns (DIAVaultOracleConfig memory) {
+        return DIAVaultOracleConfig({
+            diaOracle: IDIAOracleV2(address(diaOracle)),
+            symbol: "COIN",
+            vault: address(vault),
+            maxAge: 1 hours,
+            actionTypeMask: ACTION_TYPE_STOCK_SPLIT_V1,
+            pauseTimeBefore: 3600,
+            pauseTimeAfter: 3600
+        });
+    }
+
+    /// @notice The helper deploys the DIA beacon-set deployer, owns its beacon
+    /// with the requested owner (never the deploy key) — the security
+    /// postcondition `run()` require()s — AND points that beacon at a real,
+    /// freshly deployed `DIAVaultOracle` implementation.
+    ///
+    /// The implementation assertion is not cosmetic: `deployDIAStackInfra`'s
+    /// only job besides ownership is wiring `new DIAVaultOracle()` behind the
+    /// beacon, and a beacon pointed at the wrong contract yields a BSD that
+    /// looks perfectly wired (right owner, non-zero beacon) yet mints oracles
+    /// that cannot serve a price. Proven end-to-end by actually minting through
+    /// the returned BSD and reading the config back off the proxy.
     function testDeployDIAStackInfraWiresBeaconAndOwner() external {
         DIAVaultOracleBeaconSetDeployer oracleBSD = deploy.exposedDeployDIAStackInfra(BEACON_OWNER);
 
         assertTrue(address(oracleBSD) != address(0), "oracle BSD wired");
-        assertEq(
-            Ownable(address(oracleBSD.iDIAVaultOracleBeacon())).owner(),
-            BEACON_OWNER,
-            "oracle beacon owned by requested owner"
-        );
+        address beacon = address(oracleBSD.iDIAVaultOracleBeacon());
+        assertEq(Ownable(beacon).owner(), BEACON_OWNER, "oracle beacon owned by requested owner");
+
+        // The beacon must front a real DIAVaultOracle implementation, freshly
+        // deployed by the helper (so: not the script itself, not a zero/EOA
+        // address, and not some unrelated contract).
+        address impl = UpgradeableBeacon(beacon).implementation();
+        assertTrue(impl != address(0), "beacon implementation set");
+        assertTrue(impl != address(deploy), "implementation is not the script contract");
+        assertGt(impl.code.length, 0, "implementation is a contract");
+
+        // End-to-end: an oracle minted through the returned BSD initializes and
+        // reports EXACTLY the config it was minted with.
+        DIAVaultOracle oracle = oracleBSD.newDIAVaultOracle(_diaOracleConfig());
+        assertEq(oracle.symbol(), "COIN", "minted oracle symbol");
+        assertEq(oracle.vault(), address(vault), "minted oracle vault");
+        assertEq(oracle.maxAge(), 1 hours, "minted oracle maxAge");
     }
 
     /// @notice One sequential test covering everything that reads the PROCESS
@@ -113,12 +180,25 @@ contract DeployTest is Test {
         // completes without reverting — the ONLY end-to-end exercise of the
         // `DEPLOYMENT_SUITE_SIGNED_PRICE_STACK` match arm. A typo in the
         // constant preimage or a mis-wired arm surfaces here.
+        //
+        // "Did not revert" alone does NOT prove the RIGHT arm ran — both
+        // helpers succeed under this env. Discriminate on an observable each
+        // suite emits differently: the signed-price suite mints the singleton
+        // central store through its beacon-set deployer, so EXACTLY ONE
+        // `Deployment` log; the DIA suite mints no proxies at all, so ZERO. If
+        // the two arms are swapped (or either arm calls the other helper), the
+        // counts flip and both assertions below fail.
         vm.setEnv("DEPLOYMENT_SUITE", "signed-price-stack");
+        vm.recordLogs();
         deploy.run();
+        assertEq(_countDeploymentLogs(), 1, "signed-price suite mints exactly the central store");
 
-        // Dispatch: "dia-vault-oracle" routes to `deployDIAStackInfra`.
+        // Dispatch: "dia-vault-oracle" routes to `deployDIAStackInfra`, which
+        // deploys infra ONLY — no per-vault proxy is minted, so no `Deployment`.
         vm.setEnv("DEPLOYMENT_SUITE", "dia-vault-oracle");
+        vm.recordLogs();
         deploy.run();
+        assertEq(_countDeploymentLogs(), 0, "dia suite mints no proxies");
 
         // Fall-through: an unrecognised suite hits the explicit
         // `revert("Unknown deployment suite")`. Pins the fall-through so a
@@ -126,6 +206,54 @@ contract DeployTest is Test {
         vm.setEnv("DEPLOYMENT_SUITE", "bogus-suite");
         vm.expectRevert("Unknown deployment suite");
         deploy.run();
+
+        // ----- run() forwards the REAL deploy key to the guards (#267) -----
+        // `run()` derives `deployer` from DEPLOYMENT_KEY and hands it to
+        // `deploySignedPriceStack`, which is what gives that helper's
+        // key-separation guards teeth in production. Prove the wiring by
+        // pointing ST0X_ADMIN at run()'s own deploy key: the deploy must fail
+        // loudly. If run() passed anything else (a placeholder, address(0)) the
+        // guard would silently pass and the feed would ship under the hot CI
+        // key.
+        //
+        // These two reverts land INSIDE `run()`'s `vm.startBroadcast`, so
+        // `vm.stopBroadcast()` never executes and the cheatcode-level broadcast
+        // (not EVM state) survives the revert — close it by hand or the next
+        // `run()` fails with "a broadcast is active already".
+        vm.setEnv("ST0X_ADMIN", vm.toString(deployer));
+        vm.setEnv("DEPLOYMENT_SUITE", "signed-price-stack");
+        vm.expectRevert("ST0X_ADMIN must not be the deploy key");
+        deploy.run();
+        vm.stopBroadcast();
+
+        // Same for ST0X_ORACLE_ADMIN, which rotates signer/timeout directly.
+        vm.setEnv("ST0X_ADMIN", vm.toString(ST0X_ADMIN));
+        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(deployer));
+        vm.expectRevert("ST0X_ORACLE_ADMIN must not be the deploy key");
+        deploy.run();
+        vm.stopBroadcast();
+        vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(ST0X_ORACLE_ADMIN));
+
+        // ----- ST0X_TIMEOUT uint64 bound (#267) -----
+        // `ST0X_TIMEOUT` is read as a uint256 and narrowed to uint64. Solidity's
+        // explicit downcast TRUNCATES silently, so a value of 2**64 + 3600 would
+        // become a perfectly plausible 3600-second timeout and the deploy would
+        // ship a staleness bound nobody asked for. The script's
+        // `<= type(uint64).max` guard must reject it by MESSAGE, not truncate.
+        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(type(uint64).max) + 1 + 3600));
+        vm.expectRevert("ST0X_TIMEOUT overflows uint64");
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
+
+        // Boundary, the OTHER edge: exactly `type(uint64).max` IS representable,
+        // so the script's own guard must let it through (`<=`, not `<`) and the
+        // rejection must come from DOWNSTREAM — `ST0xPriceOracle`'s
+        // `MAX_TIMEOUT` (30 days) bound, carrying the offending value. A `<`
+        // guard here would swap this for the script's string revert.
+        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(type(uint64).max)));
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, type(uint64).max));
+        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
+
+        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(ST0X_TIMEOUT)));
 
         // ----- signed-price helper: key-separation guards (#267) -----
         // Guard: ST0X_ADMIN holds DEFAULT_ADMIN_ROLE (can rotate the publisher
