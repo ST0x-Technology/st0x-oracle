@@ -9,7 +9,7 @@ import {ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateAct
 import {LibDecimalFloat, Float} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IERC4626} from "@openzeppelin-contracts-5.6.1/interfaces/IERC4626.sol";
 import {ICLONEABLE_V2_SUCCESS, ICloneableV2} from "rain-factory-0.1.1/src/interface/ICloneableV2.sol";
-import {Initializable} from "@openzeppelin-contracts-5.6.1/proxy/utils/Initializable.sol";
+import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 
 /// @dev Error raised when a zero address is provided for the DIA feed.
 error ZeroDIAOracle();
@@ -147,9 +147,12 @@ struct DIAVaultOracleConfig {
 /// surface they already use for Chainlink feeds.
 ///
 /// Math: `vaultSharePrice = diaPrice * totalAssets / totalSupply` scaled to 8
-/// decimals — i.e. the equity's USD price times `convertToAssets(1 share)`, so
-/// the price tracks any NAV change inside the vault (most importantly the
-/// post-split rebalance in the underlying `tStock`). Performed in Rain float
+/// decimals — i.e. the equity's USD price times the vault's raw assets-per-share
+/// ratio (≈ `convertToAssets(1 share)`, up to OZ ERC-4626 virtual-offset
+/// rounding), so the price tracks any NAV change inside the vault (most
+/// importantly the post-split rebalance in the underlying `tStock`). Uses the
+/// RAW `totalAssets / totalSupply` — see the trust-model note below. Performed
+/// in Rain float
 /// space throughout so neither operand can overflow uint256; the conversion to
 /// fixed-point 8dp happens only at the final return.
 ///

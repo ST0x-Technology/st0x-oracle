@@ -38,9 +38,12 @@ jobs:
             in_opts && !/^          - / { in_opts=0; in_suite=0 }
           ' "$workflow" | sort)
 
-          # keccak256("...") preimages used as DEPLOYMENT_SUITE_* dispatch keys.
-          constants=$(grep -oE 'keccak256\("[^"]+"\)' "$deploy" \
-            | sed -E 's/keccak256\("([^"]+)"\)/\1/' | sort -u)
+          # keccak256("...") preimages of the DEPLOYMENT_SUITE_* dispatch keys
+          # specifically — scoped to the `DEPLOYMENT_SUITE_<NAME> = keccak256(...)`
+          # constant definitions so an unrelated keccak256("...") string literal
+          # elsewhere in Deploy.sol can't spuriously enter the set and red CI.
+          constants=$(grep -oE 'DEPLOYMENT_SUITE_[A-Z0-9_]+ *= *keccak256\("[^"]+"\)' "$deploy" \
+            | sed -E 's/.*keccak256\("([^"]+)"\)/\1/' | sort -u)
 
           echo "Dropdown suites:"; echo "$dropdown" | sed 's/^/  - /'
           echo "Deploy.sol suites:"; echo "$constants" | sed 's/^/  - /'

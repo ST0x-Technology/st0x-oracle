@@ -40,9 +40,9 @@ interface AggregatorV2V3Interface {
     /// @return startedAt Timestamp when the round was started.
     /// @return updatedAt Timestamp when the round was updated.
     /// @return answeredInRound The round in which the answer was computed.
-    /// @dev Pyth-backed implementations may revert because Pyth does not
-    /// expose historical rounds via this interface. Pure Chainlink-backed
-    /// implementations honour the request.
+    /// @dev Implementations backed by a latest-only feed (such as the
+    /// DIA-backed oracle in this repo) revert here — no per-round history is
+    /// available; only backings that retain round history honour the request.
     function getRoundData(uint80 _roundId)
         external
         view

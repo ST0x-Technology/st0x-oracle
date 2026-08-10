@@ -10,6 +10,7 @@ import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/uti
 import {IAccessControl} from "@openzeppelin-contracts-5.6.1/access/IAccessControl.sol";
 
 import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
+import {ECDSA} from "@openzeppelin-contracts-5.6.1/utils/cryptography/ECDSA.sol";
 
 /// @title ST0xPriceOracleTest
 /// @notice Unit coverage for the central multi-pair oracle: global signer /
@@ -17,9 +18,7 @@ import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.s
 /// `updatePrice` (no registration, no nonce), `price()` unset/staleness
 /// reverts, and the deterministic `pairId` derivation.
 contract ST0xPriceOracleTest is SignedPriceTestBase {
-    uint256 constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
-    address SIGNER;
-
+    // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address constant ADMIN = address(0xC0DE);
     address constant ORACLE_ADMIN = address(0xADDD);
     address constant RANDO = address(0xF00D);
@@ -35,7 +34,6 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     UpgradeableBeacon beacon;
 
     function setUp() public {
-        SIGNER = vm.addr(SIGNER_PK);
         // Same shape as production: implementation behind a beacon proxy.
         ST0xPriceOracle impl = new ST0xPriceOracle();
         beacon = new UpgradeableBeacon(address(impl), ADMIN);
@@ -250,6 +248,25 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     }
 
     /// @notice `updatePrice` is permissionless — any caller with a validly
+    /// @notice A syntactically malformed (wrong-length) signature on a strictly-
+    /// newer payload reverts INSIDE `ECDSA.recover` with OpenZeppelin's own
+    /// `ECDSAInvalidSignatureLength` — the documented fail-closed path (the
+    /// contract NatSpec spells out that malformed sigs surface OZ's selectors,
+    /// not `PriceUpdateInvalidSignature`). Never swallowed into
+    /// `PriceUpdateInvalidSignature` (which a regression to `ECDSA.tryRecover`
+    /// would produce) and never applied — the pair stays unset. The existing
+    /// `hex"deadbeef"` tests only hit the no-op (equal/older timestamp) path,
+    /// which short-circuits before `recover` is reached, so this fresh-timestamp
+    /// case is the one that actually exercises `recover` on malformed input.
+    function test_UpdatePrice_MalformedSignatureOnFreshTimestamp_RevertsInEcdsa() public {
+        bytes memory malformed = hex"deadbeef"; // 4 bytes, not 65
+        vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, uint256(4)));
+        oracle.updatePrice(PAIR_A, 42e18, block.timestamp, malformed);
+        // Nothing stored — price() reverts the normal unset revert, not a panic.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
+        oracle.price(PAIR_A);
+    }
+
     /// signed fresh payload succeeds.
     function test_UpdatePrice_Permissionless() public {
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp);
@@ -547,6 +564,6 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     // -------- Helpers --------
 
     function _push(bytes32 id, uint256 price, uint256 timestamp) internal {
-        assertTrue(oracle.updatePrice(id, price, timestamp, signPriceUpdate(oracle, SIGNER_PK, id, price, timestamp)));
+        push(oracle, id, price, timestamp);
     }
 }
