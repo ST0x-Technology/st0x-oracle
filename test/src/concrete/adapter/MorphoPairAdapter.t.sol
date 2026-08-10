@@ -12,7 +12,12 @@ import {BeaconProxy} from "@openzeppelin-contracts-5.6.1/proxy/beacon/BeaconProx
 import {Initializable} from "@openzeppelin-contracts-upgradeable-5.6.1/proxy/utils/Initializable.sol";
 
 import {ST0xPriceOracle} from "../../../../src/concrete/oracle/ST0xPriceOracle.sol";
-import {MorphoPairAdapter, ZeroToken, IdenticalTokens} from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
+import {
+    MorphoPairAdapter,
+    ZeroToken,
+    IdenticalTokens,
+    PriceRoundsToZero
+} from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
 import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 
@@ -202,6 +207,26 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         bytes32 idB = oracle.pairId(address(base59), address(quote));
         _push(idB, 1e40, block.timestamp);
         assertEq(maxBase.price(), 1e5, "baseDecimals 59 is the largest accepted");
+    }
+
+    /// @notice A valid, fresh, non-zero central price that the decimal rescale
+    /// FLOORS all the way to zero must fail closed (revert `PriceRoundsToZero`),
+    /// not return 0. Morpho reading a zero collateral price treats the
+    /// collateral as worthless — every position unhealthy — which is the
+    /// fail-OPEN outcome the central store's own `PriceZero` guard exists to
+    /// prevent, arriving through the adapter instead. Reachable for very-high-
+    /// decimal collateral (`baseDecimals > 18 + quoteDecimals`): base 59 /
+    /// quote 6 scales by `10^(36+6-59-18) = 10^-35`, so the canonical 1.0 price
+    /// (`1e18`) floors to 0. Issue: signed-price C2.
+    function test_MorphoPairAdapter_PriceRoundingToZeroFailsClosed() public {
+        MockERC20Decimals base59 = new MockERC20Decimals(59);
+        MorphoPairAdapter adapter = _deployAdapter(address(base59), address(quote));
+        bytes32 id = oracle.pairId(address(base59), address(quote));
+        // Canonical 1.0 — a perfectly valid, fresh central price.
+        _push(id, 1e18, block.timestamp);
+        assertEq(oracle.price(id), 1e18, "central serves a valid non-zero price");
+        vm.expectRevert(abi.encodeWithSelector(PriceRoundsToZero.selector, uint256(1e18)));
+        adapter.price();
     }
 
     function test_MorphoPairAdapter_InitializeOnlyOnce() public {

@@ -17,6 +17,16 @@ error ZeroToken();
 /// configuration error.
 error IdenticalTokens();
 
+/// @dev The rescaled Morpho price floored to zero even though the central store
+/// served a valid non-zero price. Reachable only for collateral tokens whose
+/// decimals make the net Morpho exponent deeply negative (`baseDecimals > 18 +
+/// quoteDecimals`). Feeding Morpho a zero here would value the collateral at
+/// nothing (fail-OPEN — every position unhealthy), the exact outcome the
+/// central store's own `PriceZero` guard prevents, so the adapter fails CLOSED
+/// instead: the read reverts and the market freezes rather than mispricing.
+/// @param central The non-zero central price that rescaled to zero.
+error PriceRoundsToZero(uint256 central);
+
 /// @title MorphoPairAdapter
 /// @notice Beacon-proxied adapter binding one Morpho Blue market to one pair
 /// on the central `ST0xPriceOracle`, converting the central store's
@@ -154,9 +164,15 @@ contract MorphoPairAdapter is Initializable, IOracle {
     /// change: the result is the Morpho *collateral* price, and under-stating
     /// collateral is the conservative direction (less borrowing power, earlier
     /// liquidation) that favours the lender/protocol. A `Ceil` variant would
-    /// silently reverse this safety property.
+    /// silently reverse this safety property. The one place flooring is unsafe
+    /// is when it collapses a valid non-zero central price all the way to zero
+    /// (deeply negative net exponent, i.e. very-high-decimal collateral): a zero
+    /// collateral price is fail-OPEN in Morpho, so guard it and fail closed.
     function price() external view returns (uint256) {
         MainStorage storage $ = _main();
-        return Math.mulDiv(iCentral.price($.pairId), $.scaleNumerator, $.scaleDenominator);
+        uint256 central = iCentral.price($.pairId);
+        uint256 scaled = Math.mulDiv(central, $.scaleNumerator, $.scaleDenominator);
+        if (scaled == 0) revert PriceRoundsToZero(central);
+        return scaled;
     }
 }
