@@ -340,6 +340,23 @@ contract DIAVaultOracleTest is Test {
         assertEq(oracle.version(), 1);
     }
 
+    /// @notice `description()` deliberately returns the BARE DIA feed symbol
+    /// (e.g. `"COIN"`), NOT a Chainlink-style `"SYMBOL / USD"` pair string
+    /// (issue #274). This pins that intentional deviation: the value must be
+    /// the raw configured symbol byte-for-byte, and must NOT equal the
+    /// pair-formatted `"COIN / USD"` a Chainlink consumer might assume. A
+    /// regression that pair-formatted the description would fail here, and the
+    /// interface NatSpec is worded to permit this so the two don't clash.
+    function testDescriptionReturnsBareSymbolNotPairString() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        string memory desc = oracle.description();
+        assertEq(desc, SYMBOL, "description must be the bare DIA symbol");
+        assertTrue(
+            keccak256(bytes(desc)) != keccak256(bytes(string.concat(SYMBOL, " / USD"))),
+            "description must NOT be a Chainlink-style pair string"
+        );
+    }
+
     // -------- latestAnswer happy path --------
 
     function testLatestAnswerHappyPath() external {
@@ -353,6 +370,42 @@ contract DIAVaultOracleTest is Test {
         // 100 * 2 / 1 = 200, scaled to 8dp = 200e8.
         int256 answer = oracle.latestAnswer();
         assertEq(answer, int256(200e8));
+    }
+
+    /// @notice Donations move the ratio and ARE served — the decided behaviour
+    /// for issue #262, pinned so it cannot be silently reverted.
+    ///
+    /// The production `wtStock`'s `totalAssets()` is raw
+    /// `IERC20(asset()).balanceOf(vault)`, so a direct transfer in moves the
+    /// share ratio. Here `setTotalAssets` stands in for that balance growing.
+    /// The oracle must price the new ratio straight through: a donation adds
+    /// real assets the shares genuinely redeem for, so the higher price is
+    /// CORRECT, not inflated — there is no phantom collateral to defend
+    /// against, and the donor cannot withdraw what they gave.
+    ///
+    /// The assertion that matters is the absence of a gate. Any sanity band,
+    /// drift limit or ratio anchor added to the read path would reject this
+    /// jump and fail this test. That is deliberate: halting the oracle on an
+    /// unexpected-but-real ratio stops liquidations while positions keep
+    /// moving, which is worse for a lending market than pricing the true NAV.
+    /// See the contract NatSpec ("Vault trust model").
+    function testDonationMovesRatioAndIsServed() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        assertEq(oracle.latestAnswer(), int256(100e8), "baseline 1 asset per share");
+
+        // A donation doubles the vault's holdings against an unchanged supply.
+        // Supply is unchanged because a bare transfer mints the donor nothing.
+        vault.setTotalAssets(2e18);
+
+        // Served, not rejected, and priced at the true new ratio.
+        assertEq(oracle.latestAnswer(), int256(200e8), "donation must be priced through, not gated");
+
+        // The same read path through latestRoundData agrees.
+        (, int256 roundAnswer,,,) = oracle.latestRoundData();
+        assertEq(roundAnswer, int256(200e8), "latestRoundData must agree with latestAnswer");
     }
 
     // -------- latestAnswer DIA not set --------
@@ -378,6 +431,24 @@ contract DIAVaultOracleTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(staleTimestamp)));
         oracle.latestAnswer();
+    }
+
+    /// @notice A DIA push timestamped in the FUTURE (feed running ahead, or a
+    /// chain-time regression / reorg) must NOT underflow-panic in the staleness
+    /// subtraction. A future timestamp is fresh by construction (age 0), so the
+    /// read resolves to the priced value, never a bare `Panic(0x11)`. Guards
+    /// the `uint256(timestamp) <= block.timestamp` short-circuit in
+    /// `_readDIAChecked`; a regression dropping that guard would revert here
+    /// with an arithmetic panic instead of returning `100e8`.
+    function testLatestAnswerFutureTimestampNotStale() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        // Timestamp 100s in the future relative to `now`.
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp + 100));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        int256 answer = oracle.latestAnswer();
+        assertEq(answer, int256(100e8), "future-timestamped push is fresh, not stale");
     }
 
     /// @notice The staleness edge fails closed: a push aged EXACTLY `maxAge`
