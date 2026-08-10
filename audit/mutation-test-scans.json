@@ -15,5 +15,23 @@
       "confirmed": 0,
       "filed": []
     }
+  },
+  {
+    "timestamp": "2026-08-10T19:42:08Z",
+    "commit": "ec2765260a8e",
+    "publishedTag": null,
+    "commitsAheadOfTag": null,
+    "scope": "whole repo (src/ + script/)",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.30.0",
+    "summary": {
+      "behaviours": 144,
+      "existingCoverageValidated": 145,
+      "gapsFilled": 0,
+      "candidates": 2,
+      "confirmed": 0,
+      "filed": [],
+      "note": "Post-remediation run over the merged fix stack (#291-296). 4 group workers (dia-oracle, signed-price, libs, deploy), fresh clone each. Every non-equivalent mutant killed by the existing suite; no coverage gap and no new test required. Both candidates adjudicated by-design/not-a-bug (DIA far-future source-timestamp acceptance within the documented trust boundary; LibCorporateActionsPause phantom-node graceful-degradation only reachable under a completion-filter-violating upstream). Zero findings filed."
+    }
   }
 ]
