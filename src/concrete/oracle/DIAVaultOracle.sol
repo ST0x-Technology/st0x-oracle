@@ -104,8 +104,8 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// @param maxAge Maximum acceptable DIA push age in seconds.
 /// `block.timestamp - timestamp >= maxAge` reverts `DIAPriceStale` (the edge
 /// instant fails closed — a push exactly `maxAge` old is stale). Immutable
-/// after init — redeploy a fresh proxy to change. MUST be `<= pauseTimeAfter`
-/// (see `pauseTimeAfter`).
+/// after init — redeploy a fresh proxy to change. MUST be `< pauseTimeAfter`
+/// STRICTLY (a positive margin is required — see `pauseTimeAfter`).
 /// @param actionTypeMask Bitmap of action types that trigger the auto-pause.
 /// `ACTION_TYPE_STOCK_SPLIT_V1` for splits only, or `type(uint256).max` for
 /// every present and future action type. Must be non-zero.
