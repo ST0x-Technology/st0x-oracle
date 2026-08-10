@@ -18,10 +18,16 @@ error ZeroBeaconOwner();
 /// constructor.
 /// @param initialOwner The initial owner of the beacon (controls upgrades).
 /// @param central The central `ST0xPriceOracle` store every adapter deployed
-/// through this beacon reads. Baked into the implementation as an immutable, so
-/// it is fixed for the beacon's whole life (a fresh central needs a fresh
-/// deployer). A zero central reverts `MorphoPairAdapter.ZeroCentral` in the
-/// implementation constructor.
+/// through this beacon reads. Baked into the FIRST implementation as an
+/// immutable, and `iCentral` on this deployer records that value permanently. It
+/// is NOT, however, structurally fixed for the beacon's whole life: the beacon
+/// owner (governance) can upgrade the beacon to a `MorphoPairAdapter` built with
+/// a different central, after which every live adapter reads the new central
+/// while this deployer's `iCentral()` still reports the original. Treat
+/// `iCentral()` as "the central at deploy time", not a live invariant — a
+/// central change is an owner-authorised beacon upgrade, the same trust
+/// boundary as any other implementation swap. A zero central reverts
+/// `MorphoPairAdapter.ZeroCentral` in the implementation constructor.
 struct MorphoPairAdapterBeaconSetDeployerConfig {
     address initialOwner;
     ST0xPriceOracle central;
@@ -41,7 +47,15 @@ struct MorphoPairAdapterBeaconSetDeployerConfig {
 contract MorphoPairAdapterBeaconSetDeployer {
     /// @notice Emitted when a new MorphoPairAdapter proxy is deployed.
     /// @param caller The direct on-chain caller of `newMorphoPairAdapter`.
-    /// Indexed so monitoring can filter by deployer.
+    /// Indexed for filtering — but note minting is PERMISSIONLESS and the salt
+    /// is derived from the config alone (msg.sender excluded), so a third party
+    /// who sees the intended public config can front-run the mint and appear
+    /// here as `caller`. Monitoring that must identify a specific operator
+    /// should key on the deterministic proxy address (a commitment to the
+    /// config), not on this field. A front-run mint is config-identical,
+    /// `initializer`-guarded and sits behind the governance-owned beacon, so it
+    /// grants the front-runner no authority — it only reverts the operator's own
+    /// later mint on the CREATE2 collision.
     /// @param oracle The address of the new proxy. Indexed for filtering.
     event Deployment(address indexed caller, address indexed oracle);
 

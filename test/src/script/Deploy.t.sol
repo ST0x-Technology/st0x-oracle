@@ -234,6 +234,15 @@ contract DeployTest is Test {
         vm.stopBroadcast();
         vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(ST0X_ORACLE_ADMIN));
 
+        // And for ST0X_SIGNER: `updatePrice` is permissionless and authorised
+        // solely by this signer, so a signer == deploy key ships the feed under
+        // CI's control. The guard must reject it by MESSAGE.
+        vm.setEnv("ST0X_SIGNER", vm.toString(deployer));
+        vm.expectRevert("ST0X_SIGNER must not be the deploy key");
+        deploy.run();
+        vm.stopBroadcast();
+        vm.setEnv("ST0X_SIGNER", vm.toString(ST0X_SIGNER));
+
         // ----- ST0X_TIMEOUT uint64 bound (#267) -----
         // `ST0X_TIMEOUT` is read as a uint256 and narrowed to uint64. Solidity's
         // explicit downcast TRUNCATES silently, so a value of 2**64 + 3600 would

@@ -111,8 +111,15 @@ contract Deploy is Script {
         // therefore be governance, never the hot CI deploy key — the same
         // separation the beacon owner enforces. Fail the deploy loudly rather
         // than silently leaving the feed under the deploy key's control.
+        //
+        // ST0X_SIGNER gets the SAME guard: `updatePrice` is permissionless and
+        // authorised solely by this signer's EIP-712 signature, so the signer
+        // controls every served price even MORE directly than the two admin
+        // roles — a copy-pasted signer equal to the hot deploy key would ship
+        // the feed under CI's control with no other guard catching it.
         require(admin != deployer, "ST0X_ADMIN must not be the deploy key");
         require(oracleAdmin != deployer, "ST0X_ORACLE_ADMIN must not be the deploy key");
+        require(signer != deployer, "ST0X_SIGNER must not be the deploy key");
 
         ST0xPriceOracle oracleImpl = new ST0xPriceOracle();
         oracleBSD = new ST0xPriceOracleBeaconSetDeployer(
