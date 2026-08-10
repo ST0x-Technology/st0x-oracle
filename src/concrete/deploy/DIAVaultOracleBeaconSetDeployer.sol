@@ -41,7 +41,15 @@ struct DIAVaultOracleBeaconSetDeployerConfig {
 contract DIAVaultOracleBeaconSetDeployer {
     /// @notice Emitted when a new DIAVaultOracle proxy is deployed.
     /// @param caller The direct on-chain caller of `newDIAVaultOracle`.
-    /// Indexed so monitoring can filter by deployer.
+    /// Indexed for filtering — but note minting is PERMISSIONLESS and the salt
+    /// is derived from the config alone (msg.sender excluded), so a third party
+    /// who sees the intended public config can front-run the mint and appear
+    /// here as `caller`. Monitoring that must identify a specific operator
+    /// should key on the deterministic proxy address (a commitment to the
+    /// config), not on this field. A front-run mint is config-identical,
+    /// `initializer`-guarded and sits behind the governance-owned beacon, so it
+    /// grants the front-runner no authority — it only reverts the operator's own
+    /// later mint on the CREATE2 collision.
     /// @param oracle The address of the new proxy. Indexed for filtering.
     event Deployment(address indexed caller, address indexed oracle);
 
