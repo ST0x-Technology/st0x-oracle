@@ -173,6 +173,22 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         oracle.initialize(RANDO, ORACLE_ADMIN, SIGNER, TIMEOUT);
     }
 
+    /// @notice The IMPLEMENTATION behind the beacon must be un-initialisable:
+    /// the constructor calls `_disableInitializers()`. Without it anyone could
+    /// `initialize` the shared implementation directly, seizing
+    /// `DEFAULT_ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` on the logic contract and
+    /// setting its own global signer — a live target for `delegatecall`-shaped
+    /// mischief and a confusing on-chain artefact for anyone reading the
+    /// implementation's storage. Pinned with the exact
+    /// `InvalidInitialization` selector: the proxy-level `test_Initialize_OnlyOnce`
+    /// does NOT cover this (a proxy's own `initialized` flag is what stops it
+    /// there), so dropping `_disableInitializers()` otherwise ships silently.
+    function test_ImplementationInitializersDisabled() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        impl.initialize(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+    }
+
     // -------- updatePrice: applied vs no-op vs revert --------
 
     /// @notice There is NO pair registration — the very first update on a

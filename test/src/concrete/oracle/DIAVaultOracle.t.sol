@@ -31,8 +31,10 @@ import {
     MockRevertingCorporateActions,
     CorporateActionsUnavailable
 } from "../../../mocks/MockRevertingCorporateActions.sol";
+import {CorporateActionsListHarness} from "../../../mocks/CorporateActionsListHarness.sol";
 import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {InvalidMask} from "st0x-deploy-0.1.1/src/error/ErrCorporateAction.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;
@@ -194,6 +196,88 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
+    /// @notice The init probe must query the CONFIGURED `actionTypeMask`, not a
+    /// wildcard. Per the init NatSpec the probe exists so an incompatible wiring
+    /// — including "a mask with no bits in the upstream `VALID_ACTION_TYPES_MASK`
+    /// (`InvalidMask`)" — reverts THIS deploy transaction rather than every
+    /// future consumer read against immutable config.
+    ///
+    /// Driven against the REAL upstream traversal (`CorporateActionsListHarness`
+    /// wraps `LibCorporateActionNode` verbatim), which is what actually raises
+    /// `InvalidMask`; the hand-mock returns `NODE_NONE` instead and so cannot
+    /// pin this. A mask of `1 << 200` is non-zero and survives the INIT-bit
+    /// strip (so `InvalidPauseConfig` does NOT fire) yet matches no valid action
+    /// type, so the probe must surface `InvalidMask` at init. A regression that
+    /// probed with `type(uint256).max` — or with any mask other than the
+    /// configured one — would let this deploy succeed and brick every later
+    /// read.
+    function testInitProbeUsesConfiguredMaskNotWildcard() external {
+        CorporateActionsListHarness realActions = new CorporateActionsListHarness();
+        MockERC4626 vaultReal = new MockERC4626();
+        vaultReal.setAsset(address(realActions));
+
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(vaultReal);
+        // Non-zero, not the INIT bit, but matches nothing in
+        // `VALID_ACTION_TYPES_MASK`.
+        config.actionTypeMask = 1 << 200;
+
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(InvalidMask.selector);
+        oracle.initialize(abi.encode(config));
+
+        // Positive control: the same wiring with a VALID configured mask
+        // initializes, so the revert above is the mask reaching the probe and
+        // not the harness being unusable.
+        config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        DIAVaultOracle ok = _deployUninit();
+        assertEq(ok.initialize(abi.encode(config)), ICLONEABLE_V2_SUCCESS, "valid mask must initialize");
+    }
+
+    /// @notice Config fields are validated in DECLARATION order, so the FIRST
+    /// offending field is the one reported. An integrator debugging a bad
+    /// deploy config fixes one field at a time and expects the next error to
+    /// advance; a reordered check would report a later field first and send
+    /// them after the wrong config entry. Pins the whole ladder in one test
+    /// (each step fixes exactly the field the previous step named).
+    function testInitValidatesConfigFieldsInDeclarationOrder() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.diaOracle = IDIAOracleV2(address(0));
+        config.symbol = "";
+        config.vault = address(0);
+        config.maxAge = 0;
+
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(ZeroDIAOracle.selector);
+        oracle.initialize(abi.encode(config));
+
+        config.diaOracle = IDIAOracleV2(address(diaOracle));
+        vm.expectRevert(EmptySymbol.selector);
+        oracle.initialize(abi.encode(config));
+
+        config.symbol = SYMBOL;
+        vm.expectRevert(ZeroVault.selector);
+        oracle.initialize(abi.encode(config));
+
+        config.vault = address(vault);
+        vm.expectRevert(ZeroMaxAge.selector);
+        oracle.initialize(abi.encode(config));
+
+        // Beyond the four zero-checks the pause-coherence check precedes the
+        // cross-epoch invariant: with BOTH broken (empty mask AND
+        // `pauseTimeAfter < maxAge`) it is `InvalidPauseConfig` that surfaces.
+        config.maxAge = MAX_AGE;
+        config.actionTypeMask = 0;
+        config.pauseTimeAfter = 0;
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+
+        // ...and once the mask is coherent, the invariant check speaks.
+        config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        vm.expectRevert(abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(0), MAX_AGE));
+        oracle.initialize(abi.encode(config));
+    }
+
     /// @notice Inside a matching action's window, every price read reverts
     /// `OraclePausedCorporateAction` with that action's effectiveTime.
     function testAutoPauseRevertsInsideWindow() external {
@@ -203,6 +287,47 @@ contract DIAVaultOracleTest is Test {
         vault.setTotalSupply(1e18);
 
         // Completed split half a post-window ago → inside the pause window.
+        uint64 effectiveTime = uint64(block.timestamp - PAUSE_AFTER / 2);
+        actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestAnswer();
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestRoundData();
+    }
+
+    /// @notice The pause gate runs BEFORE the DIA read on BOTH entry points, so
+    /// inside a pause window the reported error is always
+    /// `OraclePausedCorporateAction` — never a DIA error that happens to fire
+    /// first. Ordering is observable and load-bearing: `DIAPriceStale` tells an
+    /// integrator "retry when the feed updates" (minutes), while
+    /// `OraclePausedCorporateAction` carries the `effectiveTime` that tells them
+    /// when the market reopens, and the two entry points must not disagree about
+    /// which condition dominates.
+    ///
+    /// The overlap is not contrived: it is the normal state late in a post-action
+    /// window, since `pauseTimeAfter >= maxAge` guarantees every push predating
+    /// the action has gone stale before the pause lifts. Here the push sits
+    /// exactly on the staleness edge (`age == maxAge`) while the completed action
+    /// is still mid-window.
+    function testPauseTakesPrecedenceOverStaleDIA() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        // Stale by the contract's own fail-closed edge: age == maxAge.
+        uint128 staleTimestamp = uint128(block.timestamp - MAX_AGE);
+        diaOracle.setValue(SYMBOL, 100e18, staleTimestamp);
+
+        // Sanity: with no action in window the very same state reverts
+        // `DIAPriceStale`, so the assertions below are about precedence, not
+        // about the push being fresh.
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(staleTimestamp)));
+        oracle.latestAnswer();
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceStale.selector, uint256(staleTimestamp)));
+        oracle.latestRoundData();
+
+        // Now open a post-action window over that same instant.
         uint64 effectiveTime = uint64(block.timestamp - PAUSE_AFTER / 2);
         actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
 
@@ -241,6 +366,62 @@ contract DIAVaultOracleTest is Test {
         assertEq(
             storedDIAOracle, address(oracle.diaOracle()), "MainStorage must be namespaced at the ERC-7201 derived slot"
         );
+    }
+
+    /// @notice The namespace base is not enough: the ORDER of `MainStorage`'s
+    /// members is itself part of the layout contract, because a beacon upgrade
+    /// keeps every live proxy's storage. Reordering two members in a v2 leaves
+    /// the base slot intact (so the test above still passes) while every proxy
+    /// silently reinterprets one field as another — e.g. `vault` read out of the
+    /// `maxAge` word. Pin every member to its exact slot offset, read raw.
+    ///
+    /// Expected layout, one slot per member except the two `uint64` windows
+    /// which pack into a single word (before in the low 64 bits, after next):
+    ///   +0 diaOracle, +1 symbol, +2 vault, +3 maxAge,
+    ///   +4 corporateActionsVault, +5 actionTypeMask, +6 pauseTimeBefore|After.
+    /// If this fails, do NOT renumber the expectations — fix the struct.
+    function testMainStorageFieldOrderIsPinned() external {
+        // Distinct values per field (in particular before != after) so a swap of
+        // any two members is observable rather than masked by equal defaults.
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = 1234;
+        config.pauseTimeAfter = 7200;
+        DIAVaultOracle oracle = _deployProxy(config);
+        uint256 base = uint256(
+            keccak256(abi.encode(uint256(keccak256("st0x.diavaultoracle.main")) - 1)) & ~bytes32(uint256(0xff))
+        );
+
+        assertEq(
+            address(uint160(uint256(vm.load(address(oracle), bytes32(base + 0))))),
+            address(diaOracle),
+            "slot +0 must be diaOracle"
+        );
+        // Short strings store their bytes left-aligned with `2 * length` in the
+        // lowest byte, all in the head slot.
+        assertEq(
+            vm.load(address(oracle), bytes32(base + 1)),
+            bytes32(bytes(SYMBOL)) | bytes32(uint256(2 * bytes(SYMBOL).length)),
+            "slot +1 must be the symbol string head"
+        );
+        assertEq(
+            address(uint160(uint256(vm.load(address(oracle), bytes32(base + 2))))),
+            address(vault),
+            "slot +2 must be vault"
+        );
+        assertEq(uint256(vm.load(address(oracle), bytes32(base + 3))), MAX_AGE, "slot +3 must be maxAge");
+        assertEq(
+            address(uint160(uint256(vm.load(address(oracle), bytes32(base + 4))))),
+            address(actions),
+            "slot +4 must be corporateActionsVault"
+        );
+        assertEq(
+            uint256(vm.load(address(oracle), bytes32(base + 5))),
+            ACTION_TYPE_STOCK_SPLIT_V1,
+            "slot +5 must be actionTypeMask"
+        );
+        uint256 packedWindows = uint256(vm.load(address(oracle), bytes32(base + 6)));
+        assertEq(uint256(uint64(packedWindows)), uint256(1234), "slot +6 low word must be pauseTimeBefore");
+        assertEq(uint256(uint64(packedWindows >> 64)), uint256(7200), "slot +6 second word must be pauseTimeAfter");
     }
 
     // -------- Init validation --------
@@ -370,6 +551,31 @@ contract DIAVaultOracleTest is Test {
         // 100 * 2 / 1 = 200, scaled to 8dp = 200e8.
         int256 answer = oracle.latestAnswer();
         assertEq(answer, int256(200e8));
+    }
+
+    /// @notice A share price that is not exactly representable at 8 decimals is
+    /// TRUNCATED toward zero, never rounded up. Expected value derived from the
+    /// spec, not from the implementation: `vaultSharePrice = diaPrice *
+    /// totalAssets / totalSupply` = `$1 * 1e18 / 3e18` = `$0.3333...`, and 8dp
+    /// floor of that is `33333333` (a round-half-up implementation would give
+    /// `33333334`).
+    ///
+    /// Direction is the assertion. Truncation makes the oracle report slightly
+    /// LESS than the true NAV, which is the conservative side for a lending
+    /// market pricing collateral; rounding up would over-report collateral by up
+    /// to 1 wei of price on every read. The existing happy-path tests all use
+    /// exact powers of ten, so none of them can see this.
+    function testLatestAnswerTruncatesFractionalSharePrice() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 1e18, uint128(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(3e18);
+
+        assertEq(oracle.latestAnswer(), int256(33333333), "1/3 of a dollar must truncate down at 8dp");
+
+        // The same read path through latestRoundData agrees on the direction.
+        (, int256 roundAnswer,,,) = oracle.latestRoundData();
+        assertEq(roundAnswer, int256(33333333), "latestRoundData must truncate identically");
     }
 
     /// @notice Donations move the ratio and ARE served — the decided behaviour
