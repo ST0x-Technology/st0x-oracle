@@ -62,8 +62,10 @@ contract MorphoPairAdapterBeaconSetDeployer {
     /// The beacon for the MorphoPairAdapter implementation contracts.
     IBeacon public immutable iMorphoPairAdapterBeacon;
 
-    /// The central multi-pair price store every adapter deployed through this
-    /// beacon reads — fixed for the beacon's whole life.
+    /// The central multi-pair price store recorded at deploy time. This is the
+    /// central baked into the FIRST implementation; a beacon upgrade can retarget
+    /// live adapters to a different central while this value is unchanged — see
+    /// the config-struct NatSpec for why it is not a live invariant.
     ST0xPriceOracle public immutable iCentral;
 
     constructor(MorphoPairAdapterBeaconSetDeployerConfig memory config) {

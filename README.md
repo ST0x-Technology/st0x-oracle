@@ -58,20 +58,26 @@ deviation OR 1 hour elapsed (whichever first). Volatile periods get pushes every
 few minutes; the 1-hour heartbeat is the dead-market floor. Recommended
 `maxAge = 2 hours` (one missed heartbeat tolerance).
 
-> **⚠️ Required config invariant: `pauseTimeAfter >= maxAge`** (enforced at
-> `initialize` — a violating config reverts `PauseTimeAfterBelowMaxAge`). The
-> share price multiplies the DIA equity price by the vault's _live_ NAV ratio,
-> and both must belong to the same corporate-action epoch. When an action
-> completes the ratio rebalances instantly, but DIA can keep serving the
-> pre-action price for up to `maxAge`. Only the post-window pause separates the
-> two; if it lifts while a pre-action price is still fresh, that price pairs
-> with the post-action ratio — on a 2:1 split the share reads ~2× its true
-> value, enabling over-borrow (bad debt). Setting `pauseTimeAfter >= maxAge`
-> guarantees only same-epoch prices are served. The exact boundary
-> (`pauseTimeAfter == maxAge`) is airtight because the staleness check rejects
-> the `maxAge` edge (`age >= maxAge` is stale), so at pause-lift the oldest
-> still-fresh push is strictly newer than `effectiveTime`. A margin above
-> `maxAge` is still recommended as defence-in-depth.
+> **⚠️ Required config invariant: `pauseTimeAfter > maxAge` (STRICTLY)**
+> (enforced at `initialize` — a violating config, including the equal boundary,
+> reverts `PauseTimeAfterBelowMaxAge`). The share price multiplies the DIA
+> equity price by the vault's _live_ NAV ratio, and both must belong to the same
+> corporate-action epoch. When an action completes the ratio rebalances
+> instantly, but DIA can keep serving the pre-action price for up to `maxAge`.
+> Only the post-window pause separates the two; if it lifts while a pre-action
+> price is still fresh, that price pairs with the post-action ratio — on a 2:1
+> split the share reads ~2× its true value, enabling over-borrow (bad debt).
+>
+> The margin `pauseTimeAfter - maxAge` is the maximum forward DIA feed clock
+> skew the config tolerates. Staleness is aged from the push's own _source_
+> timestamp, so a feed running `skew` seconds fast can stamp a pre-action
+> observation up to `skew` after `effectiveTime`; only a margin exceeding that
+> skew guarantees every still-acceptable push at pause-lift was observed at or
+> after the action. Equality (`pauseTimeAfter == maxAge`) tolerates **zero**
+> skew — a feed even one second fast reopens the 2× window — so it is rejected.
+> Size the margin above your feed's worst-case forward skew; the recommended
+> `maxAge = 2 hours` with `pauseTimeAfter = 3 hours` (a 1h margin) is the
+> reference.
 
 **DIA on Base mainnet:** the canonical oracle contract is
 `0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol feeds are all served
@@ -91,7 +97,7 @@ DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
         maxAge:          2 hours,
         actionTypeMask:  type(uint256).max,
         pauseTimeBefore: 1 hours,
-        pauseTimeAfter:  3 hours  // >= maxAge, with a margin (see invariant above)
+        pauseTimeAfter:  3 hours  // > maxAge, with a skew margin (see invariant above)
     })
 );
 ```

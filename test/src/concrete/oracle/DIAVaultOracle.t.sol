@@ -319,7 +319,7 @@ contract DIAVaultOracleTest is Test {
     /// which condition dominates.
     ///
     /// The overlap is not contrived: it is the normal state late in a post-action
-    /// window, since `pauseTimeAfter >= maxAge` guarantees every push predating
+    /// window, since `pauseTimeAfter > maxAge` guarantees every push predating
     /// the action has gone stale before the pause lifts. Here the push sits
     /// exactly on the staleness edge (`age == maxAge`) while the completed action
     /// is still mid-window.
@@ -672,8 +672,9 @@ contract DIAVaultOracleTest is Test {
 
     /// @notice The staleness edge fails closed: a push aged EXACTLY `maxAge`
     /// reverts `DIAPriceStale` (`age >= maxAge` is stale). This edge-rejection
-    /// is what makes the cross-epoch invariant airtight at `pauseTimeAfter ==
-    /// maxAge` — see the contract NatSpec.
+    /// tightens the cross-epoch invariant by one second; the invariant itself is
+    /// closed by the strict `pauseTimeAfter > maxAge` init margin — see the
+    /// contract NatSpec.
     function testLatestAnswerAtMaxAgeBoundaryIsStale() external {
         DIAVaultOracle oracle = _deployProxy(_defaultConfig());
         uint128 boundary = uint128(block.timestamp - MAX_AGE);
