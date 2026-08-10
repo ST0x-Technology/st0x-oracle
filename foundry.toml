@@ -12,10 +12,6 @@ evm_version = "cancun"
 bytecode_hash = "none"
 cbor_metadata = false
 
-# Fork tests read the Base RPC from the BASE_RPC_URL env var directly (see
-# test/src/fork/) rather than a named rpc_endpoint, so a missing var in the
-# per-push job no-ops loudly instead of erroring on an empty alias.
-
 remappings = [
   # Some upstream OpenZeppelin-consuming deps use the unversioned
   # `@openzeppelin/contracts/` import prefix; bridge to the soldeer-pinned
@@ -23,6 +19,15 @@ remappings = [
   # st0x.deploy's foundry.toml.
   "@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.6.1/",
 ]
+
+# Named fork aliases, per the rainix convention. rainix-sol-test's rpc-preflight
+# step probes every network the repo references here, picks a healthy archive
+# candidate from the RPC_URL_<NETWORK>_FORK secret/var pool, and exports it as
+# <NETWORK>_RPC_URL before forge starts — so `vm.createSelectFork("base")` gets
+# a working endpoint with upstream failover. Referencing the network here is
+# what opts the repo into that probe.
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"
 
 [dependencies]
 forge-std = "1.16.1"

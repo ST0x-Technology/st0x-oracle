@@ -3,4 +3,9 @@ on: [push]
 jobs:
   rainix-sol:
     uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
-    secrets: inherit
+    # Named explicitly rather than `secrets: inherit`: the reusable workflow
+    # declares exactly which fork RPCs it accepts, and listing the one this repo
+    # uses makes the fork-test dependency visible here instead of implicit. Base
+    # is the only network `foundry.toml`'s `[rpc_endpoints]` references.
+    secrets:
+      RPC_URL_BASE_FORK: ${{ secrets.RPC_URL_BASE_FORK }}

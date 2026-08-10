@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test, console2} from "forge-std-1.16.1/src/Test.sol";
+import {Test} from "forge-std-1.16.1/src/Test.sol";
 import {IDIAOracleV2} from "../../../src/interface/IDIAOracleV2.sol";
 import {
     DIAVaultOracle,
@@ -18,6 +18,8 @@ import {STOCK_SPLIT_V1_TYPE_HASH} from "st0x-deploy-0.1.1/src/lib/LibCorporateAc
 import {LibStockSplit} from "st0x-deploy-0.1.1/src/lib/LibStockSplit.sol";
 import {LibDecimalFloat} from "rain-math-float-0.1.1/src/lib/LibDecimalFloat.sol";
 import {IAuthorizeV1} from "rain-vats-0.1.5/src/interface/IAuthorizeV1.sol";
+import {LibProdTokensBase} from "st0x-deploy-0.1.1/src/lib/LibProdTokensBase.sol";
+import {DIA_FEED_BASE} from "../../../src/lib/LibDIAFeed.sol";
 
 /// @dev The `authorizer()` getter of the live receipt vault — enough surface to
 /// mock its permission gate without pulling the whole vault interface.
@@ -31,18 +33,20 @@ interface IAuthorizable {
 /// an actual stock split on the deployed tCOIN receipt vault and asserts the
 /// oracle — pointed at the wtCOIN wrapper — reverts `OraclePausedCorporateAction`.
 ///
-/// Forks Base from `BASE_RPC_URL`. The dedicated `fork-tests.yaml` workflow
-/// wires this from the `RPC_URL_BASE_FORK` repo secret and runs it for real in
-/// CI. The per-push rainix job doesn't inject that RPC (it's a cross-org
-/// reusable workflow), so when `BASE_RPC_URL` is unset this loudly logs and
-/// returns rather than erroring — `no-ignored-tests` bans `vm.skip`, and a hard
-/// `createSelectFork` failure would red every per-push run. Locally, export
-/// `BASE_RPC_URL=https://mainnet.base.org` to run it.
+/// Forks Base through the `base` alias in `foundry.toml`'s `[rpc_endpoints]`,
+/// per the rainix convention. In CI the reusable `rainix-sol` test job's
+/// rpc-preflight step binds that alias to a healthy archive endpoint from the
+/// `RPC_URL_BASE_FORK` secret pool, so this runs for real on every push
+/// alongside the rest of `forge test` — no dedicated workflow. Locally, export
+/// `BASE_RPC_URL=https://mainnet.base.org` before `forge test`.
 contract DIAVaultOracleForkBaseTest is Test {
-    // Live Base deployments (see st0x.deploy LibProdTokensBase).
-    address constant DIA_FEED = 0xCE521b52513242c5094bc56f57887BB2A05B8129;
-    address constant WTCOIN = 0x5cDa0E1CA4ce2af96315f7F8963C85399c172204; // StoxWrappedTokenVault (priced)
-    address constant TCOIN = 0x626757e6F50675D17fcAd312E82f989aE7A23d38; // receipt vault, ICorporateActionsV1
+    // Live Base deployments. Token vaults are imported from the pinned
+    // st0x-deploy `LibProdTokensBase` so an st0x-deploy version bump that
+    // redeploys the COIN pair propagates here automatically instead of leaving
+    // stale literals; DIA_FEED comes from the single repo-level constant.
+    address constant DIA_FEED = DIA_FEED_BASE;
+    address constant WTCOIN = LibProdTokensBase.COIN_WRAPPED_TOKEN_VAULT; // StoxWrappedTokenVault (priced)
+    address constant TCOIN = LibProdTokensBase.COIN_RECEIPT_VAULT; // receipt vault, ICorporateActionsV1
 
     uint64 constant PAUSE_BEFORE = 1 hours;
     // Satisfies the cross-epoch invariant `pauseTimeAfter >= maxAge`. The DIA
@@ -103,12 +107,12 @@ contract DIAVaultOracleForkBaseTest is Test {
     }
 
     function testForkOracleAutoPausesOnRealScheduledSplit() external {
-        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            console2.log("SKIP testForkOracleAutoPausesOnRealScheduledSplit: BASE_RPC_URL unset");
-            return;
-        }
-        vm.createSelectFork(rpc);
+        // Named alias, not a raw env read: foundry resolves `base` from
+        // `[rpc_endpoints]`, and in CI rpc-preflight has already bound it to a
+        // probed-healthy archive node. A missing endpoint fails loudly here
+        // rather than no-opping, so this real-vault auto-pause proof can never
+        // pass having verified nothing.
+        vm.createSelectFork("base");
 
         DIAVaultOracle oracle = _deployOracle();
 
