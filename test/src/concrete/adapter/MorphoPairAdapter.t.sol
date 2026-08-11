@@ -16,16 +16,22 @@ import {
     MorphoPairAdapter,
     ZeroToken,
     IdenticalTokens,
-    PriceRoundsToZero
+    PriceRoundsToZero,
+    RatioMismatch,
+    UnverifiableRatio
 } from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
 import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
+import {MockNavVaultToken} from "../../../mocks/MockNavVaultToken.sol";
+import {MockRevertingNavVaultToken} from "../../../mocks/MockRevertingNavVaultToken.sol";
 
 /// @title MorphoPairAdapterTest
 /// @notice Unit coverage for the `MorphoPairAdapter` beacon-proxied adapter:
 /// the publisher-scale → Morpho-convention rescale (known-answer), central
-/// expiry/unset passthrough, constructor / initializer guards, and the
-/// shared beacon upgrade retargeting every deployed adapter proxy at once.
+/// expiry/unset passthrough, the NAV-ratio gate (exact live-vault match,
+/// fail-closed on drift or an unprobeable collateral, zero-ratio sentinel
+/// skip), constructor / initializer guards, and the shared beacon upgrade
+/// retargeting every deployed adapter proxy at once.
 contract MorphoPairAdapterTest is SignedPriceTestBase {
     // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address constant ADMIN = address(0xC0DE);
@@ -220,7 +226,8 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         bytes32 id = oracle.pairId(address(base59), address(quote));
         // Canonical 1.0 — a perfectly valid, fresh central price.
         _push(id, 1e18, block.timestamp);
-        assertEq(oracle.price(id), 1e18, "central serves a valid non-zero price");
+        (uint256 centralPrice,) = oracle.price(id);
+        assertEq(centralPrice, 1e18, "central serves a valid non-zero price");
         vm.expectRevert(abi.encodeWithSelector(PriceRoundsToZero.selector, uint256(1e18)));
         adapter.price();
     }
@@ -287,6 +294,75 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         assertEq(adapterB.price(), 42 * 10 ** 34, "8-dec collateral / 6-dec loan rescale");
     }
 
+    // -------- NAV-ratio gate --------
+
+    /// @notice When the stored ratio is non-zero and the wt-vault collateral's
+    /// live `convertToAssets(NAV_RATIO_SHARES)` still equals it exactly, the
+    /// gate passes and the price is served in Morpho scale as usual.
+    function test_MorphoPairAdapter_RatioMatches_Serves() public {
+        MockNavVaultToken vaultBase = new MockNavVaultToken(18);
+        vaultBase.setNavRatio(1.05e18);
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+        assertEq(adapter.price(), 42e24, "matching ratio serves the Morpho-scale price");
+    }
+
+    /// @notice A vault distribution steps the live ratio away from the one the
+    /// stored price was computed against — there is no valid price until the
+    /// publisher signs one against the new ratio, so `price()` fails closed
+    /// with `RatioMismatch`. This freezes every Morpho pricing path (health
+    /// checks and liquidations) for the market until that update lands: the
+    /// intended posture, since Morpho has no way to consume a price the
+    /// publisher priced against a NAV that no longer exists.
+    function test_MorphoPairAdapter_RatioDrifted_FailsClosed() public {
+        MockNavVaultToken vaultBase = new MockNavVaultToken(18);
+        vaultBase.setNavRatio(1.05e18);
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+
+        // The distribution: live NAV steps while the stored price still
+        // carries the pre-distribution ratio.
+        vaultBase.setNavRatio(1.06e18);
+        vm.expectRevert(abi.encodeWithSelector(RatioMismatch.selector, uint256(1.05e18), uint256(1.06e18)));
+        adapter.price();
+    }
+
+    /// @notice A ZERO stored ratio is the central store's "no ratio" sentinel
+    /// (non-vault collateral): the gate is skipped entirely, so a collateral
+    /// token with no `convertToAssets` at all still prices normally.
+    function test_MorphoPairAdapter_ZeroRatio_SkipsGate() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
+        _push(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 0);
+        assertEq(adapter.price(), 42e24, "zero-ratio sentinel skips the vault probe");
+    }
+
+    /// @notice A non-zero stored ratio for a collateral that cannot be probed
+    /// (here: a plain ERC-20 with no `convertToAssets`) fails closed with
+    /// `UnverifiableRatio` — the adapter never serves a price whose ratio it
+    /// cannot verify.
+    function test_MorphoPairAdapter_UnprobeableCollateralWithRatio_FailsClosed() public {
+        MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
+        _push(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+        vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(base), uint256(1.05e18)));
+        adapter.price();
+    }
+
+    /// @notice A reverting `convertToAssets` implementation is the same
+    /// fail-closed `UnverifiableRatio`, not a bubbled opaque revert — pinned
+    /// via the mock's own probe-shares assertion by pointing the adapter at a
+    /// vault whose probe reverts.
+    function test_MorphoPairAdapter_RevertingProbeWithRatio_FailsClosed() public {
+        MockRevertingNavVaultToken vaultBase = new MockRevertingNavVaultToken();
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+        vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(vaultBase), uint256(1.05e18)));
+        adapter.price();
+    }
+
     // -------- Helpers --------
 
     function _deployAdapter(address baseToken, address quoteToken) internal returns (MorphoPairAdapter) {
@@ -301,5 +377,9 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
 
     function _push(bytes32 id, uint256 price, uint256 timestamp) internal {
         push(oracle, id, price, timestamp);
+    }
+
+    function _push(bytes32 id, uint256 price, uint256 timestamp, uint256 expiry, uint256 ratio) internal {
+        push(oracle, id, price, timestamp, expiry, ratio);
     }
 }

@@ -148,21 +148,23 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     function test_UpdatePrice_FirstUpdateOnBrandNewPair_AppliesAndEmits() public {
         uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
         vm.expectEmit(true, false, false, true, address(oracle));
-        emit ST0xPriceOracle.PriceUpdated(PAIR_A, 42e18, block.timestamp, expiry);
+        emit ST0xPriceOracle.PriceUpdated(PAIR_A, 42e18, block.timestamp, expiry, 0);
         bool applied = oracle.updatePrice(
             PAIR_A,
             42e18,
             block.timestamp,
             expiry,
+            0,
             signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry)
         );
         assertTrue(applied, "fresh update should apply");
 
-        (uint256 storedPrice, uint256 storedTs, uint256 storedExpiry) = oracle.pairPrice(PAIR_A);
+        (uint256 storedPrice, uint256 storedTs, uint256 storedExpiry, uint256 storedRatio) = oracle.pairPrice(PAIR_A);
         assertEq(storedPrice, 42e18, "price stored");
         assertEq(storedTs, block.timestamp, "timestamp stored");
         assertEq(storedExpiry, expiry, "expiry stored");
-        assertEq(oracle.price(PAIR_A), 42e18, "price() serves stored value");
+        assertEq(storedRatio, 0, "no-ratio sentinel stored");
+        assertEq(_price(PAIR_A), 42e18, "price() serves stored value");
     }
 
     /// @notice A timestamp EQUAL to stored is not strictly newer — a NO-OP,
@@ -173,11 +175,11 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         _push(PAIR_A, 42e18, block.timestamp);
 
         vm.recordLogs();
-        bool applied = oracle.updatePrice(PAIR_A, 99e18, block.timestamp, expiry, hex"deadbeef");
+        bool applied = oracle.updatePrice(PAIR_A, 99e18, block.timestamp, expiry, 0, hex"deadbeef");
         assertFalse(applied, "equal timestamp must be a no-op");
         assertEq(vm.getRecordedLogs().length, 0, "no event on a no-op");
 
-        (uint256 storedPrice, uint256 storedTs,) = oracle.pairPrice(PAIR_A);
+        (uint256 storedPrice, uint256 storedTs,,) = oracle.pairPrice(PAIR_A);
         assertEq(storedPrice, 42e18, "price unchanged");
         assertEq(storedTs, block.timestamp, "timestamp unchanged");
     }
@@ -188,12 +190,13 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         _push(PAIR_A, 42e18, block.timestamp);
 
         vm.recordLogs();
-        bool applied =
-            oracle.updatePrice(PAIR_A, 99e18, block.timestamp - 50, block.timestamp + DEFAULT_VALIDITY, hex"deadbeef");
+        bool applied = oracle.updatePrice(
+            PAIR_A, 99e18, block.timestamp - 50, block.timestamp + DEFAULT_VALIDITY, 0, hex"deadbeef"
+        );
         assertFalse(applied, "older timestamp must be a no-op");
         assertEq(vm.getRecordedLogs().length, 0, "no event on a no-op");
 
-        (uint256 storedPrice, uint256 storedTs,) = oracle.pairPrice(PAIR_A);
+        (uint256 storedPrice, uint256 storedTs,,) = oracle.pairPrice(PAIR_A);
         assertEq(storedPrice, 42e18, "price unchanged");
         assertEq(storedTs, block.timestamp, "timestamp unchanged");
     }
@@ -206,7 +209,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         bytes32 digest = digestFor(oracle, PAIR_A, 42e18, block.timestamp, expiry);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digest);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, abi.encodePacked(r, s, v));
+        oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, 0, abi.encodePacked(r, s, v));
     }
 
     /// @notice A syntactically malformed (wrong-length) signature on a strictly-
@@ -222,7 +225,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     function test_UpdatePrice_MalformedSignatureOnFreshTimestamp_RevertsInEcdsa() public {
         bytes memory malformed = hex"deadbeef"; // 4 bytes, not 65
         vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, uint256(4)));
-        oracle.updatePrice(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, malformed);
+        oracle.updatePrice(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 0, malformed);
         // Nothing stored — price() reverts the normal unset revert, not a panic.
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
         oracle.price(PAIR_A);
@@ -234,7 +237,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry);
         vm.prank(RANDO);
-        assertTrue(oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, sig), "rando can push a signed price");
+        assertTrue(oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, 0, sig), "rando can push a signed price");
     }
 
     /// @notice DELIBERATE PROPERTY: with no nonce and an EIP-712 domain
@@ -246,7 +249,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     function test_UpdatePrice_CrossChainReplay_SameSignatureAppliesOnOtherDeployment() public {
         uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry);
-        assertTrue(oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, sig), "applies on the home chain");
+        assertTrue(oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, 0, sig), "applies on the home chain");
 
         // A second deployment (fresh proxy → different verifyingContract)
         // on a different chainId, sharing the global signer.
@@ -258,8 +261,11 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
                 new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER)))
             )
         );
-        assertTrue(other.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, sig), "same signature replays cross-chain");
-        assertEq(other.price(PAIR_A), 42e18, "replayed price served");
+        assertTrue(
+            other.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, 0, sig), "same signature replays cross-chain"
+        );
+        (uint256 replayedPrice,) = other.price(PAIR_A);
+        assertEq(replayedPrice, 42e18, "replayed price served");
     }
 
     /// @notice A payload timestamped in the FUTURE (ahead of block.timestamp)
@@ -274,7 +280,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = future + DEFAULT_VALIDITY;
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, future, expiry);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceFuture.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, future, expiry, sig);
+        oracle.updatePrice(PAIR_A, 42e18, future, expiry, 0, sig);
 
         // The pair stays unset — nothing was stored, so price() reverts the
         // normal unset revert (NOT an arithmetic panic).
@@ -301,10 +307,10 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         // The window closes; the payload dies with it.
         vm.warp(attackExpiry + 1 hours);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 13e18, attackTs, attackExpiry, sig);
+        oracle.updatePrice(PAIR_A, 13e18, attackTs, attackExpiry, 0, sig);
 
         // Stored state untouched by the rejected resurrection.
-        (uint256 storedPrice,,) = oracle.pairPrice(PAIR_A);
+        (uint256 storedPrice,,,) = oracle.pairPrice(PAIR_A);
         assertEq(storedPrice, 42e18, "stored price untouched");
     }
 
@@ -317,12 +323,12 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 deadExpiry = block.timestamp;
         bytes memory deadSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, deadExpiry);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, ts, deadExpiry, deadSig);
+        oracle.updatePrice(PAIR_A, 42e18, ts, deadExpiry, 0, deadSig);
 
         uint256 liveExpiry = block.timestamp + 1;
         bytes memory liveSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, liveExpiry);
-        assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, liveExpiry, liveSig), "one second of validity is accepted");
-        assertEq(oracle.price(PAIR_A), 42e18, "and immediately servable");
+        assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, liveExpiry, 0, liveSig), "one second of validity is accepted");
+        assertEq(_price(PAIR_A), 42e18, "and immediately servable");
     }
 
     /// @notice A validity window longer than `MAX_VALIDITY_WINDOW` is
@@ -336,11 +342,11 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 tooLong = ts + oracle.MAX_VALIDITY_WINDOW() + 1;
         bytes memory longSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, tooLong);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.ValidityWindowTooLong.selector, PAIR_A, ts, tooLong));
-        oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, longSig);
+        oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, 0, longSig);
 
         uint256 atCap = ts + oracle.MAX_VALIDITY_WINDOW();
         bytes memory capSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, atCap);
-        assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, atCap, capSig), "window exactly at the cap is accepted");
+        assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, atCap, 0, capSig), "window exactly at the cap is accepted");
     }
 
     /// @notice RECOVERY PATH (documented in the contract NatSpec): a
@@ -359,7 +365,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         _push(PAIR_A, 43e18, block.timestamp, tightExpiry);
 
         // Inside the tight window: served.
-        assertEq(oracle.price(PAIR_A), 43e18, "corrective price served");
+        assertEq(_price(PAIR_A), 43e18, "corrective price served");
 
         // Past the tight window but well inside the superseded long one:
         // dead. The long window no longer exists on-chain.
@@ -377,7 +383,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, signedExpiry);
 
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, ts, signedExpiry + 1 hours, sig);
+        oracle.updatePrice(PAIR_A, 42e18, ts, signedExpiry + 1 hours, 0, sig);
     }
 
     /// @notice A strictly-newer, validly-signed payload carrying a ZERO price
@@ -389,7 +395,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
         bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, block.timestamp, expiry);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceZero.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 0, block.timestamp, expiry, sig);
+        oracle.updatePrice(PAIR_A, 0, block.timestamp, expiry, 0, sig);
 
         // Nothing was stored — price() reverts the normal unset revert.
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
@@ -408,7 +414,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = future + DEFAULT_VALIDITY;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, future, expiry));
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, future, expiry, abi.encodePacked(r, s, v));
+        oracle.updatePrice(PAIR_A, 42e18, future, expiry, 0, abi.encodePacked(r, s, v));
     }
 
     /// @notice Signature-before-content also holds for the NEW expiry check:
@@ -422,7 +428,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = block.timestamp - 60;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, ts, expiry));
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 42e18, ts, expiry, abi.encodePacked(r, s, v));
+        oracle.updatePrice(PAIR_A, 42e18, ts, expiry, 0, abi.encodePacked(r, s, v));
     }
 
     /// @notice The boundary: a payload timestamped at EXACTLY block.timestamp
@@ -436,11 +442,12 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
                 42e18,
                 block.timestamp,
                 expiry,
+                0,
                 signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry)
             ),
             "now is not the future"
         );
-        assertEq(oracle.price(PAIR_A), 42e18, "current-timestamp price is servable");
+        assertEq(_price(PAIR_A), 42e18, "current-timestamp price is servable");
     }
 
     /// @notice Per-pair isolation: two DISTINCT pairs each keep their own
@@ -464,8 +471,8 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
 
         // Each pair reads back exactly its own value — not the other's, and
         // not a shared last-write.
-        (uint256 priceA, uint256 storedTsA, uint256 expiryA) = oracle.pairPrice(PAIR_A);
-        (uint256 priceB, uint256 storedTsB, uint256 expiryB) = oracle.pairPrice(pairB);
+        (uint256 priceA, uint256 storedTsA, uint256 expiryA,) = oracle.pairPrice(PAIR_A);
+        (uint256 priceB, uint256 storedTsB, uint256 expiryB,) = oracle.pairPrice(pairB);
         assertEq(priceA, 42e18, "pair A price isolated");
         assertEq(storedTsA, tsA, "pair A timestamp isolated");
         assertEq(expiryA, tsA + DEFAULT_VALIDITY, "pair A expiry isolated");
@@ -473,14 +480,14 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertEq(storedTsB, tsB, "pair B timestamp isolated");
         assertEq(expiryB, tsB + DEFAULT_VALIDITY, "pair B expiry isolated");
 
-        assertEq(oracle.price(PAIR_A), 42e18, "price() serves pair A's own value");
-        assertEq(oracle.price(pairB), 99e18, "price() serves pair B's own value");
+        assertEq(_price(PAIR_A), 42e18, "price() serves pair A's own value");
+        assertEq(_price(pairB), 99e18, "price() serves pair B's own value");
 
         // Overwriting pair A with a fresher price must not touch pair B.
         vm.warp(block.timestamp + 7);
         _push(PAIR_A, 43e18, block.timestamp);
-        assertEq(oracle.price(PAIR_A), 43e18, "pair A advanced");
-        (uint256 priceBAfter, uint256 storedTsBAfter,) = oracle.pairPrice(pairB);
+        assertEq(_price(PAIR_A), 43e18, "pair A advanced");
+        (uint256 priceBAfter, uint256 storedTsBAfter,,) = oracle.pairPrice(pairB);
         assertEq(priceBAfter, 99e18, "pair B price untouched by pair A write");
         assertEq(storedTsBAfter, tsB, "pair B timestamp untouched by pair A write");
     }
@@ -490,9 +497,10 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     /// @notice `DOMAIN_SEPARATOR` is a hardcoded hex literal — pin it to its
     /// normative EIP-712 derivation so a wrong literal can never ship
     /// undetected. Recomputed independently here (not read off the contract).
-    /// The domain is UNCHANGED by the expiry schema addition: schema
-    /// evolution is carried by the typehash (a four-field struct hash can
-    /// never validate a three-field signature), so no version bump.
+    /// The domain is UNCHANGED by schema additions such as `expiry` and
+    /// `ratio`: schema evolution is carried by the typehash (a five-field
+    /// struct hash can never validate a shorter-schema signature), so no
+    /// version bump.
     function test_DomainSeparator_MatchesNormativeDerivation() public view {
         bytes32 expected = keccak256(
             abi.encode(
@@ -503,11 +511,11 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
     }
 
     /// @notice The `PRICE_UPDATE_TYPEHASH` matches its normative string —
-    /// including the `expiry` field the publisher signs.
+    /// including the `expiry` and `ratio` fields the publisher signs.
     function test_PriceUpdateTypehash_MatchesNormativeDerivation() public view {
         assertEq(
             oracle.PRICE_UPDATE_TYPEHASH(),
-            keccak256("PriceUpdate(bytes32 pairId,uint256 price,uint256 timestamp,uint256 expiry)"),
+            keccak256("PriceUpdate(bytes32 pairId,uint256 price,uint256 timestamp,uint256 expiry,uint256 ratio)"),
             "typehash must equal its EIP-712 struct derivation"
         );
     }
@@ -565,7 +573,7 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         _push(PAIR_A, 42e18, block.timestamp, expiry);
 
         vm.warp(expiry - 1);
-        assertEq(oracle.price(PAIR_A), 42e18, "still live one second before expiry");
+        assertEq(_price(PAIR_A), 42e18, "still live one second before expiry");
 
         vm.warp(expiry);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
@@ -593,16 +601,16 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
         bytes memory oldKeySig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 43e18, block.timestamp, expiry);
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
-        oracle.updatePrice(PAIR_A, 43e18, block.timestamp, expiry, oldKeySig);
+        oracle.updatePrice(PAIR_A, 43e18, block.timestamp, expiry, 0, oldKeySig);
 
         // ...the new key does.
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(newPk, digestFor(oracle, PAIR_A, 43e18, block.timestamp, expiry));
         assertTrue(
-            oracle.updatePrice(PAIR_A, 43e18, block.timestamp, expiry, abi.encodePacked(r, s, v)), "new key applies"
+            oracle.updatePrice(PAIR_A, 43e18, block.timestamp, expiry, 0, abi.encodePacked(r, s, v)), "new key applies"
         );
 
         // Rotation preserved the previously stored state until then.
-        assertEq(oracle.price(PAIR_A), 43e18, "state advanced under the new key");
+        assertEq(_price(PAIR_A), 43e18, "state advanced under the new key");
     }
 
     function test_SetSigner_RoleGated() public {
@@ -633,11 +641,22 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
 
     // -------- Helpers --------
 
+    /// @dev The price component of the atomic `price()` read — for
+    /// assertions exercising only the price side. The oracle itself never
+    /// serves a checked price without its ratio.
+    function _price(bytes32 id) internal view returns (uint256 storedPrice) {
+        (storedPrice,) = oracle.price(id);
+    }
+
     function _push(bytes32 id, uint256 price, uint256 timestamp) internal {
         push(oracle, id, price, timestamp);
     }
 
     function _push(bytes32 id, uint256 price, uint256 timestamp, uint256 expiry) internal {
         push(oracle, id, price, timestamp, expiry);
+    }
+
+    function _push(bytes32 id, uint256 price, uint256 timestamp, uint256 expiry, uint256 ratio) internal {
+        push(oracle, id, price, timestamp, expiry, ratio);
     }
 }

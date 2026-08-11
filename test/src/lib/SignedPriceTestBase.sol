@@ -30,31 +30,52 @@ abstract contract SignedPriceTestBase is Test {
     uint256 internal constant DEFAULT_VALIDITY = 5 minutes;
 
     /// @notice Signs and applies a price update against `store` with the
-    /// canonical `SIGNER_PK` and the default validity window
-    /// (`timestamp + DEFAULT_VALIDITY`), asserting it was accepted. The
-    /// convenience flow for suites that need a valid stored price but are not
-    /// exercising expiry semantics.
+    /// canonical `SIGNER_PK`, the default validity window
+    /// (`timestamp + DEFAULT_VALIDITY`) and a ZERO ratio ("no ratio"),
+    /// asserting it was accepted. The convenience flow for suites that need a
+    /// valid stored price but are not exercising expiry or NAV-ratio
+    /// mechanics.
     /// @param store The oracle to push to.
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
     function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp) internal {
-        push(store, id, price, timestamp, timestamp + DEFAULT_VALIDITY);
+        push(store, id, price, timestamp, timestamp + DEFAULT_VALIDITY, 0);
     }
 
-    /// @notice Signs and applies a price update against `store` with the
-    /// canonical `SIGNER_PK` and an explicit expiry, asserting it was
-    /// accepted. The single push flow every suite's thin `_push` wrapper
-    /// delegates to.
+    /// @notice As above with an explicit expiry, still pushing the ZERO
+    /// "no ratio" sentinel — for suites exercising expiry semantics that
+    /// don't care about the NAV-ratio path.
     /// @param store The oracle to push to.
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
     /// @param expiry The publisher-signed validity horizon.
     function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp, uint256 expiry) internal {
+        push(store, id, price, timestamp, expiry, 0);
+    }
+
+    /// @notice Signs and applies a price update against `store` with the
+    /// canonical `SIGNER_PK` over the full signed struct — explicit expiry
+    /// and vault NAV `ratio` — asserting it was accepted. The single push
+    /// flow every overload above delegates to.
+    /// @param store The oracle to push to.
+    /// @param id The pair id.
+    /// @param price The price being pushed.
+    /// @param timestamp The observation timestamp.
+    /// @param expiry The publisher-signed validity horizon.
+    /// @param ratio The vault NAV ratio the price was priced against.
+    function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp, uint256 expiry, uint256 ratio)
+        internal
+    {
         assertTrue(
             store.updatePrice(
-                id, price, timestamp, expiry, signPriceUpdate(store, SIGNER_PK, id, price, timestamp, expiry)
+                id,
+                price,
+                timestamp,
+                expiry,
+                ratio,
+                signPriceUpdate(store, SIGNER_PK, id, price, timestamp, expiry, ratio)
             )
         );
     }
@@ -62,30 +83,38 @@ abstract contract SignedPriceTestBase is Test {
     /// @notice Recreates the EIP-712 digest an off-chain signer would sign for
     /// a price update against `store`, taking the oracle store as a parameter
     /// so the derivation is not tied to any one test's local variable name.
-    /// @param store The oracle whose domain separator and typehash are used.
-    /// @param id The pair id.
-    /// @param price The price being pushed.
-    /// @param timestamp The observation timestamp.
-    /// @param expiry The publisher-signed validity horizon.
-    /// @return The 32-byte EIP-712 digest.
+    /// Zero-ratio overload for tests that don't exercise the NAV-ratio path.
     function digestFor(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp, uint256 expiry)
         internal
         view
         returns (bytes32)
     {
-        bytes32 structHash = keccak256(abi.encode(store.PRICE_UPDATE_TYPEHASH(), id, price, timestamp, expiry));
-        return keccak256(abi.encodePacked("\x19\x01", store.domainSeparator(), structHash));
+        return digestFor(store, id, price, timestamp, expiry, 0);
     }
 
-    /// @notice Signs a price update for `store` with `pk`, producing the
-    /// packed `(r, s, v)` signature `updatePrice` expects.
-    /// @param store The oracle the signature is for.
-    /// @param pk The private key to sign with.
+    /// @notice As above, over the full signed struct including `ratio`.
+    /// @param store The oracle whose domain separator and typehash are used.
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
     /// @param expiry The publisher-signed validity horizon.
-    /// @return The `abi.encodePacked(r, s, v)` signature.
+    /// @param ratio The vault NAV ratio the price was priced against.
+    /// @return The 32-byte EIP-712 digest.
+    function digestFor(
+        ST0xPriceOracle store,
+        bytes32 id,
+        uint256 price,
+        uint256 timestamp,
+        uint256 expiry,
+        uint256 ratio
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(store.PRICE_UPDATE_TYPEHASH(), id, price, timestamp, expiry, ratio));
+        return keccak256(abi.encodePacked("\x19\x01", store.domainSeparator(), structHash));
+    }
+
+    /// @notice Signs a price update for `store` with `pk`, producing the
+    /// packed `(r, s, v)` signature `updatePrice` expects. Zero-ratio
+    /// overload for tests that don't exercise the NAV-ratio path.
     function signPriceUpdate(
         ST0xPriceOracle store,
         uint256 pk,
@@ -94,7 +123,28 @@ abstract contract SignedPriceTestBase is Test {
         uint256 timestamp,
         uint256 expiry
     ) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digestFor(store, id, price, timestamp, expiry));
+        return signPriceUpdate(store, pk, id, price, timestamp, expiry, 0);
+    }
+
+    /// @notice As above, over the full signed struct including `ratio`.
+    /// @param store The oracle the signature is for.
+    /// @param pk The private key to sign with.
+    /// @param id The pair id.
+    /// @param price The price being pushed.
+    /// @param timestamp The observation timestamp.
+    /// @param expiry The publisher-signed validity horizon.
+    /// @param ratio The vault NAV ratio the price was priced against.
+    /// @return The `abi.encodePacked(r, s, v)` signature.
+    function signPriceUpdate(
+        ST0xPriceOracle store,
+        uint256 pk,
+        bytes32 id,
+        uint256 price,
+        uint256 timestamp,
+        uint256 expiry,
+        uint256 ratio
+    ) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digestFor(store, id, price, timestamp, expiry, ratio));
         return abi.encodePacked(r, s, v);
     }
 }
