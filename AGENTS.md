@@ -107,7 +107,16 @@ locally. The workflow runs `rainix-sol-artifacts`, which executes
   oracle is minted afterwards through the beacon-set deployer with that vault's
   DIA feed + corporate-action pause config.
 - `signed-price-stack` — the `ST0xPriceOracle` singleton + its beacon-set
-  deployer, and a `MorphoPairAdapterBeaconSetDeployer` bound to it.
+  deployer, and a `MorphoPairAdapterBeaconSetDeployer` bound to it. This suite
+  additionally requires four dispatch inputs: `st0x-admin` (`ST0X_ADMIN`),
+  `st0x-oracle-admin` (`ST0X_ORACLE_ADMIN`), `st0x-signer` (`ST0X_SIGNER`), and
+  `st0x-timeout` (`ST0X_TIMEOUT`, seconds, `<= 30 days`). The dropdown marks
+  them optional because the `dia-vault-oracle` suite ignores them, but they are
+  effectively required here: `Deploy.sol` reads each via `vm.envAddress` /
+  `vm.envUint` and reverts on any empty/missing value, and the three address
+  roles (admin, oracle-admin, signer) must each differ from the deploy key — the
+  signer authorises every published price, so it gets the same governance
+  separation as the beacon owner.
 
 `BEACON_INITIAL_OWNER` is **required** and must differ from the deploy key: the
 beacon owner controls the implementation behind every proxy (every served
@@ -115,7 +124,8 @@ price), so it must be governance — a multisig — never the hot CI deploy key.
 workflow exposes it as a required dispatch input; a missing value fails the
 deploy loudly.
 
-1. Run the workflow with the target network, suite, and beacon owner
+1. Run the workflow with the target network, suite, and beacon owner (plus the
+   four `st0x-*` inputs when the suite is `signed-price-stack`)
 2. Parse the deployed addresses from the workflow logs; if the repo needs to
    reference any (e.g. the Base token addresses the fork tests use), keep them
    as `.sol` constants, not a separate registry file

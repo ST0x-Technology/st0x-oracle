@@ -17,9 +17,7 @@ import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 
 contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
-    uint256 internal constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
-    address internal SIGNER;
-
+    // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address internal constant BEACON_OWNER = address(0xBEEF);
     address internal constant ADMIN = address(0xC0DE);
     uint64 internal constant TIMEOUT = 1 hours;
@@ -31,7 +29,6 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
     event Deployment(address indexed caller, address indexed oracle);
 
     function setUp() public {
-        SIGNER = vm.addr(SIGNER_PK);
         vm.warp(1_000_000);
 
         // The central store, shaped as in production: impl behind a beacon proxy.
@@ -201,6 +198,6 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
     // -------- Helpers --------
 
     function _push(bytes32 id, uint256 price, uint256 timestamp) internal {
-        assertTrue(central.updatePrice(id, price, timestamp, signPriceUpdate(central, SIGNER_PK, id, price, timestamp)));
+        push(central, id, price, timestamp);
     }
 }

@@ -46,12 +46,13 @@ consumers ──▶│           DIAVaultOracle          │   ← canonical add
   (`ICorporateActionsV1`) is **derived** as the priced vault's `asset()` — the
   tStock the wtStock wraps — not a separate config field, and the auto-pause is
   mandatory.
-- **`wtStock` NAV tracking via `convertToAssets`.** The
-  `totalAssets /
-  totalSupply` factor is exactly ERC-4626
-  `convertToAssets(1 share)`. Post-split rebalances inside the underlying
-  `tStock` vault flow through to the share price automatically on the first read
-  after the pause window closes — no oracle-side intervention.
+- **`wtStock` NAV tracking.** The `totalAssets /
+  totalSupply` factor is the
+  vault's raw ERC-4626 assets-per-share ratio (equal to
+  `convertToAssets(1 share)` up to OpenZeppelin's virtual-offset rounding).
+  Post-split rebalances inside the underlying `tStock` vault flow through to the
+  share price automatically on the first read after the pause window closes — no
+  oracle-side intervention.
 
 **DIA freshness model:** DIA pushes a new value whenever **either** 0.1%
 deviation OR 1 hour elapsed (whichever first). Volatile periods get pushes every
@@ -79,19 +80,21 @@ few minutes; the 1-hour heartbeat is the dead-market floor. Recommended
 > `maxAge = 2 hours` with `pauseTimeAfter = 3 hours` (a 1h margin) is the
 > reference.
 
-**DIA on Base mainnet:** the canonical oracle contract is
-`0xCE521b52513242c5094bc56f57887BB2A05B8129`. Per-symbol feeds are all served
-from this single contract via `getValue(string key)` and the key is the bare
-symbol (e.g. `"COIN"`).
+**DIA on Base mainnet:** the canonical oracle contract address is the
+`DIA_FEED_BASE` constant in [`src/lib/LibDIAFeed.sol`](src/lib/LibDIAFeed.sol) —
+the single source of truth; import it rather than pasting the literal.
+Per-symbol feeds are all served from this single contract via
+`getValue(string key)` and the key is the bare symbol (e.g. `"COIN"`).
 
 ### Integrator Quickstart
 
 Mint a `DIAVaultOracle` for a new vault through its beacon-set deployer:
 
 ```solidity
+// DIA_FEED_BASE is the canonical Base feed address, from src/lib/LibDIAFeed.sol.
 DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
     DIAVaultOracleConfig({
-        diaOracle:       IDIAOracleV2(0xCE521b52513242c5094bc56f57887BB2A05B8129),
+        diaOracle:       IDIAOracleV2(DIA_FEED_BASE),
         symbol:          "COIN",
         vault:           wtStockVault,  // ICorporateActionsV1 derived from vault.asset()
         maxAge:          2 hours,
@@ -217,7 +220,8 @@ src/
 │   ├── IAggregatorV2V3.sol      (vendored Chainlink shape)
 │   └── IOracle.sol              (vendored Morpho Blue oracle shape)
 └── lib/
-    └── LibCorporateActionsPause.sol
+    ├── LibCorporateActionsPause.sol
+    └── LibDIAFeed.sol           (single source of truth: DIA Base feed address)
 test/
 ├── mocks/
 └── src/

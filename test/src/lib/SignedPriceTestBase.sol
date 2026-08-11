@@ -15,6 +15,24 @@ import {ST0xPriceOracle} from "../../../src/concrete/oracle/ST0xPriceOracle.sol"
 /// scheme ever changes, this is the only helper to update and every inheriting
 /// suite recompiles against it — no silent per-file drift.
 abstract contract SignedPriceTestBase is Test {
+    /// @notice The canonical test publisher private key, and its address. Held
+    /// here so every signed-price suite shares one signer fixture rather than
+    /// re-declaring it — the key/address counterpart to the single `push` /
+    /// `signPriceUpdate` helpers below.
+    uint256 internal constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
+    address internal immutable SIGNER = vm.addr(SIGNER_PK);
+
+    /// @notice Signs and applies a price update against `store` with the
+    /// canonical `SIGNER_PK`, asserting it was accepted. The single push flow
+    /// every suite's thin `_push` wrapper delegates to.
+    /// @param store The oracle to push to.
+    /// @param id The pair id.
+    /// @param price The price being pushed.
+    /// @param timestamp The observation timestamp.
+    function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp) internal {
+        assertTrue(store.updatePrice(id, price, timestamp, signPriceUpdate(store, SIGNER_PK, id, price, timestamp)));
+    }
+
     /// @notice Recreates the EIP-712 digest an off-chain signer would sign for
     /// a price update against `store`, taking the oracle store as a parameter
     /// so the derivation is not tied to any one test's local variable name.

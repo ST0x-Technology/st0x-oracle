@@ -51,6 +51,10 @@ import {MessageHashUtils} from "@openzeppelin-contracts-5.6.1/utils/cryptography
 ///    at `initialize`).
 ///  - `ORACLE_ADMIN_ROLE` — `setSigner` / `setTimeout`.
 contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
+    /// @notice Role gating `setSigner` / `setTimeout` (rotation of the global
+    /// publisher key and the staleness bound). Granted to `oracleAdmin` at
+    /// `initialize`; distinct from `DEFAULT_ADMIN_ROLE`, which only administers
+    /// roles and cannot itself rotate signer/timeout.
     bytes32 public constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN");
 
     /// @notice Upper bound on the global staleness `timeout`. A value larger

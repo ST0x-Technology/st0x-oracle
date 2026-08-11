@@ -4,10 +4,9 @@ pragma solidity ^0.8.25;
 
 // SYNC NOTE: This interface mirrors DIA Data Association's canonical
 // `IDIAOracleV2` (the on-chain feed surface exposed by their oracle
-// contracts — e.g. on Base mainnet at
-// `0xCE521b52513242c5094bc56f57887BB2A05B8129`). Last synced 2026-06-29
-// against the contract's verified bytecode (probed via
-// `cast call ... getValue(string)(uint128,uint128) "COIN"`).
+// contracts — the live Base address is `DIA_FEED_BASE` in
+// `src/lib/LibDIAFeed.sol`). Last synced 2026-06-29 against the contract's
+// verified bytecode (probed via `cast call ... getValue(string)(uint128,uint128) "COIN"`).
 //
 // Vendored rather than pulled as a dep — the interface is small,
 // stable, and DIA does not publish a soldeer package. Same pattern as

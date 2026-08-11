@@ -35,6 +35,7 @@ import {CorporateActionsListHarness} from "../../../mocks/CorporateActionsListHa
 import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
 import {ACTION_TYPE_STOCK_SPLIT_V1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {InvalidMask} from "st0x-deploy-0.1.1/src/error/ErrCorporateAction.sol";
+import {FixedDecimalOverflow} from "rain-math-float-0.1.1/src/error/ErrDecimalFloat.sol";
 
 contract DIAVaultOracleTest is Test {
     DIAVaultOracle internal implementation;
@@ -955,6 +956,29 @@ contract DIAVaultOracleTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(VaultSharePriceOverflow.selector, uint256(7e76)));
         oracle.latestAnswer();
+    }
+
+    /// @notice The UPPER overflow band the NatSpec distinguishes: a share price
+    /// so large it exceeds uint256 during the 8-decimal scaling aborts EARLIER,
+    /// inside `LibDecimalFloat`, with its own `FixedDecimalOverflow` — before the
+    /// contract's own int256-band `VaultSharePriceOverflow` guard is reached.
+    /// Pins that this fails CLOSED (reverts) rather than wrapping to a wrong
+    /// positive answer. diaPrice raw 1e38 (natural 1e20) * totalAssets 1e60 /
+    /// totalSupply 1 = natural 1e80 → 8dp 1e88, past uint256.max (~1.16e77).
+    /// Selector-only: the library error's args are internal.
+    function testLatestAnswerRevertsFixedDecimalOverflowAboveUintMax() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 1e38, uint128(block.timestamp));
+        vault.setTotalAssets(1e60);
+        vault.setTotalSupply(1);
+
+        // Assert the exact selector (not a bare revert). The library error
+        // carries internal args (coefficient/exponent/decimals), so match on
+        // the selector to stay robust to those while still pinning that this
+        // fails closed as FixedDecimalOverflow rather than wrapping.
+        (bool ok, bytes memory ret) = address(oracle).staticcall(abi.encodeCall(DIAVaultOracle.latestAnswer, ()));
+        assertFalse(ok, "must revert, not return a wrapped answer");
+        assertEq(bytes4(ret), FixedDecimalOverflow.selector, "upper overflow band must revert FixedDecimalOverflow");
     }
 
     // -------- latestRoundData --------

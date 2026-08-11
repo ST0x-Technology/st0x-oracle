@@ -27,9 +27,7 @@ import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 /// staleness/unset passthrough, constructor / initializer guards, and the
 /// shared beacon upgrade retargeting every deployed adapter proxy at once.
 contract MorphoPairAdapterTest is SignedPriceTestBase {
-    uint256 constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
-    address SIGNER;
-
+    // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address constant ADMIN = address(0xC0DE);
     uint64 constant TIMEOUT = 1 hours;
 
@@ -42,7 +40,6 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
     UpgradeableBeacon adapterBeacon;
 
     function setUp() public {
-        SIGNER = vm.addr(SIGNER_PK);
         // Same shape as production: implementation behind a beacon proxy.
         ST0xPriceOracle impl = new ST0xPriceOracle();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(impl), ADMIN);
@@ -304,6 +301,6 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
     }
 
     function _push(bytes32 id, uint256 price, uint256 timestamp) internal {
-        assertTrue(oracle.updatePrice(id, price, timestamp, signPriceUpdate(oracle, SIGNER_PK, id, price, timestamp)));
+        push(oracle, id, price, timestamp);
     }
 }
