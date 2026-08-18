@@ -108,6 +108,16 @@ DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
 Hand `address(oracle)` to consumers as the `AggregatorV2V3Interface` source they
 already plug Chainlink feeds into.
 
+> **⚠️ Instance authenticity:** minting through the beacon-set deployers is
+> **permissionless**, and the CREATE2 salt commits to the config alone — so an
+> attacker can mint a proxy with an arbitrary config that sits behind the same
+> governance-owned beacon and emits the same `Deployment` event as an official
+> instance. Neither beacon membership nor a `Deployment` event authenticates
+> anything. The published deployment address list (the CI-authored deploy
+> artifacts) is the **only** authenticity signal: wire consumers from it, never
+> from event or beacon scans. This applies identically to both stacks
+> (`DIAVaultOracle`, `ST0xPriceOracle`, `MorphoPairAdapter`).
+
 ### Operational Preconditions for Consumers
 
 Anything that wraps reads in `try / catch` (Aave-style consumers) must respect
