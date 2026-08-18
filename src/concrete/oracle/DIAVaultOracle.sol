@@ -33,10 +33,32 @@ error ZeroMaxAge();
 /// boundary), so it fails loud at init instead.
 error ZeroCorporateActionsVault();
 
-/// @dev Error raised when the corporate-action pause window is incoherent: a
-/// non-zero `actionTypeMask` and at least one non-zero window are both
-/// required, else the auto-pause never fires despite being "configured".
+/// @dev Error raised when the corporate-action pause mask is incoherent: the
+/// mask must retain at least one REAL action bit after the library strips
+/// `ACTION_TYPE_INIT_V1`, else the auto-pause never fires despite being
+/// "configured".
 error InvalidPauseConfig();
+
+/// @dev Error raised when `pauseTimeBefore == 0`. The PRE-action window is as
+/// mandatory as the post-action one, and is rejected with the same
+/// strictness. The pre-window guards the mirror image of the cross-epoch
+/// hazard the `pauseTimeAfter > maxAge` invariant closes: a stock split's
+/// ex-date on the real market PRECEDES the on-chain `effectiveTime` (the
+/// exchange sets the former, the operator schedules the latter), so the DIA
+/// feed can publish the already-rebalanced (e.g. halved) equity price while
+/// the vault's NAV ratio is still pre-action. Only the pre-window pauses
+/// reads across that interval; with a zero pre-window nothing does, the
+/// share is underpriced (~half on a 2:1 split), and the loss falls on
+/// BORROWERS — every wtStock-collateralised position appears
+/// undercollateralised and becomes liquidatable at a price the collateral
+/// does not actually trade at. Note the residual the contract cannot
+/// enforce: the upstream scheduler only requires `effectiveTime >
+/// block.timestamp`, so an action scheduled at shorter notice than
+/// `pauseTimeBefore` nullifies part of the pre-window regardless of its
+/// size. A minimum scheduling notice (comfortably above `pauseTimeBefore`)
+/// is therefore an OPERATIONAL requirement on the corporate-action
+/// scheduler, recorded here because no on-chain check can carry it.
+error ZeroPauseTimeBefore();
 
 /// @dev Error raised when `pauseTimeAfter <= maxAge`. The post-action pause MUST
 /// last STRICTLY longer than the DIA staleness window, otherwise a
@@ -110,10 +132,12 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// `ACTION_TYPE_STOCK_SPLIT_V1` for splits only, or `type(uint256).max` for
 /// every present and future action type. Must be non-zero.
 /// @param pauseTimeBefore Seconds before a pending action's `effectiveTime` to
-/// start pausing.
+/// start pausing. Must be non-zero, sized above the worst-case ex-date →
+/// `effectiveTime` lead — see `ZeroPauseTimeBefore`.
 /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
-/// keep pausing. At least one of before/after must be non-zero, AND
-/// `pauseTimeAfter > maxAge` (STRICTLY) is REQUIRED and enforced at init
+/// keep pausing. Both windows are individually mandatory (each has its own
+/// strict check), AND `pauseTimeAfter > maxAge` (STRICTLY) is REQUIRED and
+/// enforced at init
 /// (`PauseTimeAfterBelowMaxAge`) — the post-action pause must outlast the DIA
 /// staleness window so a pre-action price can never be served against the
 /// post-action ratio. The margin `pauseTimeAfter - maxAge` is the maximum
@@ -225,6 +249,11 @@ struct DIAVaultOracleConfig {
 /// still within `maxAge` (hence accepted by the staleness check), that stale
 /// price pairs with the already-rebalanced ratio: on a 2:1 split the share is
 /// valued at ~2x, letting a borrower draw against phantom collateral (bad debt).
+///
+/// The PRE-action window closes the mirror-image hazard — the market's
+/// ex-date revaluation precedes the on-chain `effectiveTime` — so
+/// `pauseTimeBefore` is equally mandatory: see `ZeroPauseTimeBefore` for
+/// the full argument and the scheduling-notice requirement.
 ///
 /// The subtlety is which CLOCK ages the push. Staleness is measured from the
 /// push's own DIA SOURCE timestamp, not from when it landed on chain, and that
@@ -357,11 +386,14 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // mask of exactly `ACTION_TYPE_INIT_V1` would pass a bare `!= 0` check
         // yet the library short-circuits it to "never pauses", silently
         // defeating the mandatory auto-pause.
-        if (
-            (config.actionTypeMask & ~ACTION_TYPE_INIT_V1) == 0
-                || (config.pauseTimeBefore == 0 && config.pauseTimeAfter == 0)
-        ) {
+        if ((config.actionTypeMask & ~ACTION_TYPE_INIT_V1) == 0) {
             revert InvalidPauseConfig();
+        }
+
+        // The PRE-action window is rejected at zero with the same strictness
+        // as the post-action side below — see `ZeroPauseTimeBefore`.
+        if (config.pauseTimeBefore == 0) {
+            revert ZeroPauseTimeBefore();
         }
 
         // Cross-epoch safety invariant: the post-action pause must STRICTLY
