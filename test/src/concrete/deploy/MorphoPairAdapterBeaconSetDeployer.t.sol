@@ -20,7 +20,6 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
     // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address internal constant BEACON_OWNER = address(0xBEEF);
     address internal constant ADMIN = address(0xC0DE);
-    uint64 internal constant TIMEOUT = 1 hours;
 
     ST0xPriceOracle internal central;
     MockERC20Decimals internal base;
@@ -36,9 +35,7 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(impl), ADMIN);
         central = ST0xPriceOracle(
             address(
-                new BeaconProxy(
-                    address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER, TIMEOUT))
-                )
+                new BeaconProxy(address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER)))
             )
         );
 

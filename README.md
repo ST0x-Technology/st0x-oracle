@@ -131,7 +131,8 @@ pairs, and a thin per-market adapter (`MorphoPairAdapter`) that reshapes one
 pair into the exact convention Morpho expects.
 
 ```text
-publisher ── EIP-712 signed (pairId, price, timestamp) ──▶┌───────────────────┐
+         EIP-712 signed (pairId, price, timestamp, expiry)
+publisher ───────────────────────────────────────────────▶┌───────────────────┐
                                                           │  ST0xPriceOracle  │  ← singleton
                                                           │  multi-pair store │     store
                                                           │  opaque uint256   │
@@ -150,11 +151,21 @@ Morpho Blue ────── IOracle.price() ───────────
   (`keccak256(abi.encodePacked(base, quote))`, no registration); values are
   opaque `uint256`s whose scaling belongs to the publisher. `updatePrice` is
   permissionless — a global publisher's EIP-712 signature authorises each
-  update, replay-protected by a strict per-pair timestamp inequality (stale
-  payloads no-op, future-dated payloads revert). The EIP-712 domain deliberately
-  binds name + version only, so one signed payload serves every chain the oracle
-  is deployed on. Global `signer` / `timeout` rotate via
-  `ORACLE_ADMIN_ROLE`-gated setters.
+  update, replay-protected by a strict per-pair timestamp inequality
+  (not-strictly-newer payloads no-op, future-dated payloads revert). Every
+  payload also carries the publisher's signed `expiry` — the producer's own
+  validity horizon: a payload whose window has already closed is rejected
+  outright at submission, and `price()` refuses a stored price once its expiry
+  passes. There is no consumer-side staleness knob — the publisher controls the
+  stale window per payload, with nothing to update on-chain (short windows while
+  the underlying market trades, one long window across a close or weekend;
+  window overlap is what bounds a submitter's choice between concurrently-live
+  payloads, so keep it minimal). `expiry - timestamp` is sanity-capped at
+  `MAX_VALIDITY_WINDOW` (30 days) purely to fail a wrong-scale (e.g.
+  milliseconds) signing pipeline closed. The EIP-712 domain deliberately binds
+  name + version only, so one signed payload serves every chain the oracle is
+  deployed on. The global `signer` rotates via an `ORACLE_ADMIN_ROLE`-gated
+  setter.
 - **`MorphoPairAdapter`** — beacon-proxied adapter (not a pricing source, a
   transformation) exposing one pair on the central store through Morpho Blue's
   `IOracle.price()`. It owns the decimal conversion: the publisher signs an

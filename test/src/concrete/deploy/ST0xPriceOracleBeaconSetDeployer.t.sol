@@ -22,7 +22,9 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
     address internal constant ORACLE_ADMIN = address(0xADDD);
     uint256 internal constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
     address internal SIGNER;
-    uint64 internal constant TIMEOUT = 1 hours;
+    /// @dev A second distinct signer — the differing-config axis for the
+    /// CREATE2 divergence tests below (initialize only requires non-zero).
+    address internal constant SIGNER_B = address(0x51B2);
 
     event Deployment(address indexed caller, address indexed oracle);
 
@@ -70,14 +72,13 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
 
     // -------- newST0xPriceOracle --------
 
-    /// @notice The proxy is initialized inside its constructor: signer, timeout,
-    /// and both role grants are live immediately after mint.
+    /// @notice The proxy is initialized inside its constructor: signer and
+    /// both role grants are live immediately after mint.
     function testNewST0xPriceOracleInitializesState() external {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
-        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
 
         assertEq(oracle.signer(), SIGNER, "signer set");
-        assertEq(oracle.timeout(), TIMEOUT, "timeout set");
         assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), ADMIN), "admin has default admin role");
         assertTrue(oracle.hasRole(oracle.ORACLE_ADMIN_ROLE(), ORACLE_ADMIN), "oracle admin has oracle admin role");
     }
@@ -87,11 +88,11 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
     /// divergent oracle. Differing args land at a different address.
     function testNewST0xPriceOracleIsIdempotentPerConfig() external {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
-        ST0xPriceOracle first = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+        ST0xPriceOracle first = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
 
         // Same args → CREATE2 collision → revert (empty returndata).
         vm.expectRevert();
-        bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+        bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
 
         // The bare vm.expectRevert above is intentional: a raw CREATE2 address
         // collision carries no selector. Prove it WAS the collision (not an
@@ -101,7 +102,7 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         assertEq(first.signer(), SIGNER, "first instance config intact after the collision");
 
         // Differing args → different deterministic address.
-        ST0xPriceOracle second = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT + 1);
+        ST0xPriceOracle second = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER_B);
         assertTrue(address(first) != address(second), "distinct args give distinct address");
     }
 
@@ -109,7 +110,7 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
 
         vm.recordLogs();
-        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
 
         Vm.Log[] memory entries = vm.getRecordedLogs();
         bytes32 sig = keccak256("Deployment(address,address)");
@@ -131,7 +132,7 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
     function testNewST0xPriceOraclePropagatesInitRevertZeroSigner() external {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
         vm.expectRevert(ST0xPriceOracle.ZeroSigner.selector);
-        bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, address(0), TIMEOUT);
+        bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, address(0));
     }
 
     /// @notice The beacon is genuinely SHARED: deploy two singletons with
@@ -141,8 +142,8 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
     function testMultipleProxiesShareBeacon() external {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
 
-        ST0xPriceOracle a = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
-        ST0xPriceOracle b = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT + 1);
+        ST0xPriceOracle a = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
+        ST0xPriceOracle b = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER_B);
         assertTrue(address(a) != address(b), "proxies must be distinct");
 
         address beacon = address(bsd.iST0xPriceOracleBeacon());
@@ -163,7 +164,7 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         assertEq(ST0xPriceOracleV2(address(b)).implVersion(), 2, "proxy b retargeted");
 
         // Each proxy retains its OWN distinct config across the upgrade.
-        assertEq(a.timeout(), TIMEOUT, "proxy a keeps its own timeout");
-        assertEq(b.timeout(), TIMEOUT + 1, "proxy b keeps its own timeout");
+        assertEq(a.signer(), SIGNER, "proxy a keeps its own signer");
+        assertEq(b.signer(), SIGNER_B, "proxy b keeps its own signer");
     }
 }

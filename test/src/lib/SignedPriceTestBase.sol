@@ -22,15 +22,41 @@ abstract contract SignedPriceTestBase is Test {
     uint256 internal constant SIGNER_PK = uint256(keccak256("st0x.price-oracle.signer.test"));
     address internal immutable SIGNER = vm.addr(SIGNER_PK);
 
+    /// @notice The default validity window applied by the expiry-less `push`
+    /// overload: `expiry = timestamp + DEFAULT_VALIDITY`. Sized like a real
+    /// intraday publisher window (minutes, not hours) so suites that only
+    /// need "a currently-valid price" get one without caring about expiry
+    /// mechanics; suites that DO care pass an explicit expiry.
+    uint256 internal constant DEFAULT_VALIDITY = 5 minutes;
+
     /// @notice Signs and applies a price update against `store` with the
-    /// canonical `SIGNER_PK`, asserting it was accepted. The single push flow
-    /// every suite's thin `_push` wrapper delegates to.
+    /// canonical `SIGNER_PK` and the default validity window
+    /// (`timestamp + DEFAULT_VALIDITY`), asserting it was accepted. The
+    /// convenience flow for suites that need a valid stored price but are not
+    /// exercising expiry semantics.
     /// @param store The oracle to push to.
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
     function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp) internal {
-        assertTrue(store.updatePrice(id, price, timestamp, signPriceUpdate(store, SIGNER_PK, id, price, timestamp)));
+        push(store, id, price, timestamp, timestamp + DEFAULT_VALIDITY);
+    }
+
+    /// @notice Signs and applies a price update against `store` with the
+    /// canonical `SIGNER_PK` and an explicit expiry, asserting it was
+    /// accepted. The single push flow every suite's thin `_push` wrapper
+    /// delegates to.
+    /// @param store The oracle to push to.
+    /// @param id The pair id.
+    /// @param price The price being pushed.
+    /// @param timestamp The observation timestamp.
+    /// @param expiry The publisher-signed validity horizon.
+    function push(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp, uint256 expiry) internal {
+        assertTrue(
+            store.updatePrice(
+                id, price, timestamp, expiry, signPriceUpdate(store, SIGNER_PK, id, price, timestamp, expiry)
+            )
+        );
     }
 
     /// @notice Recreates the EIP-712 digest an off-chain signer would sign for
@@ -40,13 +66,14 @@ abstract contract SignedPriceTestBase is Test {
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
+    /// @param expiry The publisher-signed validity horizon.
     /// @return The 32-byte EIP-712 digest.
-    function digestFor(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp)
+    function digestFor(ST0xPriceOracle store, bytes32 id, uint256 price, uint256 timestamp, uint256 expiry)
         internal
         view
         returns (bytes32)
     {
-        bytes32 structHash = keccak256(abi.encode(store.PRICE_UPDATE_TYPEHASH(), id, price, timestamp));
+        bytes32 structHash = keccak256(abi.encode(store.PRICE_UPDATE_TYPEHASH(), id, price, timestamp, expiry));
         return keccak256(abi.encodePacked("\x19\x01", store.domainSeparator(), structHash));
     }
 
@@ -57,13 +84,17 @@ abstract contract SignedPriceTestBase is Test {
     /// @param id The pair id.
     /// @param price The price being pushed.
     /// @param timestamp The observation timestamp.
+    /// @param expiry The publisher-signed validity horizon.
     /// @return The `abi.encodePacked(r, s, v)` signature.
-    function signPriceUpdate(ST0xPriceOracle store, uint256 pk, bytes32 id, uint256 price, uint256 timestamp)
-        internal
-        view
-        returns (bytes memory)
-    {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digestFor(store, id, price, timestamp));
+    function signPriceUpdate(
+        ST0xPriceOracle store,
+        uint256 pk,
+        bytes32 id,
+        uint256 price,
+        uint256 timestamp,
+        uint256 expiry
+    ) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digestFor(store, id, price, timestamp, expiry));
         return abi.encodePacked(r, s, v);
     }
 }

@@ -30,7 +30,6 @@ contract DeployerSaltDerivationTest is Test {
     address internal constant ADMIN = address(0xC0DE);
     address internal constant ORACLE_ADMIN = address(0xADDD);
     address internal constant SIGNER = address(0x516E);
-    uint64 internal constant TIMEOUT = 1 hours;
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -57,9 +56,7 @@ contract DeployerSaltDerivationTest is Test {
             UpgradeableBeacon beacon = new UpgradeableBeacon(address(impl), ADMIN);
             central = ST0xPriceOracle(
                 address(
-                    new BeaconProxy(
-                        address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER, TIMEOUT))
-                    )
+                    new BeaconProxy(address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER)))
                 )
             );
         }
@@ -82,8 +79,8 @@ contract DeployerSaltDerivationTest is Test {
         assertEq(address(adapter), predicted, "Morpho proxy must land at keccak256(base,quote) CREATE2 address");
     }
 
-    /// @notice ST0x salt MUST be keccak256(abi.encode(admin, oracleAdmin, signer,
-    /// timeout)). If the deployer drops any arg (e.g. timeout) from the salt, the
+    /// @notice ST0x salt MUST be keccak256(abi.encode(admin, oracleAdmin,
+    /// signer)). If the deployer drops any arg (e.g. signer) from the salt, the
     /// deployed address will not match this independent prediction.
     function testST0xSaltIsKeccakAllArgs() external {
         ST0xPriceOracle implementation = new ST0xPriceOracle();
@@ -93,15 +90,15 @@ contract DeployerSaltDerivationTest is Test {
             })
         );
 
-        bytes32 expectedSalt = keccak256(abi.encode(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT));
+        bytes32 expectedSalt = keccak256(abi.encode(ADMIN, ORACLE_ADMIN, SIGNER));
         address predicted = _predict(
             address(bsd),
             expectedSalt,
             address(bsd.iST0xPriceOracleBeacon()),
-            abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT))
+            abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, SIGNER))
         );
 
-        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER, TIMEOUT);
+        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
         assertEq(address(oracle), predicted, "ST0x proxy must land at keccak256(all-args) CREATE2 address");
     }
 }
