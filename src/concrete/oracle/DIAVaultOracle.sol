@@ -228,13 +228,41 @@ struct DIAVaultOracleConfig {
 /// rather than price consumers, and is not addressable from an oracle — no
 /// check here would prevent it. It is out of scope for this contract.
 ///
+/// The DOWNWARD direction is NOT symmetric and is an ACCEPTED RISK. The same
+/// raw `balanceOf` that lets donations move the ratio up lets a privileged
+/// upstream role move it DOWN: `OffchainAssetReceiptVault.confiscateShares`
+/// transfers tStock out of any named holder — the wrapper vault included —
+/// via a bare `_transfer`, an RWA regulatory capability
+/// `ICorporateActionsV1` explicitly warns integrators exists. A confiscation
+/// from the wrapper reduces `totalAssets()` inside one transaction, and the
+/// share price falls by the same proportion on the very next read. The
+/// auto-pause CANNOT see it: confiscation is a plain transfer that creates
+/// no corporate-action node, so there is no pre-window, no post-window and
+/// no `OraclePausedCorporateAction` — unlike a split, which moves the same
+/// variable behind the full cross-epoch machinery. The resulting price is
+/// arithmetically CORRECT (the vault genuinely backs fewer assets per
+/// share); what is lost is the WARNING WINDOW — every wtStock-collateralised
+/// position can become liquidatable inside a single block with no chance to
+/// top up or repay. A ratio sanity band is deliberately NOT the fix (next
+/// paragraph): it would fail closed on legitimate moves and halt
+/// liquidations, which is strictly worse. Instead: (1) lending markets MUST
+/// size liquidation parameters (LLTV margin, liquidation bonus) against a
+/// discontinuous downward NAV move of the magnitude a confiscation could
+/// plausibly take, exactly as they would for any asset with jump risk; and
+/// (2) OPERATIONALLY, a confiscation targeting a wrapper vault must be
+/// preceded by a scheduled corporate action of a type inside this oracle's
+/// `actionTypeMask`, so the pause brackets the discontinuity the same way it
+/// brackets a split — a rule that lives in the st0x.deploy runbook because
+/// no oracle-side check can enforce upstream sequencing.
+///
 /// Deliberately NOT mitigated here: no sanity band, drift limit or ratio
 /// anchor gates reads. Such a gate would fail closed on a legitimate NAV move
-/// (a large dividend or redemption), and an oracle that stops answering is
-/// strictly worse for a lending market than one that answers correctly —
-/// liquidations halt while positions keep moving, which accrues bad debt. The
-/// real stale-ratio risk is the corporate-action rebalance, and that is
-/// handled by the mandatory auto-pause below.
+/// in EITHER direction (a large dividend or redemption upward, a confiscation
+/// downward), and an oracle that stops answering is strictly worse for a
+/// lending market than one that answers correctly — liquidations halt while
+/// positions keep moving, which accrues bad debt. The real stale-ratio risk
+/// is the corporate-action rebalance, and that is handled by the mandatory
+/// auto-pause below.
 ///
 /// Pointing this oracle at an arbitrary third-party ERC-4626 remains
 /// unsupported, for TWO reasons. First, nothing outside the ST0x stack
@@ -644,12 +672,15 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
     /// so a direct transfer into the vault does move the ratio. That is
     /// intentional and not a manipulation surface — a donation adds real assets
     /// the shares genuinely redeem for, mints the donor nothing, and cannot be
-    /// withdrawn, so it is value-additive and negative-EV for the donor. No
-    /// sanity band gates this read; halting the oracle on an unexpected ratio
-    /// would stop liquidations, which is worse for a lending market than
-    /// pricing the (real) NAV. See the contract NatSpec ("Vault trust model")
-    /// for the full argument and for what IS mitigated — the corporate-action
-    /// rebalance, via the mandatory auto-pause.
+    /// withdrawn, so it is value-additive and negative-EV for the donor. The
+    /// same raw balance also moves DOWN under an upstream confiscation — a
+    /// discontinuous, auto-pause-invisible drop that is an accepted risk with
+    /// operational mitigations, see the contract NatSpec. No sanity band gates
+    /// this read; halting the oracle on an unexpected ratio would stop
+    /// liquidations, which is worse for a lending market than pricing the
+    /// (real) NAV. See the contract NatSpec ("Vault trust model") for the full
+    /// argument and for what IS mitigated — the corporate-action rebalance,
+    /// via the mandatory auto-pause.
     function _vaultSharePrice(uint128 diaPrice) internal view returns (int256) {
         // DIA's value is 18-decimal uint128 — pack as a float with decimal
         // count 18 to recover the natural quantity.

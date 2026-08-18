@@ -122,6 +122,18 @@ two constraints, or the pause feature is silently defeated:
    `DIAPriceStale(timestamp)` revert can surface, and the deployment loses the
    layered staleness signal. Set the consumer's threshold to be at least the
    oracle's `maxAge`.
+3. **Size liquidation parameters against downward jump risk.** The priced
+   vault's `totalAssets()` is a raw token balance, and the upstream
+   receipt-vault confiscation role (an RWA regulatory capability) can move it
+   DOWN discontinuously — a plain transfer that creates no corporate-action
+   node, so the auto-pause does not bracket it and the share price steps down
+   inside a single block. The lower price is arithmetically correct; what a
+   confiscation removes is the warning window borrowers would otherwise have to
+   top up. This is an accepted risk: choose LLTV margins and liquidation bonuses
+   as you would for any asset with jump risk, and see the contract NatSpec
+   ("Vault trust model") for the operational rule that a wrapper-vault
+   confiscation must be preceded by a scheduled corporate action so the pause
+   brackets the discontinuity.
 
 ## Signed-price stack
 
