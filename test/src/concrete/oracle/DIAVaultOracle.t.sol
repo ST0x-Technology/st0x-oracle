@@ -15,6 +15,8 @@ import {
     ZeroCorporateActionsVault,
     InvalidPauseConfig,
     ZeroPauseTimeBefore,
+    MaxAgeTooLarge,
+    PauseWindowTooLarge,
     PauseTimeAfterBelowMaxAge,
     OraclePausedCorporateAction,
     EmptySymbol,
@@ -179,6 +181,66 @@ contract DIAVaultOracleTest is Test {
         assertEq(ok, ICLONEABLE_V2_SUCCESS, "one-second pre-window must be accepted");
         assertEq(oracle.pauseTimeBefore(), 1);
         assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER);
+    }
+
+    /// @notice The relative `pauseTimeAfter > maxAge` invariant is
+    /// scale-invariant, so the reference config expressed in MILLISECONDS
+    /// (maxAge 7_200_000, pauseTimeAfter 10_800_000 — "2 hours" and "3
+    /// hours" with the wrong units) passes it cleanly, stretching the
+    /// staleness window to ~83 days. The absolute `MAX_AGE_LIMIT` bound is
+    /// what rejects it, naming the offending value.
+    function testInitRevertsMillisecondScaleConfig() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 7_200_000;
+        config.pauseTimeBefore = 3_600_000;
+        config.pauseTimeAfter = 10_800_000;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(MaxAgeTooLarge.selector, uint256(7_200_000)));
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice `maxAge` exactly at `MAX_AGE_LIMIT` is accepted (with a
+    /// coherent pauseTimeAfter above it); one second over is rejected. The
+    /// cap is deliberately below `MAX_PAUSE_WINDOW` so the relative
+    /// invariant stays satisfiable at the bound.
+    function testInitMaxAgeCapEdges() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 7 days;
+        config.pauseTimeAfter = 7 days + 1 hours;
+        DIAVaultOracle atCap = _deployUninit();
+        assertEq(atCap.initialize(abi.encode(config)), ICLONEABLE_V2_SUCCESS, "maxAge at the cap must be accepted");
+
+        config.maxAge = 7 days + 1;
+        DIAVaultOracle overCap = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(MaxAgeTooLarge.selector, uint256(7 days + 1)));
+        overCap.initialize(abi.encode(config));
+    }
+
+    /// @notice Each pause window is individually capped at
+    /// `MAX_PAUSE_WINDOW`, and the revert carries the offending value so an
+    /// operator can tell WHICH window was mis-scaled.
+    function testInitRevertsPauseWindowOverCap() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = uint64(30 days) + 1;
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
+        oracle.initialize(abi.encode(config));
+
+        DIAVaultOracleConfig memory config2 = _defaultConfig();
+        config2.pauseTimeAfter = uint64(30 days) + 1;
+        DIAVaultOracle oracle2 = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
+        oracle2.initialize(abi.encode(config2));
+    }
+
+    /// @notice Both pause windows exactly at `MAX_PAUSE_WINDOW` are accepted
+    /// — the caps reject only what lies beyond them.
+    function testInitAcceptsPauseWindowsAtCap() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = uint64(30 days);
+        config.pauseTimeAfter = uint64(30 days);
+        DIAVaultOracle oracle = _deployUninit();
+        assertEq(oracle.initialize(abi.encode(config)), ICLONEABLE_V2_SUCCESS, "windows at the cap must be accepted");
     }
 
     /// @notice The cross-epoch invariant is enforced at init: `pauseTimeAfter`
@@ -793,7 +855,7 @@ contract DIAVaultOracleTest is Test {
         uint64 pushOffset,
         uint64 elapsed
     ) external {
-        maxAgeSeconds = uint64(bound(maxAgeSeconds, 1, 30 days));
+        maxAgeSeconds = uint64(bound(maxAgeSeconds, 1, 7 days));
         // `pauseTimeAfter > maxAge` (strict) is the enforced invariant, so the
         // margin is at least 1. Keep it TIGHT: the property can only break where
         // the two windows meet, and a wide margin is the trivially-safe case the
