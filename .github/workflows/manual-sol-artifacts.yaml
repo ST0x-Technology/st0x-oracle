@@ -37,11 +37,6 @@ on:
         required: false
         type: string
         default: ''
-      st0x-timeout:
-        description: 'signed-price-stack ONLY: global staleness timeout in seconds (must be <= 30 days).'
-        required: false
-        type: string
-        default: ''
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -84,7 +79,6 @@ jobs:
           ST0X_ADMIN: ${{ inputs.st0x-admin }}
           ST0X_ORACLE_ADMIN: ${{ inputs.st0x-oracle-admin }}
           ST0X_SIGNER: ${{ inputs.st0x-signer }}
-          ST0X_TIMEOUT: ${{ inputs.st0x-timeout }}
           DEPLOY_BROADCAST: '1'
           DEPLOYMENT_KEY: ${{ github.ref == 'refs/heads/main' && secrets.PRIVATE_KEY || secrets.PRIVATE_KEY_DEV }}
           ETH_RPC_URL: ${{ secrets[env.rpc_secret_name] || vars[env.rpc_secret_name] || '' }}

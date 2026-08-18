@@ -83,8 +83,7 @@ contract Deploy is Script {
     /// minted through that deployer, and a `MorphoPairAdapterBeaconSetDeployer`
     /// bound to that singleton. No per-market adapter proxies are minted here.
     /// Assumes the caller has an active broadcast. Reads the oracle config from
-    /// env: `ST0X_ADMIN`, `ST0X_ORACLE_ADMIN`, `ST0X_SIGNER` (addresses) and
-    /// `ST0X_TIMEOUT` (uint64).
+    /// env: `ST0X_ADMIN`, `ST0X_ORACLE_ADMIN`, `ST0X_SIGNER` (addresses).
     /// @param beaconInitialOwner Initial owner of both beacons.
     /// @return central The singleton central `ST0xPriceOracle` store.
     /// @return oracleBSD The deployed `ST0xPriceOracleBeaconSetDeployer`.
@@ -100,14 +99,11 @@ contract Deploy is Script {
         address admin = vm.envAddress("ST0X_ADMIN");
         address oracleAdmin = vm.envAddress("ST0X_ORACLE_ADMIN");
         address signer = vm.envAddress("ST0X_SIGNER");
-        uint256 timeoutRaw = vm.envUint("ST0X_TIMEOUT");
-        require(timeoutRaw <= type(uint64).max, "ST0X_TIMEOUT overflows uint64");
-        uint64 timeout = uint64(timeoutRaw);
 
         // ST0X_ADMIN holds DEFAULT_ADMIN_ROLE, the role-admin for
         // ORACLE_ADMIN_ROLE — so it can grant itself ORACLE_ADMIN_ROLE and
-        // rotate the publisher signer/timeout, i.e. fully control every served
-        // price. It (and ST0X_ORACLE_ADMIN, which rotates them directly) must
+        // rotate the publisher signer, i.e. fully control every served
+        // price. It (and ST0X_ORACLE_ADMIN, which rotates it directly) must
         // therefore be governance, never the hot CI deploy key — the same
         // separation the beacon owner enforces. Fail the deploy loudly rather
         // than silently leaving the feed under the deploy key's control.
@@ -130,17 +126,16 @@ contract Deploy is Script {
 
         // The singleton central store, minted through its own beacon-set
         // deployer so its creation is atomic and recorded (Deployment event).
-        central = oracleBSD.newST0xPriceOracle(admin, oracleAdmin, signer, timeout);
+        central = oracleBSD.newST0xPriceOracle(admin, oracleAdmin, signer);
 
         adapterBSD = new MorphoPairAdapterBeaconSetDeployer(
             MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: beaconInitialOwner, central: central})
         );
 
         // Postcondition: the central store carries the requested signer and the
-        // ORACLE_ADMIN_ROLE grant, so signer/timeout rotation is callable from
+        // ORACLE_ADMIN_ROLE grant, so signer rotation is callable from
         // day one and no post-deploy grant step is left dangling.
         require(central.signer() == signer, "signer mismatch");
-        require(central.timeout() == timeout, "timeout mismatch");
         require(central.hasRole(central.ORACLE_ADMIN_ROLE(), oracleAdmin), "oracle admin role not granted");
 
         // Postcondition: both beacons — which control the implementation behind

@@ -35,7 +35,6 @@ contract DeployTest is Test {
     address internal constant ST0X_ADMIN = address(0x57ADAD);
     address internal constant ST0X_ORACLE_ADMIN = address(0x57ADDD);
     address internal constant ST0X_SIGNER = address(0x57516E);
-    uint64 internal constant ST0X_TIMEOUT = uint64(1 hours);
 
     /// @dev Signature of the beacon-set deployers' `Deployment` event. Used to
     /// discriminate WHICH suite `run()` actually dispatched to: the DIA suite
@@ -131,7 +130,6 @@ contract DeployTest is Test {
         vm.setEnv("ST0X_ADMIN", vm.toString(ST0X_ADMIN));
         vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(ST0X_ORACLE_ADMIN));
         vm.setEnv("ST0X_SIGNER", vm.toString(ST0X_SIGNER));
-        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(ST0X_TIMEOUT)));
 
         // ----- signed-price helper: env-config wiring (#267) -----
         // Happy path: admin/oracleAdmin both distinct from the deploy key, so
@@ -146,7 +144,6 @@ contract DeployTest is Test {
         ) = deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
 
         assertEq(central.signer(), ST0X_SIGNER, "signer wired from env");
-        assertEq(central.timeout(), ST0X_TIMEOUT, "timeout wired from env");
         assertTrue(
             central.hasRole(central.ORACLE_ADMIN_ROLE(), ST0X_ORACLE_ADMIN), "oracleAdmin granted ORACLE_ADMIN_ROLE"
         );
@@ -226,7 +223,7 @@ contract DeployTest is Test {
         deploy.run();
         vm.stopBroadcast();
 
-        // Same for ST0X_ORACLE_ADMIN, which rotates signer/timeout directly.
+        // Same for ST0X_ORACLE_ADMIN, which rotates the signer directly.
         vm.setEnv("ST0X_ADMIN", vm.toString(ST0X_ADMIN));
         vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(deployer));
         vm.expectRevert("ST0X_ORACLE_ADMIN must not be the deploy key");
@@ -243,27 +240,6 @@ contract DeployTest is Test {
         vm.stopBroadcast();
         vm.setEnv("ST0X_SIGNER", vm.toString(ST0X_SIGNER));
 
-        // ----- ST0X_TIMEOUT uint64 bound (#267) -----
-        // `ST0X_TIMEOUT` is read as a uint256 and narrowed to uint64. Solidity's
-        // explicit downcast TRUNCATES silently, so a value of 2**64 + 3600 would
-        // become a perfectly plausible 3600-second timeout and the deploy would
-        // ship a staleness bound nobody asked for. The script's
-        // `<= type(uint64).max` guard must reject it by MESSAGE, not truncate.
-        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(type(uint64).max) + 1 + 3600));
-        vm.expectRevert("ST0X_TIMEOUT overflows uint64");
-        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
-
-        // Boundary, the OTHER edge: exactly `type(uint64).max` IS representable,
-        // so the script's own guard must let it through (`<=`, not `<`) and the
-        // rejection must come from DOWNSTREAM — `ST0xPriceOracle`'s
-        // `MAX_TIMEOUT` (30 days) bound, carrying the offending value. A `<`
-        // guard here would swap this for the script's string revert.
-        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(type(uint64).max)));
-        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.TimeoutTooLarge.selector, type(uint64).max));
-        deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
-
-        vm.setEnv("ST0X_TIMEOUT", vm.toString(uint256(ST0X_TIMEOUT)));
-
         // ----- signed-price helper: key-separation guards (#267) -----
         // Guard: ST0X_ADMIN holds DEFAULT_ADMIN_ROLE (can rotate the publisher
         // signer), so it must never be the hot deploy key.
@@ -271,7 +247,7 @@ contract DeployTest is Test {
         vm.expectRevert("ST0X_ADMIN must not be the deploy key");
         deploy.exposedDeploySignedPriceStack(BEACON_OWNER, DEPLOYER);
 
-        // Guard: ST0X_ORACLE_ADMIN rotates signer/timeout directly — same rule.
+        // Guard: ST0X_ORACLE_ADMIN rotates the signer directly — same rule.
         vm.setEnv("ST0X_ADMIN", vm.toString(ST0X_ADMIN));
         vm.setEnv("ST0X_ORACLE_ADMIN", vm.toString(DEPLOYER));
         vm.expectRevert("ST0X_ORACLE_ADMIN must not be the deploy key");
