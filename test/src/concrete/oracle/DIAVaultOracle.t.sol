@@ -709,6 +709,36 @@ contract DIAVaultOracleTest is Test {
         assertEq(roundAnswer, int256(200e8), "latestRoundData must agree with latestAnswer");
     }
 
+    /// @notice DOWNWARD twin of `testDonationMovesRatioAndIsServed`, pinning
+    /// the accepted risk the "Vault trust model" NatSpec documents: the same
+    /// raw-`balanceOf` `totalAssets()` also moves DOWN when the upstream
+    /// confiscation role seizes tStock from the wrapper — a bare transfer
+    /// that burns no shares and creates no corporate-action node, so no pause
+    /// window opens. The lower price is arithmetically CORRECT (the vault
+    /// genuinely backs fewer assets per share) and must be served straight
+    /// through. Any drift limit or ratio anchor added to the read path would
+    /// reject this jump and fail this test — that is deliberate: halting the
+    /// oracle stops liquidations while positions keep moving, which is worse
+    /// for a lending market than pricing the true NAV.
+    function testConfiscationDropsRatioAndIsServed() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+        assertEq(oracle.latestAnswer(), int256(100e8), "baseline 1 asset per share");
+
+        // A confiscation halves the vault's holdings against an unchanged
+        // supply — a bare transfer out mints and burns nothing.
+        vault.setTotalAssets(0.5e18);
+
+        // Served, not rejected, and priced at the true new ratio.
+        assertEq(oracle.latestAnswer(), int256(50e8), "confiscation must be priced through, not gated");
+
+        // The same read path through latestRoundData agrees.
+        (, int256 roundAnswer,,,) = oracle.latestRoundData();
+        assertEq(roundAnswer, int256(50e8), "latestRoundData must agree with latestAnswer");
+    }
+
     // -------- latestAnswer DIA not set --------
 
     function testLatestAnswerRevertsDIAPriceNotSet() external {
