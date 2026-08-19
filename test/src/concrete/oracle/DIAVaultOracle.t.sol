@@ -382,6 +382,29 @@ contract DIAVaultOracleTest is Test {
         assertEq(oracle.latestAnswer(), 100e8, "prices normally outside the pause window");
     }
 
+    /// @notice PRE-window twin of `testAutoPauseRevertsInsideWindow`: a
+    /// PENDING action whose `effectiveTime` is within `pauseTimeBefore` of
+    /// now pauses BOTH read entry points. The pre-window predicate itself is
+    /// covered in LibCorporateActionsPause.t.sol; what this pins is the
+    /// ORACLE's wiring of `pauseTimeBefore` into that call — the interval the
+    /// zero-pre-window rejection exists to guard (the market's ex-date
+    /// revaluation precedes the on-chain `effectiveTime`).
+    function testAutoPauseRevertsInsidePreWindow() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint64(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        // Pending split half a pre-window ahead → inside the pause window.
+        uint64 effectiveTime = uint64(block.timestamp + PAUSE_BEFORE / 2);
+        actions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestAnswer();
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestRoundData();
+    }
+
     // -------- ERC-7201 storage-layout pin (beacon-upgrade safety) --------
 
     /// @notice The `MainStorage` slot constant is a hardcoded hex literal with
