@@ -126,6 +126,27 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         assertTrue(found, "Deployment event not emitted");
     }
 
+    /// @notice Same permissionless-mint property as the other deployers, with
+    /// the sharpest consequence: an arbitrary caller mints an instance where
+    /// the attacker holds BOTH admin roles and the publisher key. Deliberate
+    /// (see the `Deployment` NatSpec) — the published address list, not
+    /// beacon membership or events, authenticates an instance. If minting is
+    /// ever gated, flip this test together with that documentation.
+    function testRandoMintsArbitraryConfig() external {
+        ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
+
+        address attacker = address(0xA77A);
+        address rando = address(0xBADD);
+        vm.expectEmit(true, false, false, false, address(bsd));
+        emit Deployment(rando, address(0));
+        vm.prank(rando);
+        ST0xPriceOracle minted = bsd.newST0xPriceOracle(attacker, attacker, attacker);
+
+        assertTrue(minted.hasRole(minted.DEFAULT_ADMIN_ROLE(), attacker), "attacker holds DEFAULT_ADMIN_ROLE");
+        assertTrue(minted.hasRole(minted.ORACLE_ADMIN_ROLE(), attacker), "attacker holds ORACLE_ADMIN_ROLE");
+        assertEq(minted.signer(), attacker, "attacker is the publisher key");
+    }
+
     /// @notice A reverting `initialize` (here a zero signer) bubbles straight up
     /// out of the proxy constructor — there is no magic-value check to swallow
     /// it, unlike the DIA stack's beacon-set deployer.
