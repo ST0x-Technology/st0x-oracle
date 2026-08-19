@@ -144,6 +144,30 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
         assertTrue(found, "Deployment event not emitted");
     }
 
+    /// @notice Same permissionless-mint property: an arbitrary caller mints
+    /// an adapter for an attacker-chosen pair (and hence rescale) on the
+    /// shared central store. Deliberate (see the `Deployment` NatSpec) — the
+    /// published address list, not beacon membership or events, authenticates
+    /// an instance. If minting is ever gated, flip this test together with
+    /// that documentation.
+    function testRandoMintsArbitraryPair() external {
+        MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
+
+        MockERC20Decimals attackerBase = new MockERC20Decimals(8);
+        MockERC20Decimals attackerQuote = new MockERC20Decimals(2);
+        address rando = address(0xBADD);
+        vm.expectEmit(true, false, false, false, address(bsd));
+        emit Deployment(rando, address(0));
+        vm.prank(rando);
+        MorphoPairAdapter minted = bsd.newMorphoPairAdapter(address(attackerBase), address(attackerQuote));
+
+        assertEq(minted.baseToken(), address(attackerBase), "attacker base stored");
+        assertEq(minted.quoteToken(), address(attackerQuote), "attacker quote stored");
+        assertEq(
+            minted.pairId(), central.pairId(address(attackerBase), address(attackerQuote)), "attacker pairId derived"
+        );
+    }
+
     /// @notice A reverting `initialize` (here identical tokens) bubbles straight
     /// up out of the proxy constructor.
     function testNewMorphoPairAdapterPropagatesInitRevert() external {
