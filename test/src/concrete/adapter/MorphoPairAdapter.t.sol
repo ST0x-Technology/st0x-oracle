@@ -344,9 +344,40 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         adapter.price();
     }
 
+    /// @notice PRECEDENCE between the two fail-closed paths. The NatSpec puts
+    /// the NAV-ratio gate BEFORE the rescale — the live ratio is asserted
+    /// "before serving anything" — so a market that would ALSO hit
+    /// `PriceRoundsToZero` still surfaces `RatioMismatch` while its ratio has
+    /// drifted. That ordering is what makes the reported error diagnostic: a
+    /// drifted ratio is a transient freeze the publisher's next update clears,
+    /// whereas a rounding collapse is a permanent decimals misconfiguration,
+    /// and an operator must not be pointed at the second when the first is what
+    /// happened. base=59dec collateral / quote=6dec loan scales by
+    /// `10^(36+6-59-18)`, so the canonical `1e18` price floors to zero and BOTH
+    /// guards are live for the same read — the discriminating configuration.
+    function test_MorphoPairAdapter_RatioGatePrecedesRescale() public {
+        MockNavVaultToken vaultBase59 = new MockNavVaultToken(59);
+        vaultBase59.setNavRatio(1.05e18);
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase59), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase59), address(quote));
+        _push(id, 1e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+
+        // Ratio intact: the gate passes and the rescale is what fails closed.
+        vm.expectRevert(abi.encodeWithSelector(PriceRoundsToZero.selector, uint256(1e18)));
+        adapter.price();
+
+        // The distribution steps the live NAV. The gate runs first, so the
+        // mismatch is what surfaces — not the rounding collapse behind it.
+        vaultBase59.setNavRatio(1.06e18);
+        vm.expectRevert(abi.encodeWithSelector(RatioMismatch.selector, uint256(1.05e18), uint256(1.06e18)));
+        adapter.price();
+    }
+
     /// @notice The zero "no ratio" sentinel is honoured ONLY for a collateral
     /// that does not probe as a vault: a plain ERC-20 with no
-    /// `convertToAssets` classifies as non-vault and prices normally.
+    /// `convertToAssets` classifies as non-vault and prices normally. A ZERO
+    /// stored ratio is the central store's "no ratio" sentinel, so the NAV
+    /// gate is skipped entirely for such a market.
     function test_MorphoPairAdapter_NonVaultCollateralZeroRatio_Serves() public {
         MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         _push(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 0);

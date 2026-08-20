@@ -96,6 +96,26 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         );
     }
 
+    /// @notice `ZeroImplementation` guards EXACTLY the zero address, nothing
+    /// wider: a non-zero implementation with no deployed code (an EOA, or an
+    /// address whose deployment has not landed) is rejected one layer down, by
+    /// `UpgradeableBeacon`'s own `BeaconInvalidImplementation` guard. Both
+    /// directions are fail-closed, but they are DIFFERENT errors and the split
+    /// is what tells an operator which mistake they made — a typo'd address
+    /// versus an omitted one. Pinned with the exact selector and argument so a
+    /// widened local guard (e.g. checking `code.length == 0`) cannot silently
+    /// absorb the beacon's case into `ZeroImplementation`.
+    function testConstructorRevertsCodelessImplementation() external {
+        address codeless = address(0xE0A);
+        assertEq(codeless.code.length, 0, "the fixture address must genuinely have no code");
+        vm.expectRevert(abi.encodeWithSelector(UpgradeableBeacon.BeaconInvalidImplementation.selector, codeless));
+        new DIAVaultOracleBeaconSetDeployer(
+            DIAVaultOracleBeaconSetDeployerConfig({
+                initialOwner: BEACON_OWNER, initialDIAVaultOracleImplementation: codeless
+            })
+        );
+    }
+
     function testConstructorHappyPathDeploysBeacon() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
         address beacon = address(bsd.iDIAVaultOracleBeacon());

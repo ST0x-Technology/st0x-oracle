@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
+import {Vm} from "forge-std-1.16.1/src/Vm.sol";
 import {SignedPriceTestBase} from "../../lib/SignedPriceTestBase.sol";
 
 import {UpgradeableBeacon} from "@openzeppelin-contracts-5.6.1/proxy/beacon/UpgradeableBeacon.sol";
@@ -469,6 +470,46 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, atCap, 0, capSig), "window exactly at the cap is accepted");
     }
 
+    /// @notice The validity-window cap is measured from the PAYLOAD's
+    /// `timestamp`, not from `block.timestamp`: `ValidityWindowTooLong` is
+    /// documented as "`expiry - timestamp` exceeds `MAX_VALIDITY_WINDOW`". The
+    /// existing cap test signs `timestamp == block.timestamp`, where the two
+    /// reference points coincide and are indistinguishable. Submitting a
+    /// payload observed well in the PAST separates them: with a 10-day-old
+    /// observation, `timestamp + MAX_VALIDITY_WINDOW + 1` is rejected even
+    /// though only 20 days and one second of it remain ahead of `now`, and
+    /// `timestamp + MAX_VALIDITY_WINDOW` is accepted at exactly the cap.
+    ///
+    /// The consequence the reference point carries: an accepted payload's
+    /// OBSERVATION AGE at read time is bounded only by the cap, while its
+    /// remaining validity may be far shorter — the price served below was
+    /// observed ten days ago and is still live, because the publisher's signed
+    /// horizon (not the observation age) is the staleness bound.
+    function test_UpdatePrice_ValidityWindowMeasuredFromPayloadTimestamp() public {
+        vm.warp(60 days);
+        uint256 cap = oracle.MAX_VALIDITY_WINDOW();
+        uint256 observedTs = block.timestamp - 10 days;
+
+        uint256 tooLong = observedTs + cap + 1;
+        assertLt(tooLong - block.timestamp, cap, "the window still ahead of now is well inside the cap");
+        bytes memory longSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, observedTs, tooLong);
+        vm.expectRevert(
+            abi.encodeWithSelector(ST0xPriceOracle.ValidityWindowTooLong.selector, PAIR_A, observedTs, tooLong)
+        );
+        oracle.updatePrice(PAIR_A, 42e18, observedTs, tooLong, 0, longSig);
+
+        uint256 atCap = observedTs + cap;
+        bytes memory capSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, observedTs, atCap);
+        assertTrue(
+            oracle.updatePrice(PAIR_A, 42e18, observedTs, atCap, 0, capSig),
+            "a window exactly at the cap from the payload timestamp is accepted"
+        );
+
+        (, uint256 storedTs,,) = oracle.pairPrice(PAIR_A);
+        assertEq(storedTs, observedTs, "the ten-day-old observation timestamp is what is stored");
+        assertEq(_price(PAIR_A), 42e18, "and it is served: the signed horizon, not observation age, is the bound");
+    }
+
     /// @notice RECOVERY PATH (documented in the contract NatSpec): a
     /// strictly-newer payload with a TIGHTER window supersedes a stored
     /// long-window price. After the tight expiry passes, reads fail closed
@@ -881,6 +922,41 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         oracle.price(PAIR_A);
     }
 
+    /// @notice The two read views split the work differently and that split is
+    /// the contract: `pairPrice` is the RAW view and NEVER reverts — an unset
+    /// pair reads back as the all-zero sentinel, and an expired pair reads back
+    /// its exact stored fields — while `price()` is the CHECKED view and is the
+    /// only one that separates "absent" (`PriceUnset`) from "present but dead"
+    /// (`PriceExpired`). A consumer of the raw view therefore cannot tell those
+    /// two apart from its return values alone, which is precisely why the raw
+    /// view's NatSpec requires it to apply the expiry itself.
+    function test_PairPrice_RawSentinelViewVersusCheckedRead() public {
+        // Absent: zeros out of the raw view, no revert.
+        (uint256 rawPrice, uint256 rawTs, uint256 rawExpiry, uint256 rawRatio) = oracle.pairPrice(PAIR_UNKNOWN);
+        assertEq(rawPrice, 0, "unset pair reads back a zero price");
+        assertEq(rawTs, 0, "unset pair reads back a zero timestamp");
+        assertEq(rawExpiry, 0, "unset pair reads back a zero expiry");
+        assertEq(rawRatio, 0, "unset pair reads back a zero ratio");
+        // Only the checked read names it.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_UNKNOWN));
+        oracle.price(PAIR_UNKNOWN);
+
+        // Present but dead: the raw view still serves every stored field.
+        uint256 ts = block.timestamp;
+        uint256 expiry = ts + DEFAULT_VALIDITY;
+        _push(PAIR_A, 42e18, ts, expiry, 7e18);
+        vm.warp(expiry);
+        (rawPrice, rawTs, rawExpiry, rawRatio) = oracle.pairPrice(PAIR_A);
+        assertEq(rawPrice, 42e18, "expired pair still reads back its stored price");
+        assertEq(rawTs, ts, "expired pair still reads back its stored timestamp");
+        assertEq(rawExpiry, expiry, "expired pair still reads back its stored expiry");
+        assertEq(rawRatio, 7e18, "expired pair still reads back its stored ratio");
+        // Only the checked read names it — and with a DIFFERENT error to the
+        // unset case, which is the whole distinction the raw view cannot make.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
+        oracle.price(PAIR_A);
+    }
+
     /// @notice DELIBERATE ASYMMETRY against `price()`: the RAW view returns
     /// all four fields as ZEROS for a pair no update has ever landed on,
     /// rather than reverting `PriceUnset`. `pairPrice` exists for publishers
@@ -930,6 +1006,30 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
 
         // Rotation preserved the previously stored state until then.
         assertEq(_price(PAIR_A), 43e18, "state advanced under the new key");
+    }
+
+    /// @notice `SignerSet`'s `signer` parameter is INDEXED — it is a topic, not
+    /// a data word. Off-chain key-rotation monitoring filters on that topic, so
+    /// dropping the `indexed` qualifier would move the address into the data
+    /// blob and silently break every such subscription. The two other rotation
+    /// tests emit the expectation through the contract's OWN event declaration,
+    /// so their expectation co-varies with any change to it and they cannot see
+    /// this; assert the raw log shape instead — two topics (signature +
+    /// signer), and an EMPTY data blob because `signer` is the only parameter.
+    function test_SignerSet_SignerParameterIsIndexed() public {
+        address rotated = vm.addr(uint256(keccak256("indexed-topic-test")));
+
+        vm.recordLogs();
+        vm.prank(ORACLE_ADMIN);
+        oracle.setSigner(rotated);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 1, "setSigner emits exactly one event");
+        assertEq(entries[0].emitter, address(oracle), "emitted by the oracle");
+        assertEq(entries[0].topics.length, 2, "signature topic plus one indexed parameter");
+        assertEq(entries[0].topics[0], keccak256("SignerSet(address)"), "event signature topic");
+        assertEq(entries[0].topics[1], bytes32(uint256(uint160(rotated))), "signer is carried as a topic");
+        assertEq(entries[0].data.length, 0, "no unindexed parameters remain in the data blob");
     }
 
     function test_SetSigner_RoleGated() public {
