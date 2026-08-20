@@ -68,6 +68,18 @@ contract MorphoPairAdapterBeaconSetDeployerTest is SignedPriceTestBase {
         );
     }
 
+    /// @notice Zero owner AND zero central together: the owner check runs
+    /// BEFORE the implementation is constructed, so the reported error is
+    /// `ZeroBeaconOwner`, not `ZeroCentral`. The cheap local guard fails first
+    /// rather than paying for an implementation deployment that is about to
+    /// revert anyway.
+    function testConstructorReportsZeroBeaconOwnerBeforeZeroCentral() external {
+        vm.expectRevert(ZeroBeaconOwner.selector);
+        new MorphoPairAdapterBeaconSetDeployer(
+            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: address(0), central: ST0xPriceOracle(address(0))})
+        );
+    }
+
     function testConstructorHappyPathDeploysBeacon() external {
         MorphoPairAdapterBeaconSetDeployer bsd = _deployBSD();
         address beacon = address(bsd.iMorphoPairAdapterBeacon());
