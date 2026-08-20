@@ -119,6 +119,31 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ORACLE_ADMIN, address(0))));
     }
 
+    /// @notice The zero-address guards are ORDERED: the `ZeroAdmin`
+    /// disjunction runs first, so a call carrying both a zero admin argument
+    /// and a zero `signer_` surfaces `ZeroAdmin` — the arguments are validated
+    /// in the order the signature declares them, and the first offending one
+    /// is what the caller is told about. Neither single-zero case above
+    /// distinguishes the ordering (each leaves the other argument valid), so
+    /// the two guards could swap and every other initialize test would still
+    /// pass while a caller with two bad arguments was pointed at the wrong
+    /// one. Both disjuncts are pinned: a zero `admin` and a zero `oracleAdmin`
+    /// each take precedence over the zero signer.
+    function test_Initialize_ZeroAdminTakesPrecedenceOverZeroSigner() public {
+        ST0xPriceOracle impl = new ST0xPriceOracle();
+        UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
+
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (address(0), ORACLE_ADMIN, address(0))));
+
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, address(0), address(0))));
+
+        // All three zero: still ZeroAdmin.
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        new BeaconProxy(address(b), abi.encodeCall(ST0xPriceOracle.initialize, (address(0), address(0), address(0))));
+    }
+
     function test_Initialize_OnlyOnce() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         oracle.initialize(RANDO, ORACLE_ADMIN, SIGNER);
