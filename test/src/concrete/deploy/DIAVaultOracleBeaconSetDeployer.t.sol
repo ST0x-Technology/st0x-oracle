@@ -82,6 +82,20 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         );
     }
 
+    /// @notice A config with BOTH fields zero reports `ZeroImplementation`:
+    /// the implementation guard is evaluated before the owner guard, so the
+    /// implementation — the field without which there is nothing to put behind
+    /// a beacon at all — is the one surfaced, rather than the operator being
+    /// walked through the guards one failed deploy at a time.
+    function testConstructorZeroImplementationPrecedesZeroBeaconOwner() external {
+        vm.expectRevert(ZeroImplementation.selector);
+        new DIAVaultOracleBeaconSetDeployer(
+            DIAVaultOracleBeaconSetDeployerConfig({
+                initialOwner: address(0), initialDIAVaultOracleImplementation: address(0)
+            })
+        );
+    }
+
     function testConstructorHappyPathDeploysBeacon() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
         address beacon = address(bsd.iDIAVaultOracleBeacon());
