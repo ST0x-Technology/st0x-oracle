@@ -22,6 +22,21 @@ import {MessageHashUtils} from "@openzeppelin-contracts-5.6.1/utils/cryptography
 /// entirely to the publisher / consumer of each pair. Each pair's publisher
 /// decides what its values mean; this contract never interprets them.
 ///
+/// Each price carries a `ratio` — the vault NAV ratio
+/// (`convertToAssets(1e18)`) the price was computed against — stored and
+/// signed alongside it. A price for a wt-vault token is only correct against
+/// the ratio it was priced at; between publish and settlement the vault's NAV
+/// can step (e.g. at a distribution), handing the taker a free option.
+/// Signing the ratio into the payload lets a consumer carry it to settlement
+/// and assert it against the live vault there (exact match), closing that
+/// gap. Because a price without its ratio is meaningless — if the live ratio
+/// no longer matches the one the price was computed against, there IS no
+/// valid price — the checked read `price()` serves the two ONLY as one
+/// atomic pair; no freshness-checked price-only accessor exists. This
+/// contract only stores and serves the ratio — it never reads a vault. A
+/// `ratio` of ZERO is the sentinel for "no ratio" (a non-vault token), and
+/// is a valid signed value, NOT a degenerate one; see `PricePoint.ratio`.
+///
 /// PRODUCER-CONTROLLED VALIDITY: every signed payload carries the
 /// publisher's own `expiry` — the instant past which the publisher has
 /// disowned the price. Validity is therefore a claim MADE BY the price's
@@ -99,14 +114,17 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     /// not weeks).
     uint256 public constant MAX_VALIDITY_WINDOW = 30 days;
 
-    /// @notice EIP-712 typehash binding (pairId, price, timestamp, expiry).
-    /// No nonce — replay protection is the strict timestamp inequality in
-    /// `updatePrice`; `expiry` is the publisher's signed validity horizon
-    /// for the price. Schema evolution is carried by this typehash — a
-    /// signature over any other field set produces a different struct hash
-    /// and cannot validate — so the domain version never needs bumping.
+    /// @notice EIP-712 typehash binding (pairId, price, timestamp, expiry,
+    /// ratio). No nonce — replay protection is the strict timestamp
+    /// inequality in `updatePrice`; `expiry` is the publisher's signed
+    /// validity horizon for the price; `ratio` is the vault NAV ratio the
+    /// price was computed against (see `PricePoint.ratio`), part of the
+    /// signed payload so a consumer can carry it to settlement and assert it
+    /// there. Schema evolution is carried by this typehash — a signature over
+    /// any other field set produces a different struct hash and cannot
+    /// validate — so the domain version never needs bumping.
     bytes32 public constant PRICE_UPDATE_TYPEHASH =
-        keccak256("PriceUpdate(bytes32 pairId,uint256 price,uint256 timestamp,uint256 expiry)");
+        keccak256("PriceUpdate(bytes32 pairId,uint256 price,uint256 timestamp,uint256 expiry,uint256 ratio)");
 
     /// @dev The EIP-712 domain separator. The domain deliberately omits
     /// chainId and verifyingContract so a signed price replays across every
@@ -119,10 +137,26 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     bytes32 private constant DOMAIN_SEPARATOR = 0x661a9d4f8ddbbd7ecb90573d81a96060fc99c958049c913cf71722ddcc8ddd48;
 
     /// @dev Latest accepted price state for one pair.
+    /// @param price The opaque price value (publisher-scaled).
+    /// @param timestamp The publisher's observation timestamp (staleness /
+    /// replay ordering key).
+    /// @param expiry The publisher-signed validity horizon; the price is dead
+    /// at and past this instant.
+    /// @param ratio The vault NAV ratio the price was computed against — for
+    /// a wt-vault token, the `convertToAssets(1e18)` value at publish time. A
+    /// consumer carries it to settlement and asserts it against the LIVE
+    /// ratio there (exact match), so a price priced against a
+    /// pre-distribution ratio cannot fill against a post-distribution vault.
+    /// A `ratio` of ZERO is the sentinel for "no ratio" — a non-vault token,
+    /// or a pre-upgrade entry (whose appended slot reads zero) — and means
+    /// the consumer performs no ratio assertion. A real NAV ratio is never
+    /// zero, so the sentinel is unambiguous. This contract stores `ratio`
+    /// opaquely and never interprets it, exactly like `price`.
     struct PricePoint {
         uint256 price;
         uint256 timestamp;
         uint256 expiry;
+        uint256 ratio;
     }
 
     /// @custom:storage-location erc7201:st0x.priceoracle.main
@@ -174,7 +208,7 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     error PriceUpdateInvalidSignature(bytes32 pairId);
 
     event SignerSet(address indexed signer);
-    event PriceUpdated(bytes32 indexed pairId, uint256 price, uint256 timestamp, uint256 expiry);
+    event PriceUpdated(bytes32 indexed pairId, uint256 price, uint256 timestamp, uint256 expiry, uint256 ratio);
 
     constructor() {
         _disableInitializers();
@@ -230,9 +264,14 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
 
     /// @notice Push a signed price for a pair. Open — anyone may submit;
     /// the global publisher's EIP-712 signature over
-    /// (pairId, price, timestamp, expiry) is what authorises. No
+    /// (pairId, price, timestamp, expiry, ratio) is what authorises. No
     /// registration is required: the first update on a brand-new pair works
     /// as-is.
+    /// @param newRatio The vault NAV ratio the price was computed against
+    /// (see `PricePoint.ratio`). Stored opaquely alongside the price; ZERO
+    /// means "no ratio" (non-vault token) and is a valid, deliberately
+    /// unrejected value — unlike `price`, a zero `ratio` is the sentinel,
+    /// not a degenerate input.
     /// @return applied `true` if the update was strictly newer and was
     /// stored (a `PriceUpdated` event was emitted); `false` if the payload
     /// was not strictly newer than the stored timestamp — a deliberate
@@ -260,6 +299,7 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
         uint256 newPrice,
         uint256 newTimestamp,
         uint256 newExpiry,
+        uint256 newRatio,
         bytes calldata signature
     ) external returns (bool applied) {
         MainStorage storage $ = _main();
@@ -278,8 +318,11 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
         // `PriceZero`) that would misreport an unsigned probe as an
         // operator/clock fault to off-chain monitoring. The stale/no-op
         // short-circuit above stays first: it is intentionally cheap and
-        // signature-free so a lost update race can never brick a caller.
-        bytes32 structHash = keccak256(abi.encode(PRICE_UPDATE_TYPEHASH, id, newPrice, newTimestamp, newExpiry));
+        // signature-free so a lost update race can never brick a caller. The
+        // ratio is part of the signed struct, so a taker cannot substitute a
+        // stale or fabricated ratio for the one the publisher priced against.
+        bytes32 structHash =
+            keccak256(abi.encode(PRICE_UPDATE_TYPEHASH, id, newPrice, newTimestamp, newExpiry, newRatio));
         if (ECDSA.recover(MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR, structHash), signature) != $.signer) {
             revert PriceUpdateInvalidSignature(id);
         }
@@ -325,7 +368,8 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
         stored.price = newPrice;
         stored.timestamp = newTimestamp;
         stored.expiry = newExpiry;
-        emit PriceUpdated(id, newPrice, newTimestamp, newExpiry);
+        stored.ratio = newRatio;
+        emit PriceUpdated(id, newPrice, newTimestamp, newExpiry, newRatio);
         return true;
     }
 
@@ -333,14 +377,25 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     //                            Read views                              //
     // ------------------------------------------------------------------ //
 
-    /// @notice The stored price for a pair. Reverts `PriceUnset` when no
-    /// update has ever landed (stored timestamp 0) and `PriceExpired` once
-    /// `block.timestamp` reaches the stored payload's publisher-signed
-    /// `expiry` (the edge instant fails closed — a price is dead AT its
-    /// expiry). There is no other staleness bound: the producer's signed
-    /// horizon is the staleness bound. Value semantics are the publisher's —
-    /// this contract treats them as opaque.
-    function price(bytes32 id) external view returns (uint256) {
+    /// @notice The stored price AND the vault NAV ratio it was priced
+    /// against, as ONE atomic point. The ratio gates the price: if the live
+    /// vault ratio no longer matches the one the price was computed against,
+    /// there IS no valid price — so no checked read serves a price without
+    /// its ratio. A consumer carries the ratio to settlement and asserts it
+    /// against the live vault there (see `PricePoint.ratio`); a
+    /// `storedRatio` of ZERO means "no ratio" and the consumer performs no
+    /// ratio assertion.
+    ///
+    /// Reverts `PriceUnset` when no update has ever landed (stored timestamp
+    /// 0) and `PriceExpired` once `block.timestamp` reaches the stored
+    /// payload's publisher-signed `expiry` (the edge instant fails closed — a
+    /// price is dead AT its expiry). There is no other staleness bound: the
+    /// producer's signed horizon is the staleness bound. Value semantics are
+    /// the publisher's — this contract treats them as opaque.
+    /// @return storedPrice The opaque price value.
+    /// @return storedRatio The NAV ratio the price was computed against, or
+    /// zero for a non-vault pair.
+    function price(bytes32 id) external view returns (uint256 storedPrice, uint256 storedRatio) {
         MainStorage storage $ = _main();
         PricePoint storage stored = $.prices[id];
         if (stored.timestamp == 0) revert PriceUnset(id);
@@ -348,7 +403,7 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
         // seconds against validity windows measured in minutes/hours.
         // slither-disable-next-line timestamp
         if (block.timestamp >= stored.expiry) revert PriceExpired(id);
-        return stored.price;
+        return (stored.price, stored.ratio);
     }
 
     /// @notice The global publisher key.
@@ -360,14 +415,17 @@ contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
     /// sizing their next timestamp and for off-chain monitoring. Consumers
     /// of this RAW view that serve prices onward MUST apply the expiry
     /// themselves (`block.timestamp < storedExpiry`, fail closed), exactly
-    /// as `price()` does.
+    /// as `price()` does, and MUST carry `storedRatio` with the price — a
+    /// price is only valid against the ratio it was computed at.
+    /// `storedRatio` is zero for a non-vault pair or a pair not yet updated
+    /// under the ratio-carrying payload.
     function pairPrice(bytes32 id)
         external
         view
-        returns (uint256 storedPrice, uint256 storedTimestamp, uint256 storedExpiry)
+        returns (uint256 storedPrice, uint256 storedTimestamp, uint256 storedExpiry, uint256 storedRatio)
     {
         PricePoint storage stored = _main().prices[id];
-        return (stored.price, stored.timestamp, stored.expiry);
+        return (stored.price, stored.timestamp, stored.expiry, stored.ratio);
     }
 
     /// @notice EIP-712 domain separator — used by publishers / tests. A
