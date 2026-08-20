@@ -18,7 +18,8 @@ import {
     IdenticalTokens,
     PriceRoundsToZero,
     RatioMismatch,
-    UnverifiableRatio
+    UnverifiableRatio,
+    NavRatioMissing
 } from "../../../../src/concrete/adapter/MorphoPairAdapter.sol";
 import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
@@ -28,10 +29,11 @@ import {MockRevertingNavVaultToken} from "../../../mocks/MockRevertingNavVaultTo
 /// @title MorphoPairAdapterTest
 /// @notice Unit coverage for the `MorphoPairAdapter` beacon-proxied adapter:
 /// the publisher-scale → Morpho-convention rescale (known-answer), central
-/// expiry/unset passthrough, the NAV-ratio gate (exact live-vault match,
-/// fail-closed on drift or an unprobeable collateral, zero-ratio sentinel
-/// skip), constructor / initializer guards, and the shared beacon upgrade
-/// retargeting every deployed adapter proxy at once.
+/// expiry/unset passthrough, the NAV-ratio gate's full truth table (vault
+/// collateral: exact live-ratio match required and the zero sentinel
+/// refused; non-vault collateral: zero sentinel serves and a non-zero ratio
+/// fails closed), constructor / initializer guards, and the shared beacon
+/// upgrade retargeting every deployed adapter proxy at once.
 contract MorphoPairAdapterTest is SignedPriceTestBase {
     // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address constant ADMIN = address(0xC0DE);
@@ -330,13 +332,28 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         adapter.price();
     }
 
-    /// @notice A ZERO stored ratio is the central store's "no ratio" sentinel
-    /// (non-vault collateral): the gate is skipped entirely, so a collateral
-    /// token with no `convertToAssets` at all still prices normally.
-    function test_MorphoPairAdapter_ZeroRatio_SkipsGate() public {
+    /// @notice The zero "no ratio" sentinel is honoured ONLY for a collateral
+    /// that does not probe as a vault: a plain ERC-20 with no
+    /// `convertToAssets` classifies as non-vault and prices normally.
+    function test_MorphoPairAdapter_NonVaultCollateralZeroRatio_Serves() public {
         MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
         _push(PAIR_A, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 0);
-        assertEq(adapter.price(), 42e24, "zero-ratio sentinel skips the vault probe");
+        assertEq(adapter.price(), 42e24, "non-vault market serves on the zero sentinel");
+    }
+
+    /// @notice A collateral that probes as a live wt-vault REFUSES the zero
+    /// sentinel: a real NAV ratio is never zero, so a vault price published
+    /// without its ratio is not a price. Fails closed with `NavRatioMissing`
+    /// until the publisher signs a ratio-carrying update — the same intended
+    /// pricing freeze (health checks and liquidations) as a ratio mismatch.
+    function test_MorphoPairAdapter_VaultCollateralZeroRatio_FailsClosed() public {
+        MockNavVaultToken vaultBase = new MockNavVaultToken(18);
+        vaultBase.setNavRatio(1.05e18);
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 0);
+        vm.expectRevert(abi.encodeWithSelector(NavRatioMissing.selector, address(vaultBase), uint256(1.05e18)));
+        adapter.price();
     }
 
     /// @notice A non-zero stored ratio for a collateral that cannot be probed
@@ -350,10 +367,9 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         adapter.price();
     }
 
-    /// @notice A reverting `convertToAssets` implementation is the same
-    /// fail-closed `UnverifiableRatio`, not a bubbled opaque revert — pinned
-    /// via the mock's own probe-shares assertion by pointing the adapter at a
-    /// vault whose probe reverts.
+    /// @notice A reverting `convertToAssets` implementation classifies as
+    /// non-vault, so with a non-zero stored ratio it is the same fail-closed
+    /// `UnverifiableRatio`, not a bubbled opaque revert.
     function test_MorphoPairAdapter_RevertingProbeWithRatio_FailsClosed() public {
         MockRevertingNavVaultToken vaultBase = new MockRevertingNavVaultToken();
         MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
