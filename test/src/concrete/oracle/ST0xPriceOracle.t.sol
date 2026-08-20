@@ -167,6 +167,39 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertEq(_price(PAIR_A), 42e18, "price() serves stored value");
     }
 
+    /// @notice A NON-ZERO NAV `ratio` rides the whole applied path: it is
+    /// part of the signed struct, is announced verbatim in `PriceUpdated`,
+    /// is stored verbatim, and comes back out of BOTH reads paired with its
+    /// price. A price is only valid against the ratio it was computed at, so
+    /// a ratio that is dropped or flattened to the "no ratio" sentinel
+    /// anywhere along that path would silently disable the consumer's
+    /// settlement-time assertion.
+    function test_UpdatePrice_CarriesNonZeroRatioThroughEventAndStorage() public {
+        uint256 expiry = block.timestamp + DEFAULT_VALIDITY;
+        uint256 ratio = 1.05e18;
+
+        vm.expectEmit(true, false, false, true, address(oracle));
+        emit ST0xPriceOracle.PriceUpdated(PAIR_A, 42e18, block.timestamp, expiry, ratio);
+        assertTrue(
+            oracle.updatePrice(
+                PAIR_A,
+                42e18,
+                block.timestamp,
+                expiry,
+                ratio,
+                signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry, ratio)
+            ),
+            "signed ratio-carrying update applies"
+        );
+
+        (,,, uint256 storedRatio) = oracle.pairPrice(PAIR_A);
+        assertEq(storedRatio, ratio, "ratio stored verbatim");
+
+        (uint256 servedPrice, uint256 servedRatio) = oracle.price(PAIR_A);
+        assertEq(servedPrice, 42e18, "price() serves the price first");
+        assertEq(servedRatio, ratio, "price() serves the ratio it was priced against");
+    }
+
     /// @notice A timestamp EQUAL to stored is not strictly newer — a NO-OP,
     /// not a revert: no state change, no event, even with a garbage
     /// signature (freshness is checked before the signature).
@@ -288,6 +321,43 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         oracle.price(PAIR_A);
     }
 
+    /// @notice The future boundary is exact, not approximate: ONE SECOND
+    /// ahead of `block.timestamp` is already the future and is rejected —
+    /// there is no tolerance band for publisher clock skew. The very same
+    /// payload timestamped at `block.timestamp` applies, so the reject/accept
+    /// frontier sits precisely between `now` and `now + 1`.
+    function test_UpdatePrice_OneSecondInTheFuture_Rejected() public {
+        uint256 justAhead = block.timestamp + 1;
+        uint256 expiry = justAhead + DEFAULT_VALIDITY;
+        bytes memory aheadSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, justAhead, expiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceFuture.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 42e18, justAhead, expiry, 0, aheadSig);
+
+        // Nothing landed — the pair is still unset.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
+        oracle.price(PAIR_A);
+
+        // One second earlier — exactly now — is not the future.
+        bytes memory nowSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, block.timestamp, expiry);
+        assertTrue(
+            oracle.updatePrice(PAIR_A, 42e18, block.timestamp, expiry, 0, nowSig), "exactly now is not the future"
+        );
+    }
+
+    /// @notice ORDERING: a payload that is BOTH future-timestamped and
+    /// already expired (an incoherent window, `expiry <= now < timestamp`)
+    /// surfaces `PriceFuture` — the future check runs first, so the selector
+    /// reported to off-chain monitoring names the publisher's clock fault
+    /// rather than the window it also fails.
+    function test_UpdatePrice_FutureAndExpiredPayload_RevertsFutureNotExpired() public {
+        vm.warp(block.timestamp + 1 days);
+        uint256 future = block.timestamp + 1 hours;
+        uint256 deadExpiry = block.timestamp - 60;
+        bytes memory sig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, future, deadExpiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceFuture.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 42e18, future, deadExpiry, 0, sig);
+    }
+
     /// @notice A payload whose validity window has
     /// already closed is rejected at SUBMISSION, no matter that its
     /// timestamp is strictly newer than the stored one. This is what stops
@@ -402,6 +472,40 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         oracle.price(PAIR_A);
     }
 
+    /// @notice ORDERING: the zero-price guard runs LAST of the content
+    /// checks, so a payload that is degenerate in a zero price AND fails a
+    /// window check surfaces the WINDOW fault. Each of the three window
+    /// checks therefore preempts `PriceZero`: a future timestamp, an
+    /// already-closed window, and an oversized window each name themselves.
+    function test_UpdatePrice_ZeroPriceCheckedLastOfContentChecks() public {
+        vm.warp(block.timestamp + 1 days);
+
+        // Future timestamp wins over the zero price.
+        uint256 future = block.timestamp + 1 hours;
+        uint256 futureExpiry = future + DEFAULT_VALIDITY;
+        bytes memory futureSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, future, futureExpiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceFuture.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, future, futureExpiry, 0, futureSig);
+
+        // A closed window wins over the zero price.
+        uint256 deadTs = block.timestamp - 120;
+        uint256 deadExpiry = block.timestamp - 60;
+        bytes memory deadSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, deadTs, deadExpiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, deadTs, deadExpiry, 0, deadSig);
+
+        // An oversized window wins over the zero price.
+        uint256 ts = block.timestamp;
+        uint256 tooLong = ts + oracle.MAX_VALIDITY_WINDOW() + 1;
+        bytes memory longSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, ts, tooLong);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.ValidityWindowTooLong.selector, PAIR_A, ts, tooLong));
+        oracle.updatePrice(PAIR_A, 0, ts, tooLong, 0, longSig);
+
+        // None of the rejected payloads landed.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_A));
+        oracle.price(PAIR_A);
+    }
+
     /// @notice The signature is verified BEFORE the content checks: a
     /// future-dated payload carrying a WRONG-key signature reverts
     /// `PriceUpdateInvalidSignature`, NOT `PriceFuture`. An unauthenticated
@@ -429,6 +533,27 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, ts, expiry));
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
         oracle.updatePrice(PAIR_A, 42e18, ts, expiry, 0, abi.encodePacked(r, s, v));
+    }
+
+    /// @notice Signature-before-content holds for the DEGENERATE-VALUE
+    /// checks too, not just the window ones: a wrong-key payload carrying a
+    /// zero price, and one carrying an oversized validity window, both revert
+    /// `PriceUpdateInvalidSignature` rather than `PriceZero` /
+    /// `ValidityWindowTooLong`. An unauthenticated payload is never reported
+    /// as an operator fault.
+    function test_UpdatePrice_WronglySignedDegeneratePayload_RevertsInvalidSignatureNotContent() public {
+        uint256 wrongPk = uint256(keccak256("wrong-signer"));
+        uint256 ts = block.timestamp;
+
+        uint256 expiry = ts + DEFAULT_VALIDITY;
+        (uint8 zv, bytes32 zr, bytes32 zs) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 0, ts, expiry));
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, ts, expiry, 0, abi.encodePacked(zr, zs, zv));
+
+        uint256 tooLong = ts + oracle.MAX_VALIDITY_WINDOW() + 1;
+        (uint8 wv, bytes32 wr, bytes32 ws) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, ts, tooLong));
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, 0, abi.encodePacked(wr, ws, wv));
     }
 
     /// @notice The boundary: a payload timestamped at EXACTLY block.timestamp
@@ -576,6 +701,38 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertEq(_price(PAIR_A), 42e18, "still live one second before expiry");
 
         vm.warp(expiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
+        oracle.price(PAIR_A);
+    }
+
+    // -------- pairPrice(): raw, unchecked read --------
+
+    /// @notice `pairPrice` is the RAW view — it applies neither of `price()`'s
+    /// guards. An unset pair reads back as four zeros instead of reverting
+    /// `PriceUnset`, and an expired pair still hands back its stored tuple
+    /// verbatim instead of reverting `PriceExpired`, so publishers can size
+    /// their next timestamp and monitoring can observe a dead pair. Both
+    /// reads are shown against `price()` refusing the same pair, which is
+    /// what makes the raw view raw.
+    function test_PairPrice_RawReadAppliesNeitherGuard() public {
+        (uint256 unsetPrice, uint256 unsetTs, uint256 unsetExpiry, uint256 unsetRatio) = oracle.pairPrice(PAIR_UNKNOWN);
+        assertEq(unsetPrice, 0, "unset pair reads zero price");
+        assertEq(unsetTs, 0, "unset pair reads zero timestamp");
+        assertEq(unsetExpiry, 0, "unset pair reads zero expiry");
+        assertEq(unsetRatio, 0, "unset pair reads zero ratio");
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUnset.selector, PAIR_UNKNOWN));
+        oracle.price(PAIR_UNKNOWN);
+
+        uint256 ts = block.timestamp;
+        uint256 expiry = ts + DEFAULT_VALIDITY;
+        _push(PAIR_A, 42e18, ts, expiry, 1.05e18);
+
+        vm.warp(expiry + 1 days);
+        (uint256 deadPrice, uint256 deadTs, uint256 deadExpiry, uint256 deadRatio) = oracle.pairPrice(PAIR_A);
+        assertEq(deadPrice, 42e18, "expired pair still reads its stored price");
+        assertEq(deadTs, ts, "expired pair still reads its stored timestamp");
+        assertEq(deadExpiry, expiry, "expired pair still reads its stored expiry");
+        assertEq(deadRatio, 1.05e18, "expired pair still reads its stored ratio");
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
         oracle.price(PAIR_A);
     }
