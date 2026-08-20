@@ -14,6 +14,7 @@ import {
     ZeroMaxAge,
     ZeroCorporateActionsVault,
     InvalidPauseConfig,
+    ZeroPauseTimeBefore,
     PauseTimeAfterBelowMaxAge,
     OraclePausedCorporateAction,
     EmptySymbol,
@@ -123,12 +124,15 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
+    /// @notice Both windows zero reverts `ZeroPauseTimeBefore` — the
+    /// pre-window check precedes the relative post-window invariant, so the
+    /// pre side is named first.
     function testInitRevertsBothWindowsZero() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = 0;
         config.pauseTimeAfter = 0;
         DIAVaultOracle oracle = _deployUninit();
-        vm.expectRevert(InvalidPauseConfig.selector);
+        vm.expectRevert(ZeroPauseTimeBefore.selector);
         oracle.initialize(abi.encode(config));
     }
 
@@ -148,17 +152,32 @@ contract DIAVaultOracleTest is Test {
         oracle.initialize(abi.encode(config));
     }
 
-    /// @notice A post-window-only config (`pauseTimeBefore == 0`) is valid as
-    /// long as `pauseTimeAfter > maxAge`. The default `PAUSE_AFTER` carries a
-    /// positive margin over `MAX_AGE`, which init accepts.
-    function testInitSucceedsWithOnlyPostWindow() external {
+    /// @notice A post-window-only config (`pauseTimeBefore == 0`) is
+    /// REJECTED. The pre-window guards the ex-date → `effectiveTime`
+    /// interval (the market revalues before the on-chain action), and with a
+    /// zero pre-window the already-rebalanced DIA price pairs with the
+    /// pre-action vault ratio, underpricing the share against borrowers.
+    function testInitRevertsZeroPauseTimeBefore() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = 0;
         config.pauseTimeAfter = PAUSE_AFTER;
         DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(ZeroPauseTimeBefore.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice The minimum viable pre-window (one second) is accepted — the
+    /// strict check rejects exactly zero, it does not impose a floor beyond
+    /// non-zero (sizing the window against the ex-date lead is the
+    /// operator's job, documented as such).
+    function testInitAcceptsOneSecondPreWindow() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.pauseTimeBefore = 1;
+        config.pauseTimeAfter = PAUSE_AFTER;
+        DIAVaultOracle oracle = _deployUninit();
         bytes32 ok = oracle.initialize(abi.encode(config));
-        assertEq(ok, ICLONEABLE_V2_SUCCESS, "post-window-only config must be accepted");
-        assertEq(oracle.pauseTimeBefore(), 0);
+        assertEq(ok, ICLONEABLE_V2_SUCCESS, "one-second pre-window must be accepted");
+        assertEq(oracle.pauseTimeBefore(), 1);
         assertEq(oracle.pauseTimeAfter(), PAUSE_AFTER);
     }
 
@@ -361,6 +380,29 @@ contract DIAVaultOracleTest is Test {
         // Completed split well outside the post-window.
         actions.setLatestCompleted(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp - PAUSE_AFTER - 1));
         assertEq(oracle.latestAnswer(), 100e8, "prices normally outside the pause window");
+    }
+
+    /// @notice PRE-window twin of `testAutoPauseRevertsInsideWindow`: a
+    /// PENDING action whose `effectiveTime` is within `pauseTimeBefore` of
+    /// now pauses BOTH read entry points. The pre-window predicate itself is
+    /// covered in LibCorporateActionsPause.t.sol; what this pins is the
+    /// ORACLE's wiring of `pauseTimeBefore` into that call — the interval the
+    /// zero-pre-window rejection exists to guard (the market's ex-date
+    /// revaluation precedes the on-chain `effectiveTime`).
+    function testAutoPauseRevertsInsidePreWindow() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        diaOracle.setValue(SYMBOL, 100e18, uint64(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        // Pending split half a pre-window ahead → inside the pause window.
+        uint64 effectiveTime = uint64(block.timestamp + PAUSE_BEFORE / 2);
+        actions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, effectiveTime);
+
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestAnswer();
+        vm.expectRevert(abi.encodeWithSelector(OraclePausedCorporateAction.selector, effectiveTime));
+        oracle.latestRoundData();
     }
 
     // -------- ERC-7201 storage-layout pin (beacon-upgrade safety) --------
@@ -781,7 +823,7 @@ contract DIAVaultOracleTest is Test {
         // fuzzer would waste runs on.
         extraPause = uint64(bound(extraPause, 1, 4));
         uint64 pauseAfter = maxAgeSeconds + extraPause;
-        pauseBefore = uint64(bound(pauseBefore, 0, 30 days));
+        pauseBefore = uint64(bound(pauseBefore, 1, 30 days));
         // The push is pre-action: at or just before `effectiveTime`. Pushes far
         // earlier are strictly staler, so the tight offsets are the hard cases.
         pushOffset = uint64(bound(pushOffset, 0, 3));

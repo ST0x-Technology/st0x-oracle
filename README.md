@@ -80,6 +80,15 @@ few minutes; the 1-hour heartbeat is the dead-market floor. Recommended
 > `maxAge = 2 hours` with `pauseTimeAfter = 3 hours` (a 1h margin) is the
 > reference.
 
+> **⚠️ `pauseTimeBefore` is also mandatory (non-zero, enforced at `initialize` —
+> `ZeroPauseTimeBefore`).** The market revalues at the ex-date, which precedes
+> the on-chain `effectiveTime`, so DIA can publish the post-action equity price
+> against the still-pre-action vault ratio. Only the pre-window pauses reads
+> across that interval. Size it above the worst-case ex-date → `effectiveTime`
+> lead, and schedule actions with more notice than `pauseTimeBefore` — the
+> oracle cannot enforce scheduling lead time (see `ZeroPauseTimeBefore`
+> NatSpec).
+
 **DIA on Base mainnet:** the canonical oracle contract address is the
 `DIA_FEED_BASE` constant in [`src/lib/LibDIAFeed.sol`](src/lib/LibDIAFeed.sol) —
 the single source of truth; import it rather than pasting the literal.
@@ -99,7 +108,7 @@ DIAVaultOracle oracle = diaVaultOracleBeaconSetDeployer.newDIAVaultOracle(
         vault:           wtStockVault,  // ICorporateActionsV1 derived from vault.asset()
         maxAge:          2 hours,
         actionTypeMask:  type(uint256).max,
-        pauseTimeBefore: 1 hours,
+        pauseTimeBefore: 1 hours,  // non-zero required; size above the ex-date → effectiveTime lead
         pauseTimeAfter:  3 hours  // > maxAge, with a skew margin (see invariant above)
     })
 );
