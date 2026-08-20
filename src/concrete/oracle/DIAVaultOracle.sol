@@ -26,6 +26,22 @@ error EmptySymbol();
 /// price read is instantly stale, which is never the desired configuration.
 error ZeroMaxAge();
 
+/// @dev Error raised when `maxAge` exceeds `MAX_AGE_LIMIT`. The relative
+/// invariant (`pauseTimeAfter > maxAge`) is SCALE-INVARIANT — a units
+/// mistake (e.g. the reference config's "2 hours" and "3 hours" expressed in
+/// MILLISECONDS) scales both operands equally and passes it cleanly, quietly
+/// stretching the staleness window from hours to ~83 days. Only an absolute
+/// bound catches that class of error.
+/// @param maxAge The rejected max age value.
+error MaxAgeTooLarge(uint256 maxAge);
+
+/// @dev Error raised when a pause window (`pauseTimeBefore` or
+/// `pauseTimeAfter`) exceeds `MAX_PAUSE_WINDOW`. Same scale-error rationale
+/// as `MaxAgeTooLarge` — the relative pause invariant cannot see a
+/// wrong-units config in which every term is uniformly oversized.
+/// @param pauseTime The rejected window value.
+error PauseWindowTooLarge(uint64 pauseTime);
+
 /// @dev Error raised when the priced vault's `asset()` (the tStock that
 /// carries `ICorporateActionsV1`) is the zero address — a broken / non-ST0x
 /// vault. The auto-pause is mandatory, and a zero corporate-actions vault
@@ -127,7 +143,10 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// `block.timestamp - timestamp >= maxAge` reverts `DIAPriceStale` (the edge
 /// instant fails closed — a push exactly `maxAge` old is stale). Immutable
 /// after init — redeploy a fresh proxy to change. MUST be `< pauseTimeAfter`
-/// STRICTLY (a positive margin is required — see `pauseTimeAfter`).
+/// STRICTLY (a positive margin is required — see `pauseTimeAfter`) and at
+/// most `MAX_AGE_LIMIT` (`MaxAgeTooLarge` — an absolute scale guard the
+/// relative invariant cannot provide; both pause windows are likewise capped
+/// at `MAX_PAUSE_WINDOW`).
 /// @param actionTypeMask Bitmap of action types that trigger the auto-pause.
 /// `ACTION_TYPE_STOCK_SPLIT_V1` for splits only, or `type(uint256).max` for
 /// every present and future action type. Must be non-zero.
@@ -275,6 +294,20 @@ struct DIAVaultOracleConfig {
 ///
 /// Deployed as a beacon-proxy clone via `ICloneableV2.initialize`.
 contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable {
+    /// @notice Absolute upper bound on `maxAge`. A pure SCALE guard: the
+    /// production reference is 2 hours, and the only realistic way to land
+    /// above a week is a wrong-units config (2 hours in milliseconds is ~83
+    /// days), which the scale-invariant relative checks cannot catch.
+    /// Deliberately below `MAX_PAUSE_WINDOW` so `pauseTimeAfter > maxAge`
+    /// remains satisfiable at this bound.
+    uint256 public constant MAX_AGE_LIMIT = 7 days;
+
+    /// @notice Absolute upper bound on each pause window. Generous — a
+    /// deliberately long post-action pause is legitimate — while still
+    /// catching the milliseconds-for-seconds class (the reference 1-hour
+    /// pre-window in ms is ~41 days).
+    uint64 public constant MAX_PAUSE_WINDOW = 30 days;
+
     /// @custom:storage-location erc7201:st0x.diavaultoracle.main
     struct MainStorage {
         // The DIA Data Association V2 oracle feed for the underlying asset.
@@ -365,21 +398,27 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         revert InitializeSignatureFn();
     }
 
-    /// @inheritdoc ICloneableV2
-    function initialize(bytes calldata data) external initializer returns (bytes32) {
-        DIAVaultOracleConfig memory config = abi.decode(data, (DIAVaultOracleConfig));
-
+    /// @dev Static field validation for `initialize`: zero/empty checks on
+    /// the externally-supplied fields plus the absolute `maxAge` scale
+    /// guard. Pure — everything that needs an external call stays in
+    /// `initialize`, which calls this first.
+    function _validateStaticConfig(DIAVaultOracleConfig memory config) private pure {
         if (address(config.diaOracle) == address(0)) revert ZeroDIAOracle();
         if (bytes(config.symbol).length == 0) revert EmptySymbol();
         if (config.vault == address(0)) revert ZeroVault();
         if (config.maxAge == 0) revert ZeroMaxAge();
+        // Absolute scale guard: the relative `pauseTimeAfter > maxAge`
+        // invariant (checked in `_validatePauseConfig`) is scale-invariant,
+        // so a uniformly wrong-units config passes it — only an absolute
+        // bound fails it closed.
+        if (config.maxAge > MAX_AGE_LIMIT) revert MaxAgeTooLarge(config.maxAge);
+    }
 
-        // The corporate-actions vault is the tStock the wtStock wraps — the
-        // priced vault's own `asset()`. Deriving it (rather than taking a
-        // separate config field) removes a mis-wiring surface.
-        address derivedCorporateActionsVault = IERC4626(config.vault).asset();
-        if (derivedCorporateActionsVault == address(0)) revert ZeroCorporateActionsVault();
-
+    /// @dev Pause-config validation for `initialize`, called after the
+    /// corporate-actions vault derivation: mask coherence, the mandatory
+    /// pre-window, both absolute window caps, and the relative cross-epoch
+    /// invariant.
+    function _validatePauseConfig(DIAVaultOracleConfig memory config) private pure {
         // Auto-pause is mandatory and must be coherently configured. The mask
         // must retain a real action bit AFTER the library strips
         // `ACTION_TYPE_INIT_V1` (the bootstrap node is not a real action) — a
@@ -394,6 +433,16 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // as the post-action side below — see `ZeroPauseTimeBefore`.
         if (config.pauseTimeBefore == 0) {
             revert ZeroPauseTimeBefore();
+        }
+
+        // Same absolute scale guard for both windows (see `MaxAgeTooLarge` /
+        // `PauseWindowTooLarge`): each field is bounded individually so the
+        // revert names the offending value.
+        if (config.pauseTimeBefore > MAX_PAUSE_WINDOW) {
+            revert PauseWindowTooLarge(config.pauseTimeBefore);
+        }
+        if (config.pauseTimeAfter > MAX_PAUSE_WINDOW) {
+            revert PauseWindowTooLarge(config.pauseTimeAfter);
         }
 
         // Cross-epoch safety invariant: the post-action pause must STRICTLY
@@ -422,6 +471,21 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         if (config.pauseTimeAfter <= config.maxAge) {
             revert PauseTimeAfterBelowMaxAge(config.pauseTimeAfter, config.maxAge);
         }
+    }
+
+    /// @inheritdoc ICloneableV2
+    function initialize(bytes calldata data) external initializer returns (bytes32) {
+        DIAVaultOracleConfig memory config = abi.decode(data, (DIAVaultOracleConfig));
+
+        _validateStaticConfig(config);
+
+        // The corporate-actions vault is the tStock the wtStock wraps — the
+        // priced vault's own `asset()`. Deriving it (rather than taking a
+        // separate config field) removes a mis-wiring surface.
+        address derivedCorporateActionsVault = IERC4626(config.vault).asset();
+        if (derivedCorporateActionsVault == address(0)) revert ZeroCorporateActionsVault();
+
+        _validatePauseConfig(config);
 
         // Probe the corporate-actions vault once so an incompatible wiring — a
         // missing facet (ABI-decode revert) or a mask with no bits in the
