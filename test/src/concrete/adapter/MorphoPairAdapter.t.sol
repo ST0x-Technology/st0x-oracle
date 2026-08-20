@@ -24,12 +24,11 @@ import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 /// @title MorphoPairAdapterTest
 /// @notice Unit coverage for the `MorphoPairAdapter` beacon-proxied adapter:
 /// the publisher-scale → Morpho-convention rescale (known-answer), central
-/// staleness/unset passthrough, constructor / initializer guards, and the
+/// expiry/unset passthrough, constructor / initializer guards, and the
 /// shared beacon upgrade retargeting every deployed adapter proxy at once.
 contract MorphoPairAdapterTest is SignedPriceTestBase {
     // SIGNER_PK / SIGNER are inherited from SignedPriceTestBase.
     address constant ADMIN = address(0xC0DE);
-    uint64 constant TIMEOUT = 1 hours;
 
     // base = Morpho collateral (18 dec), quote = Morpho loan (6 dec, USDC-like).
     MockERC20Decimals base;
@@ -45,9 +44,7 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(impl), ADMIN);
         oracle = ST0xPriceOracle(
             address(
-                new BeaconProxy(
-                    address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER, TIMEOUT))
-                )
+                new BeaconProxy(address(beacon), abi.encodeCall(ST0xPriceOracle.initialize, (ADMIN, ADMIN, SIGNER)))
             )
         );
 
@@ -85,8 +82,10 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         assertEq(adapter.price(), 1e36, "1.0 at equal decimals is bare 1e36");
     }
 
-    /// @notice Central staleness / unset reverts pass straight through the
-    /// rescale — the adapter never masks them.
+    /// @notice Central expiry / unset reverts pass straight through the
+    /// rescale — the adapter never masks them. The adapter needs no staleness
+    /// logic of its own: it calls `price()`, which refuses a stored price at
+    /// its publisher-signed expiry, and the revert bubbles to Morpho.
     function test_MorphoPairAdapter_CentralRevertsPassThrough() public {
         MorphoPairAdapter adapter = _deployAdapter(address(base), address(quote));
 
@@ -94,8 +93,8 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         adapter.price();
 
         _push(PAIR_A, 42e18, block.timestamp);
-        vm.warp(block.timestamp + TIMEOUT + 1);
-        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceStale.selector, PAIR_A));
+        vm.warp(block.timestamp + DEFAULT_VALIDITY);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
         adapter.price();
     }
 

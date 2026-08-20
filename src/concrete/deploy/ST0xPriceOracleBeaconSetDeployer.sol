@@ -78,19 +78,18 @@ contract ST0xPriceOracleBeaconSetDeployer {
     /// @param admin Receives `DEFAULT_ADMIN_ROLE`.
     /// @param oracleAdmin Receives `ORACLE_ADMIN_ROLE`.
     /// @param signer The initial global publisher key.
-    /// @param timeout The initial global staleness bound.
     /// @return oracle The deployed proxy as a typed reference.
     // slither-disable-next-line reentrancy-events
-    function newST0xPriceOracle(address admin, address oracleAdmin, address signer, uint64 timeout)
+    function newST0xPriceOracle(address admin, address oracleAdmin, address signer)
         external
         returns (ST0xPriceOracle oracle)
     {
-        bytes32 salt = keccak256(abi.encode(admin, oracleAdmin, signer, timeout));
+        bytes32 salt = keccak256(abi.encode(admin, oracleAdmin, signer));
         oracle = ST0xPriceOracle(
             address(
                 new BeaconProxy{salt: salt}(
                     address(iST0xPriceOracleBeacon),
-                    abi.encodeCall(ST0xPriceOracle.initialize, (admin, oracleAdmin, signer, timeout))
+                    abi.encodeCall(ST0xPriceOracle.initialize, (admin, oracleAdmin, signer))
                 )
             )
         );
