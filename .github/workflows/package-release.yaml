@@ -1,0 +1,27 @@
+name: Package Release
+on:
+  push:
+    branches:
+      - main
+jobs:
+  release:
+    # A LIBRARY repo on the rainix-autopublish next-version lifecycle:
+    # `[package].version` in foundry.toml is the next unpublished registry
+    # version; a content change on merge publishes it to soldeer, bumps the
+    # slot, tags `sol-v<version>` and cuts a GitHub release. Deploy repos use
+    # rainix-tag-release instead — this repo records no frozen deploy-pin
+    # snapshots, so it is not one.
+    #
+    # The reusable's job requests these scopes (it pushes the bump commit and
+    # tags); the caller must grant them or the run fails at startup.
+    permissions:
+      contents: write
+      id-token: write
+    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
+    with:
+      soldeer-package: st0x-oracle
+    # inherit, not an explicit list: CACHIX_AUTH_TOKEN is consumed by the
+    # reusable's nix-cachix-setup composite without being a declared
+    # workflow_call secret, so it only arrives via inherit. Publishing needs
+    # SOLDEER_API_TOKEN available to this repo (org or repo secret).
+    secrets: inherit
