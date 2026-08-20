@@ -671,6 +671,39 @@ contract DIAVaultOracleTest is Test {
         assertEq(answer, int256(200e8));
     }
 
+    /// @notice The DIA read keys off the symbol held in THIS oracle's storage,
+    /// so two oracles sharing one DIA feed contract price different equities.
+    /// Every other test configures the same symbol, so none of them can tell a
+    /// storage read from a constant that happens to match it — and a mispriced
+    /// feed key is silent: it returns a well-formed answer for the wrong stock.
+    ///
+    /// Same DIA contract, same vault ratio (1 asset per share), two symbols at
+    /// deliberately different prices: each oracle must report its own.
+    function testLatestAnswerReadsConfiguredSymbolFeed() external {
+        DIAVaultOracleConfig memory otherConfig = _defaultConfig();
+        otherConfig.symbol = "AMZN";
+
+        DIAVaultOracle coinOracle = _deployProxy(_defaultConfig());
+        DIAVaultOracle amznOracle = _deployProxy(otherConfig);
+
+        diaOracle.setValue(SYMBOL, 100e18, uint128(block.timestamp));
+        diaOracle.setValue("AMZN", 250e18, uint128(block.timestamp));
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        assertEq(coinOracle.latestAnswer(), int256(100e8), "COIN oracle must serve the COIN feed");
+        assertEq(amznOracle.latestAnswer(), int256(250e8), "AMZN oracle must serve the AMZN feed");
+
+        // A symbol that was never pushed stays unset even while its siblings
+        // are populated — the read does not fall back to another key.
+        DIAVaultOracleConfig memory unpushedConfig = _defaultConfig();
+        unpushedConfig.symbol = "TSLA";
+        DIAVaultOracle tslaOracle = _deployProxy(unpushedConfig);
+
+        vm.expectRevert(DIAPriceNotSet.selector);
+        tslaOracle.latestAnswer();
+    }
+
     /// @notice A share price that is not exactly representable at 8 decimals is
     /// TRUNCATED toward zero, never rounded up. Expected value derived from the
     /// spec, not from the implementation: `vaultSharePrice = diaPrice *
@@ -694,6 +727,34 @@ contract DIAVaultOracleTest is Test {
         // The same read path through latestRoundData agrees on the direction.
         (, int256 roundAnswer,,,) = oracle.latestRoundData();
         assertEq(roundAnswer, int256(33333333), "latestRoundData must truncate identically");
+    }
+
+    /// @notice The share price is `diaPrice * totalAssets / totalSupply` —
+    /// the multiplication happens BEFORE the division, so a ratio whose
+    /// intermediate quotient is non-terminating still resolves exactly when
+    /// the product is divisible by the supply. Order of operations is the
+    /// assertion, not the magnitude.
+    ///
+    /// `$3` against a vault holding `1e18` assets over `3e18` shares is
+    /// exactly `$1.00000000`: the product `3 * 1e18` divides `3e18` cleanly.
+    /// Dividing first would evaluate `1e18 / 3e18` to a truncated
+    /// `0.333...3` and multiply the lost tail back up to `$0.99999999` — a
+    /// one-unit under-report of a price that is exactly representable at 8
+    /// decimals. Every existing happy-path case divides evenly either way,
+    /// so none of them can see the ordering.
+    function testLatestAnswerMultipliesBeforeDividing() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        // DIA: $3 at 18dp.
+        diaOracle.setValue(SYMBOL, 3e18, uint128(block.timestamp));
+        // Vault: 1/3 of an asset per share.
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(3e18);
+
+        assertEq(oracle.latestAnswer(), int256(1e8), "3 * 1e18 / 3e18 must be exactly $1 at 8dp");
+
+        // The same read path through latestRoundData agrees exactly.
+        (, int256 roundAnswer,,,) = oracle.latestRoundData();
+        assertEq(roundAnswer, int256(1e8), "latestRoundData must compute the price identically");
     }
 
     /// @notice Donations move the ratio and ARE served — the decided behaviour
