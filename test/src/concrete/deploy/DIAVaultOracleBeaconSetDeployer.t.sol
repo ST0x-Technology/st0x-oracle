@@ -139,6 +139,36 @@ contract DIAVaultOracleBeaconSetDeployerTest is Test {
         assertTrue(found, "Deployment event not emitted");
     }
 
+    /// @notice Minting is PERMISSIONLESS with a config-only CREATE2 salt: an
+    /// arbitrary caller can mint an arbitrary-config proxy — here an
+    /// attacker-chosen DIA feed and vault, which fully determine the served
+    /// price — behind the same governance-owned beacon, announced by the same
+    /// `Deployment` event as an official mint. Deliberate (see the
+    /// `Deployment` NatSpec): neither beacon membership nor the event
+    /// authenticates an instance; the published address list does. If minting
+    /// is ever gated, flip this test together with that documentation.
+    function testRandoMintsArbitraryConfig() external {
+        DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
+
+        MockDIAOracle attackerFeed = new MockDIAOracle();
+        MockERC4626 attackerVault = new MockERC4626();
+        MockCorporateActions attackerActions = new MockCorporateActions();
+        attackerVault.setAsset(address(attackerActions));
+
+        DIAVaultOracleConfig memory config = _defaultOracleConfig();
+        config.diaOracle = IDIAOracleV2(address(attackerFeed));
+        config.vault = address(attackerVault);
+
+        address rando = address(0xBADD);
+        vm.expectEmit(true, false, false, false, address(bsd));
+        emit Deployment(rando, address(0));
+        vm.prank(rando);
+        DIAVaultOracle minted = bsd.newDIAVaultOracle(config);
+
+        assertEq(address(minted.diaOracle()), address(attackerFeed), "attacker feed stored");
+        assertEq(minted.vault(), address(attackerVault), "attacker vault stored");
+    }
+
     function testNewDIAVaultOraclePropagatesInitRevertZeroVault() external {
         DIAVaultOracleBeaconSetDeployer bsd = _deployBSD();
         DIAVaultOracleConfig memory badConfig = _defaultOracleConfig();

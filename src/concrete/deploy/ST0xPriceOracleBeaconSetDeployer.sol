@@ -50,6 +50,23 @@ contract ST0xPriceOracleBeaconSetDeployer {
     /// `initializer`-guarded and sits behind the governance-owned beacon, so it
     /// grants the front-runner no authority — it only reverts the operator's own
     /// later mint on the CREATE2 collision.
+    ///
+    /// The COMPLEMENTARY case is a mint with a DIFFERENT,
+    /// attacker-chosen config: equally permissionless, equally behind the
+    /// governance-owned beacon, and equally announced by this event from the
+    /// official deployer. NEITHER beacon membership NOR a `Deployment` event
+    /// therefore authenticates an instance — for `ST0xPriceOracle` an
+    /// arbitrary config means the attacker holds both admin roles and the
+    /// publisher key on that instance.
+    /// The ONLY authenticity signal is the published deployment address list
+    /// (the CI-authored deploy artifacts): consumers MUST be wired from that
+    /// list and must never discover instances by scanning events or beacon
+    /// membership. Minting stays permissionless on purpose — a gate would add
+    /// an owner key to operate for every mint without protecting a correctly
+    /// wired consumer (a config-divergent proxy grants its minter no authority
+    /// over any instance a consumer was actually pointed at), and the
+    /// CREATE2 config-commitment means a published address is itself
+    /// verifiable against its claimed config.
     /// @param oracle The address of the new proxy. Indexed for filtering.
     event Deployment(address indexed caller, address indexed oracle);
 
