@@ -1,3 +1,11 @@
+# Library-repo next-version lifecycle (rainix-autopublish): this is the NEXT,
+# unpublished registry version, one ahead of what is on soldeer. A content
+# change on merge to main publishes it and bumps this to the next; never bump
+# it by hand.
+[package]
+name = "st0x-oracle"
+version = "0.1.0"
+
 [profile.default]
 libs = ['dependencies']
 
