@@ -241,7 +241,11 @@ contract DIAVaultOracleTest is Test {
 
     /// @notice Each pause window is individually capped at
     /// `MAX_PAUSE_WINDOW`, and the revert carries the offending value so an
-    /// operator can tell WHICH window was mis-scaled.
+    /// operator can tell WHICH window was mis-scaled. The two caps are applied
+    /// in DECLARATION order (pre-window first), so when BOTH windows are
+    /// mis-scaled the value named is the PRE-window's — the operator fixes the
+    /// first offending field and the next error advances to the second, rather
+    /// than the revert naming a value they have not reached yet.
     function testInitRevertsPauseWindowOverCap() external {
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.pauseTimeBefore = uint64(30 days) + 1;
@@ -254,6 +258,22 @@ contract DIAVaultOracleTest is Test {
         DIAVaultOracle oracle2 = _deployUninit();
         vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
         oracle2.initialize(abi.encode(config2));
+
+        // Both windows over the cap, by DIFFERENT amounts so the reported
+        // value identifies which check fired: the pre-window's.
+        DIAVaultOracleConfig memory both = _defaultConfig();
+        both.pauseTimeBefore = uint64(30 days) + 1;
+        both.pauseTimeAfter = uint64(30 days) + 2;
+        DIAVaultOracle oracle3 = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
+        oracle3.initialize(abi.encode(both));
+
+        // ...and once the pre-window is back in range the post-window's own
+        // value is what the next revert names.
+        both.pauseTimeBefore = PAUSE_BEFORE;
+        DIAVaultOracle oracle4 = _deployUninit();
+        vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 2));
+        oracle4.initialize(abi.encode(both));
     }
 
     /// @notice Both pause windows exactly at `MAX_PAUSE_WINDOW` are accepted
@@ -439,18 +459,49 @@ contract DIAVaultOracleTest is Test {
         vm.expectRevert(ZeroPauseTimeBefore.selector);
         oracle.initialize(abi.encode(config));
 
-        // Then the absolute pre-window cap, naming the offending value, still
-        // ahead of the relative invariant that the same config also violates.
+        // Then the per-field ABSOLUTE window caps speak, naming the offending
+        // value, still ahead of the relative invariant that the same config
+        // ALSO violates (`pauseTimeAfter` is still 0). The absolute caps catch
+        // a wrong-units config that the scale-invariant relative check cannot
+        // see, so they are the more informative error and are checked first.
         config.pauseTimeBefore = uint64(30 days) + 1;
         vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
         oracle.initialize(abi.encode(config));
 
+        // ...and once both windows are within their caps, the cross-epoch
+        // invariant speaks last.
         config.pauseTimeBefore = PAUSE_BEFORE;
-
-        // ...and once the mask is coherent, the invariant check speaks.
-        config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
         vm.expectRevert(abi.encodeWithSelector(PauseTimeAfterBelowMaxAge.selector, uint256(0), MAX_AGE));
         oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice `_validatePauseConfig` runs BEFORE the corporate-actions
+    /// reachability probe, so a config that is BOTH internally invalid AND
+    /// wired to an unreachable facet reports the LOCAL config error. The
+    /// operator's own config is what they can fix without touching the tStock,
+    /// and surfacing the upstream `CorporateActionsUnavailable` first would
+    /// send them auditing facet wiring instead of the zero window they
+    /// actually typed.
+    function testInitValidatesPauseConfigBeforeProbingVault() external {
+        MockRevertingCorporateActions broken = new MockRevertingCorporateActions();
+        MockERC4626 vaultBroken = new MockERC4626();
+        vaultBroken.setAsset(address(broken));
+
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(vaultBroken);
+        config.pauseTimeBefore = 0;
+
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(ZeroPauseTimeBefore.selector);
+        oracle.initialize(abi.encode(config));
+
+        // Positive control: with the pause config repaired, the SAME wiring
+        // reaches the probe and surfaces the facet failure — so the revert
+        // above is the ordering, not the probe being unreachable.
+        config.pauseTimeBefore = PAUSE_BEFORE;
+        DIAVaultOracle probed = _deployUninit();
+        vm.expectRevert(CorporateActionsUnavailable.selector);
+        probed.initialize(abi.encode(config));
     }
 
     /// @notice Inside a matching action's window, every price read reverts
@@ -758,6 +809,37 @@ contract DIAVaultOracleTest is Test {
         assertTrue(
             implementation.MAX_AGE_LIMIT() < uint256(implementation.MAX_PAUSE_WINDOW()),
             "MAX_AGE_LIMIT must sit strictly below MAX_PAUSE_WINDOW"
+        );
+    }
+
+    /// @notice Both absolute scale guards are PUBLIC constants: deploy tooling
+    /// and reviewers read them off a deployed oracle through the auto-generated
+    /// getters rather than re-deriving them from source, so the exposure is
+    /// part of the surface, not an implementation detail. Every other test
+    /// pins them only obliquely, through hardcoded literals at the init
+    /// boundaries.
+    ///
+    /// The RELATION between them is a documented invariant in its own right:
+    /// `MAX_AGE_LIMIT` sits STRICTLY below `MAX_PAUSE_WINDOW`, so the
+    /// cross-epoch requirement `pauseTimeAfter > maxAge` stays satisfiable even
+    /// with `maxAge` at its own cap. Raising the age limit to (or past) the
+    /// window cap would leave a `maxAge` an operator is allowed to configure
+    /// with no legal `pauseTimeAfter` above it.
+    ///
+    /// Distinct from `testScaleGuardConstantsAreExposedAndExact`, which reads
+    /// the same guards off the IMPLEMENTATION: this reads them through a
+    /// DEPLOYED PROXY, which is the surface integrators actually call, and
+    /// additionally pins each cap's exact value in seconds.
+    function testScaleGuardConstantsAreExposedAndExactThroughDeployedProxy() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        assertEq(oracle.MAX_AGE_LIMIT(), 7 days, "MAX_AGE_LIMIT must be exactly 7 days");
+        assertEq(oracle.MAX_AGE_LIMIT(), 604800, "7 days in seconds");
+        assertEq(uint256(oracle.MAX_PAUSE_WINDOW()), 30 days, "MAX_PAUSE_WINDOW must be exactly 30 days");
+        assertEq(uint256(oracle.MAX_PAUSE_WINDOW()), 2592000, "30 days in seconds");
+        assertLt(
+            oracle.MAX_AGE_LIMIT(),
+            uint256(oracle.MAX_PAUSE_WINDOW()),
+            "MAX_AGE_LIMIT must stay strictly below MAX_PAUSE_WINDOW"
         );
     }
 
