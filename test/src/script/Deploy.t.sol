@@ -42,6 +42,10 @@ contract DeployTest is Test {
     /// mints exactly one — the singleton central store.
     bytes32 internal constant DEPLOYMENT_EVENT_SIG = keccak256("Deployment(address,address)");
 
+    /// @dev Selector a failed `vm.env*` read reverts with. Lets the test tell an
+    /// aborted env read apart from one of the script's own `require`s.
+    bytes4 internal constant CHEATCODE_ERROR_SELECTOR = bytes4(keccak256("CheatcodeError(string)"));
+
     MockDIAOracle internal diaOracle;
     MockERC4626 internal vault;
     MockCorporateActions internal actions;
@@ -65,6 +69,43 @@ contract DeployTest is Test {
                 count++;
             }
         }
+    }
+
+    /// @dev Decodes the message out of a `CheatcodeError(string)` revert
+    /// payload, asserting the selector on the way so a plain `require` string
+    /// can never be mistaken for an aborted cheatcode.
+    function _cheatcodeErrorMessage(bytes memory err) internal pure returns (string memory) {
+        assertGe(err.length, 4, "revert payload carries a selector");
+        bytes4 selector = bytes4(err[0]) | (bytes4(err[1]) >> 8) | (bytes4(err[2]) >> 16) | (bytes4(err[3]) >> 24);
+        assertTrue(selector == CHEATCODE_ERROR_SELECTOR, "revert is a cheatcode error, not a require");
+
+        bytes memory payload = new bytes(err.length - 4);
+        for (uint256 i = 0; i < payload.length; i++) {
+            payload[i] = err[i + 4];
+        }
+        return abi.decode(payload, (string));
+    }
+
+    /// @dev True when `needle` occurs anywhere in `haystack`.
+    function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
+        bytes memory hay = bytes(haystack);
+        bytes memory pin = bytes(needle);
+        if (pin.length > hay.length) {
+            return false;
+        }
+        for (uint256 i = 0; i <= hay.length - pin.length; i++) {
+            bool matched = true;
+            for (uint256 j = 0; j < pin.length; j++) {
+                if (hay[i + j] != pin[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function _diaOracleConfig() internal view returns (DIAVaultOracleConfig memory) {
@@ -147,6 +188,20 @@ contract DeployTest is Test {
         assertTrue(
             central.hasRole(central.ORACLE_ADMIN_ROLE(), ST0X_ORACLE_ADMIN), "oracleAdmin granted ORACLE_ADMIN_ROLE"
         );
+
+        // The two admin env vars land on DIFFERENT roles, and each lands on the
+        // role it was named for. ST0X_ADMIN holds DEFAULT_ADMIN_ROLE — the
+        // role-admin that can grant ORACLE_ADMIN_ROLE, i.e. the only way back
+        // in if the oracle admin is lost — while ST0X_ORACLE_ADMIN holds the
+        // operational role. Assert the negatives too: collapsing the two env
+        // vars onto one address (or feeding the same one twice) would leave
+        // every positive assertion above green while quietly destroying the
+        // separation the deploy exists to establish.
+        assertTrue(central.hasRole(central.DEFAULT_ADMIN_ROLE(), ST0X_ADMIN), "admin granted DEFAULT_ADMIN_ROLE");
+        assertFalse(
+            central.hasRole(central.DEFAULT_ADMIN_ROLE(), ST0X_ORACLE_ADMIN), "oracleAdmin is not the default admin"
+        );
+        assertFalse(central.hasRole(central.ORACLE_ADMIN_ROLE(), ST0X_ADMIN), "admin does not hold the oracle role");
         assertEq(Ownable(address(oracleBSD.iST0xPriceOracleBeacon())).owner(), BEACON_OWNER, "st0x price beacon owner");
         assertEq(
             Ownable(address(adapterBSD.iMorphoPairAdapterBeacon())).owner(), BEACON_OWNER, "morpho adapter beacon owner"
@@ -170,6 +225,16 @@ contract DeployTest is Test {
         vm.expectRevert("BEACON_INITIAL_OWNER must not be the deploy key");
         deploy.run();
 
+        // The guard sits BEFORE the suite dispatch, so the owner is what fails
+        // — not the suite. With the SAME bad owner and a suite string matching
+        // no arm, the beacon-owner message still comes back rather than
+        // "Unknown deployment suite". Ordering is the point: a guard pushed
+        // down into the known-suite arms would leave every later arm unguarded
+        // by default, and the guard would stop being a property of `run()`.
+        vm.setEnv("DEPLOYMENT_SUITE", "bogus-suite");
+        vm.expectRevert("BEACON_INITIAL_OWNER must not be the deploy key");
+        deploy.run();
+
         // Owner now distinct, so the guard passes and we reach the dispatch.
         vm.setEnv("BEACON_INITIAL_OWNER", vm.toString(BEACON_OWNER));
 
@@ -185,17 +250,37 @@ contract DeployTest is Test {
         // `Deployment` log; the DIA suite mints no proxies at all, so ZERO. If
         // the two arms are swapped (or either arm calls the other helper), the
         // counts flip and both assertions below fail.
+        //
+        // Each arm must also run its deployment INSIDE
+        // `vm.startBroadcast(deploymentKey)` / `vm.stopBroadcast()`, which is
+        // what makes DEPLOYMENT_KEY — not the script contract — the on-chain
+        // sender of every creation, and therefore what makes the addresses
+        // reproducible from that key's nonce. Observable here as the deploy
+        // key's nonce: the signed-price arm broadcasts FOUR top-level actions
+        // (implementation, beacon-set deployer, the `newST0xPriceOracle` mint,
+        // adapter beacon-set deployer). An unbroadcast arm would leave the
+        // deploy key untouched and attribute the deployment to the script.
         vm.setEnv("DEPLOYMENT_SUITE", "signed-price-stack");
+        uint64 nonceBeforeSignedPrice = vm.getNonce(deployer);
         vm.recordLogs();
         deploy.run();
         assertEq(_countDeploymentLogs(), 1, "signed-price suite mints exactly the central store");
+        assertEq(
+            vm.getNonce(deployer),
+            nonceBeforeSignedPrice + 4,
+            "signed-price suite broadcasts every action from the deploy key"
+        );
 
         // Dispatch: "dia-vault-oracle" routes to `deployDIAStackInfra`, which
         // deploys infra ONLY — no per-vault proxy is minted, so no `Deployment`.
+        // The DIA arm broadcasts TWO creations from the deploy key — the
+        // implementation and its beacon-set deployer — for the same reason.
         vm.setEnv("DEPLOYMENT_SUITE", "dia-vault-oracle");
+        uint64 nonceBeforeDIA = vm.getNonce(deployer);
         vm.recordLogs();
         deploy.run();
         assertEq(_countDeploymentLogs(), 0, "dia suite mints no proxies");
+        assertEq(vm.getNonce(deployer), nonceBeforeDIA + 2, "dia suite broadcasts both creations from the deploy key");
 
         // Fall-through: an unrecognised suite hits the explicit
         // `revert("Unknown deployment suite")`. Pins the fall-through so a
@@ -203,6 +288,40 @@ contract DeployTest is Test {
         vm.setEnv("DEPLOYMENT_SUITE", "bogus-suite");
         vm.expectRevert("Unknown deployment suite");
         deploy.run();
+
+        // ----- run(): the process env vars are required, no defaults -----
+        // DEPLOYMENT_KEY and BEACON_INITIAL_OWNER are both read with ABORTING
+        // accessors, so a value the parser rejects (an absent var, a
+        // fat-fingered one, an empty CI secret) fails the deploy loudly. A
+        // defaulting read would instead sail through to a SUCCESSFUL deploy
+        // under whatever the default happened to be — beacons owned by nobody
+        // who was asked for, broadcast from a key nobody chose. Proven against
+        // a valid suite and an otherwise-complete env, so the only thing
+        // standing between each call and a completed deploy is that one env
+        // read. The abort names the failing cheatcode and var, so it can never
+        // be confused with one of the script's own `require`s.
+        vm.setEnv("DEPLOYMENT_SUITE", "dia-vault-oracle");
+        vm.setEnv("BEACON_INITIAL_OWNER", "");
+        try deploy.run() {
+            fail("BEACON_INITIAL_OWNER must be required, not defaulted");
+        } catch (bytes memory err) {
+            assertTrue(
+                _contains(_cheatcodeErrorMessage(err), "vm.envAddress: failed parsing $BEACON_INITIAL_OWNER"),
+                "abort names the BEACON_INITIAL_OWNER env read"
+            );
+        }
+        vm.setEnv("BEACON_INITIAL_OWNER", vm.toString(BEACON_OWNER));
+
+        vm.setEnv("DEPLOYMENT_KEY", "");
+        try deploy.run() {
+            fail("DEPLOYMENT_KEY must be required, not defaulted");
+        } catch (bytes memory err) {
+            assertTrue(
+                _contains(_cheatcodeErrorMessage(err), "vm.envUint: failed parsing $DEPLOYMENT_KEY"),
+                "abort names the DEPLOYMENT_KEY env read"
+            );
+        }
+        vm.setEnv("DEPLOYMENT_KEY", vm.toString(deployKey));
 
         // ----- run() forwards the REAL deploy key to the guards (#267) -----
         // `run()` derives `deployer` from DEPLOYMENT_KEY and hands it to
