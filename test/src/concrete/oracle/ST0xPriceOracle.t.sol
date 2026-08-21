@@ -98,6 +98,31 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertEq(oracle.signer(), rotated, "oracle admin rotates config at once");
     }
 
+    /// @notice `initialize` never calls `_setRoleAdmin`, so `ORACLE_ADMIN_ROLE`
+    /// is administered by the AccessControl DEFAULT — `DEFAULT_ADMIN_ROLE`.
+    /// That is the whole authority `admin` holds ("role administration only"),
+    /// and it is what makes recovery from a lost oracle-admin key possible
+    /// without a redeploy. Self-administration (or any stricter admin) would
+    /// strand the role the moment its only holder is lost.
+    function test_Initialize_OracleAdminRoleIsAdministeredByDefaultAdmin() public {
+        assertEq(
+            oracle.getRoleAdmin(oracle.ORACLE_ADMIN_ROLE()),
+            oracle.DEFAULT_ADMIN_ROLE(),
+            "ORACLE_ADMIN_ROLE must be administered by DEFAULT_ADMIN_ROLE"
+        );
+        assertEq(oracle.DEFAULT_ADMIN_ROLE(), bytes32(0), "DEFAULT_ADMIN_ROLE is the zero role");
+
+        // And that admin authority is real: DEFAULT_ADMIN can grant
+        // ORACLE_ADMIN_ROLE to a fresh holder, who can then rotate the signer.
+        bytes32 oracleAdminRole = oracle.ORACLE_ADMIN_ROLE();
+        vm.prank(ADMIN);
+        oracle.grantRole(oracleAdminRole, RANDO);
+        address rotated = vm.addr(uint256(keccak256("granted-oracle-admin")));
+        vm.prank(RANDO);
+        oracle.setSigner(rotated);
+        assertEq(oracle.signer(), rotated, "newly granted oracle admin can rotate the signer");
+    }
+
     function test_Initialize_ZeroAdmin_Reverts() public {
         ST0xPriceOracle impl = new ST0xPriceOracle();
         UpgradeableBeacon b = new UpgradeableBeacon(address(impl), ADMIN);
@@ -581,6 +606,100 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, 0, abi.encodePacked(wr, ws, wv));
     }
 
+    /// @notice Signature-before-content for the validity-window cap: a payload
+    /// whose window exceeds `MAX_VALIDITY_WINDOW` and carries a WRONG-key
+    /// signature reverts `PriceUpdateInvalidSignature`, NOT
+    /// `ValidityWindowTooLong`. The window-cap selector names the payload's
+    /// timestamp and expiry, so leaking it for an unauthenticated payload would
+    /// both misreport an unsigned probe as a publisher-pipeline scale fault and
+    /// echo attacker-chosen values back through operator monitoring.
+    function test_UpdatePrice_WronglySignedOverlongWindow_RevertsInvalidSignatureNotWindowTooLong() public {
+        uint256 wrongPk = uint256(keccak256("wrong-signer"));
+        uint256 ts = block.timestamp;
+        uint256 tooLong = ts + oracle.MAX_VALIDITY_WINDOW() + 1;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 42e18, ts, tooLong));
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, 0, abi.encodePacked(r, s, v));
+
+        // Positive control: the SAME payload signed by the real publisher does
+        // reach the cap check, so the revert above is the ordering and not the
+        // window being within range.
+        bytes memory signed = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, tooLong);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.ValidityWindowTooLong.selector, PAIR_A, ts, tooLong));
+        oracle.updatePrice(PAIR_A, 42e18, ts, tooLong, 0, signed);
+    }
+
+    /// @notice Signature-before-content for the zero-price guard: a
+    /// zero-priced payload with a WRONG-key signature reverts
+    /// `PriceUpdateInvalidSignature`, NOT `PriceZero`. `PriceZero` is an
+    /// operator-facing signal that the publisher's own pipeline emitted its
+    /// uninitialized default; an unauthenticated caller must not be able to
+    /// raise it.
+    function test_UpdatePrice_WronglySignedZeroPrice_RevertsInvalidSignatureNotPriceZero() public {
+        uint256 wrongPk = uint256(keccak256("wrong-signer"));
+        uint256 ts = block.timestamp;
+        uint256 expiry = ts + DEFAULT_VALIDITY;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digestFor(oracle, PAIR_A, 0, ts, expiry));
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceUpdateInvalidSignature.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, ts, expiry, 0, abi.encodePacked(r, s, v));
+
+        // Positive control: correctly signed, the same zero price reaches the
+        // content check.
+        bytes memory signed = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, ts, expiry);
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceZero.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, ts, expiry, 0, signed);
+    }
+
+    /// @notice The four content checks run in the documented order —
+    /// `PriceFuture`, then `PriceExpired`, then `ValidityWindowTooLong`, then
+    /// `PriceZero` — so a payload violating several reports the FIRST. Two
+    /// things ride on this. A publisher debugging a rejected payload fixes one
+    /// field at a time and expects the next error to advance; and the
+    /// window-cap subtraction `newExpiry - newTimestamp` is only underflow-free
+    /// BECAUSE the future and expiry checks have already established
+    /// `newTimestamp <= block.timestamp < newExpiry` — hoisting it above them
+    /// would turn a backwards window into an undisambiguable arithmetic panic.
+    ///
+    /// Walks the whole ladder, each step repairing exactly the field the
+    /// previous step named.
+    function test_UpdatePrice_ContentChecksRunInDocumentedOrder() public {
+        vm.warp(block.timestamp + 1 days);
+
+        // Every payload is signed by the real publisher, so what each step
+        // observes is the content-check order and nothing else. Signatures are
+        // produced up front because signing reads the oracle.
+        uint256 futureTs = block.timestamp + 1 hours;
+        uint256 deadExpiry = block.timestamp - 1;
+        uint256 ts = block.timestamp;
+        uint256 tooLong = ts + oracle.MAX_VALIDITY_WINDOW() + 1;
+        uint256 expiry = ts + DEFAULT_VALIDITY;
+        bytes memory futureSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, futureTs, deadExpiry);
+        bytes memory expiredSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, ts, deadExpiry);
+        bytes memory windowSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, ts, tooLong);
+        bytes memory zeroSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 0, ts, expiry);
+        bytes memory goodSig = signPriceUpdate(oracle, SIGNER_PK, PAIR_A, 42e18, ts, expiry);
+
+        // Future-dated AND already expired AND zero-priced: the future check
+        // is the one that speaks.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceFuture.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, futureTs, deadExpiry, 0, futureSig);
+
+        // Timestamp repaired; the closed window is next.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, ts, deadExpiry, 0, expiredSig);
+
+        // Expiry repaired (live) but mis-scaled; the cap is next.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.ValidityWindowTooLong.selector, PAIR_A, ts, tooLong));
+        oracle.updatePrice(PAIR_A, 0, ts, tooLong, 0, windowSig);
+
+        // Window repaired; the zero price is last.
+        vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceZero.selector, PAIR_A));
+        oracle.updatePrice(PAIR_A, 0, ts, expiry, 0, zeroSig);
+
+        // Everything repaired: it applies.
+        assertTrue(oracle.updatePrice(PAIR_A, 42e18, ts, expiry, 0, goodSig), "the repaired payload applies");
+    }
+
     /// @notice The boundary: a payload timestamped at EXACTLY block.timestamp
     /// is not in the future and applies. (`newTimestamp <= block.timestamp`
     /// is the accepted region.)
@@ -760,6 +879,24 @@ contract ST0xPriceOracleTest is SignedPriceTestBase {
         assertEq(deadRatio, 1.05e18, "expired pair still reads its stored ratio");
         vm.expectRevert(abi.encodeWithSelector(ST0xPriceOracle.PriceExpired.selector, PAIR_A));
         oracle.price(PAIR_A);
+    }
+
+    /// @notice DELIBERATE ASYMMETRY against `price()`: the RAW view returns
+    /// all four fields as ZEROS for a pair no update has ever landed on,
+    /// rather than reverting `PriceUnset`. `pairPrice` exists for publishers
+    /// sizing their next timestamp and for off-chain monitoring — both of
+    /// which must be able to ask about a brand-new pair (there is no
+    /// registration step) without handling a revert. The zeros are safe under
+    /// the documented consumer rule: a consumer applying
+    /// `block.timestamp < storedExpiry` fails closed on a zero expiry, and a
+    /// zero `storedTimestamp` is itself the "never updated" signal.
+    function test_PairPrice_UnsetPair_ReturnsZerosNotRevert() public view {
+        (uint256 storedPrice, uint256 storedTs, uint256 storedExpiry, uint256 storedRatio) =
+            oracle.pairPrice(PAIR_UNKNOWN);
+        assertEq(storedPrice, 0, "unset price reads zero");
+        assertEq(storedTs, 0, "unset timestamp reads zero");
+        assertEq(storedExpiry, 0, "unset expiry reads zero");
+        assertEq(storedRatio, 0, "unset ratio reads zero");
     }
 
     // -------- setSigner --------
