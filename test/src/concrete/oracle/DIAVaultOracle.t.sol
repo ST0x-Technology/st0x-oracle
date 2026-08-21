@@ -619,6 +619,32 @@ contract DIAVaultOracleTest is Test {
         assertEq(oracle.latestAnswer(), 100e8, "action outside the configured mask must not pause");
     }
 
+    /// @notice The configured `actionTypeMask` is stored EXACTLY as supplied,
+    /// including bits the pause library later ignores. `ACTION_TYPE_INIT_V1` is
+    /// stripped when the library evaluates a MATCH (the bootstrap node is not a
+    /// real action), but that stripping belongs to the match, not to the stored
+    /// config: the getter and the `DIAVaultOracleInitialized` event are the two
+    /// records an integrator reconciles against each other, and a mask
+    /// normalised on the way into storage would make them disagree while the
+    /// pause behaviour looked unchanged. The default config's split-only mask
+    /// carries no INIT bit, so no other test can see this.
+    function testActionTypeMaskStoredVerbatimIncludingInitBit() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1 | ACTION_TYPE_INIT_V1;
+        DIAVaultOracle oracle = _deployProxy(config);
+        assertEq(
+            oracle.actionTypeMask(),
+            ACTION_TYPE_STOCK_SPLIT_V1 | ACTION_TYPE_INIT_V1,
+            "every configured mask bit must survive into storage"
+        );
+
+        // The wildcard mask — the documented "every present and future action
+        // type" setting — is likewise stored whole, INIT bit included.
+        DIAVaultOracleConfig memory wildcard = _defaultConfig();
+        wildcard.actionTypeMask = type(uint256).max;
+        assertEq(_deployProxy(wildcard).actionTypeMask(), type(uint256).max, "the wildcard mask must be stored whole");
+    }
+
     // -------- Typed overload reverts --------
 
     function testTypedInitializeAlwaysReverts() external {
