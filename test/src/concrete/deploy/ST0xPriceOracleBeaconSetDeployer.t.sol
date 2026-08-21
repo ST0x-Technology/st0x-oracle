@@ -62,6 +62,19 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         );
     }
 
+    /// @notice Both config fields zero: the implementation check runs FIRST, so
+    /// the reported error is `ZeroImplementation` and the owner check is never
+    /// reached. Matches the sibling DIA beacon-set deployer, so a misconfigured
+    /// deploy always names the implementation slot first across the family.
+    function testConstructorReportsZeroImplementationBeforeZeroBeaconOwner() external {
+        vm.expectRevert(ZeroImplementation.selector);
+        new ST0xPriceOracleBeaconSetDeployer(
+            ST0xPriceOracleBeaconSetDeployerConfig({
+                initialOwner: address(0), initialST0xPriceOracleImplementation: address(0)
+            })
+        );
+    }
+
     function testConstructorHappyPathDeploysBeacon() external {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
         address beacon = address(bsd.iST0xPriceOracleBeacon());
@@ -154,6 +167,27 @@ contract ST0xPriceOracleBeaconSetDeployerTest is Test {
         ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
         vm.expectRevert(ST0xPriceOracle.ZeroSigner.selector);
         bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, address(0));
+    }
+
+    /// @notice `admin` and `oracleAdmin` are equally non-optional. A zero in
+    /// EITHER slot bubbles `ZeroAdmin` out of the proxy constructor, so the
+    /// deployer can never mint an oracle whose `DEFAULT_ADMIN_ROLE` or
+    /// `ORACLE_ADMIN_ROLE` is unassigned — the deployer must not substitute a
+    /// default (e.g. the caller) for a missing admin.
+    function testNewST0xPriceOraclePropagatesInitRevertZeroAdmin() external {
+        ST0xPriceOracleBeaconSetDeployer bsd = _deployBSD();
+
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        bsd.newST0xPriceOracle(address(0), ORACLE_ADMIN, SIGNER);
+
+        vm.expectRevert(ST0xPriceOracle.ZeroAdmin.selector);
+        bsd.newST0xPriceOracle(ADMIN, address(0), SIGNER);
+
+        // Neither reverted mint left an instance behind — a well-formed mint
+        // still lands, and it holds the roles the caller actually asked for.
+        ST0xPriceOracle oracle = bsd.newST0xPriceOracle(ADMIN, ORACLE_ADMIN, SIGNER);
+        assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), ADMIN), "admin has default admin role");
+        assertFalse(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), address(this)), "caller is not a default admin");
     }
 
     /// @notice The beacon is genuinely SHARED: deploy two singletons with

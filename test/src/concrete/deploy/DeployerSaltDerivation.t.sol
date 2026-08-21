@@ -49,6 +49,13 @@ contract DeployerSaltDerivationTest is Test {
     /// @notice Morpho salt MUST be keccak256(abi.encode(base, quote)). If the
     /// deployer drops `quote` (or otherwise changes the salt args), the deployed
     /// address will not match this independent prediction.
+    ///
+    /// The salt is also ORDER-SENSITIVE: `(base, quote)` and `(quote, base)` are
+    /// different markets (the rescale exponent inverts) and must therefore hash
+    /// to different salts. A salt that canonicalised the pair — sorting the two
+    /// addresses, say — would put one of the two mints at an address that is not
+    /// a commitment to its own argument order, so both orders are predicted
+    /// independently here.
     function testMorphoSaltIsKeccakBaseQuote() external {
         ST0xPriceOracle central;
         {
@@ -77,6 +84,20 @@ contract DeployerSaltDerivationTest is Test {
 
         MorphoPairAdapter adapter = bsd.newMorphoPairAdapter(address(base), address(quote));
         assertEq(address(adapter), predicted, "Morpho proxy must land at keccak256(base,quote) CREATE2 address");
+
+        // The same two tokens in the reversed roles is a DIFFERENT market and
+        // must land at keccak256(quote,base) — its own independent commitment.
+        address predictedReversed = _predict(
+            address(bsd),
+            keccak256(abi.encode(address(quote), address(base))),
+            address(bsd.iMorphoPairAdapterBeacon()),
+            abi.encodeCall(MorphoPairAdapter.initialize, (address(quote), address(base)))
+        );
+        MorphoPairAdapter reversed = bsd.newMorphoPairAdapter(address(quote), address(base));
+        assertEq(
+            address(reversed), predictedReversed, "reversed pair must land at keccak256(quote,base) CREATE2 address"
+        );
+        assertTrue(address(reversed) != address(adapter), "reversed pair is a distinct adapter");
     }
 
     /// @notice ST0x salt MUST be keccak256(abi.encode(admin, oracleAdmin,
