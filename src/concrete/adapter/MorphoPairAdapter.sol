@@ -46,6 +46,17 @@ error RatioMismatch(uint256 storedRatio, uint256 liveRatio);
 /// @param storedRatio The ratio the central price was computed against.
 error UnverifiableRatio(address baseToken, uint256 storedRatio);
 
+/// @dev The collateral token probes as a live wt-vault but the stored central
+/// price carries the zero "no ratio" sentinel. A real NAV ratio is never
+/// zero, so a vault-collateral price without the ratio it was computed
+/// against is not a price — the sentinel is only for markets whose collateral
+/// is not a vault at all. The read fails closed until the publisher signs a
+/// ratio-carrying update; while it does, this market's pricing (health checks
+/// and liquidations alike) freezes, exactly as in the `RatioMismatch` case.
+/// @param baseToken The vault collateral whose price arrived without a ratio.
+/// @param liveRatio The vault's current `convertToAssets(NAV_RATIO_SHARES)`.
+error NavRatioMissing(address baseToken, uint256 liveRatio);
+
 /// @title MorphoPairAdapter
 /// @notice Beacon-proxied adapter binding one Morpho Blue market to one pair
 /// on the central `ST0xPriceOracle`, converting the central store's
@@ -81,15 +92,31 @@ error UnverifiableRatio(address baseToken, uint256 storedRatio);
 /// # The NAV-ratio gate
 ///
 /// The central store serves each price atomically with the vault NAV ratio
-/// it was computed against. When that ratio is non-zero the collateral token
-/// is a wt-vault, and `price()` asserts the vault's live
-/// `convertToAssets(NAV_RATIO_SHARES)` still EXACTLY equals the stored ratio
-/// before serving anything — a price whose ratio has drifted is no price,
-/// and Morpho has no way to consume a "slightly stale" one, so the read
-/// fails closed (see `price()` for the full posture, including the intended
-/// pricing freeze between a vault distribution and the publisher's next
-/// update). A zero stored ratio is the store's "no ratio" sentinel and skips
-/// the gate.
+/// it was computed against, ZERO being its "no ratio" sentinel. The store is
+/// an opaque carrier — it only sees pairIds and cannot know whether a pair's
+/// base is a vault — but this adapter CAN know: it holds the collateral
+/// token address. Every `price()` read therefore starts by probing
+/// `convertToAssets(NAV_RATIO_SHARES)` on the collateral to classify the
+/// market (one extra staticcall per read, paid deliberately so the gate is
+/// symmetric), then applies the full truth table:
+///
+///  - vault collateral, non-zero stored ratio → the live probe must EXACTLY
+///    equal the stored ratio (`RatioMismatch` otherwise);
+///  - vault collateral, ZERO stored ratio → `NavRatioMissing` — a real NAV
+///    ratio is never zero, so a vault price without its ratio is not a
+///    price;
+///  - non-vault collateral (probe fails), zero ratio → genuinely ratio-less
+///    market, priced normally;
+///  - non-vault collateral, non-zero ratio → `UnverifiableRatio` — the
+///    adapter never serves a price whose ratio it cannot verify.
+///
+/// Both revert quadrants freeze this market's pricing — health checks AND
+/// liquidations — until the publisher's next well-formed update: across a
+/// vault distribution (mismatch), or for as long as a vault market's
+/// publisher omits the ratio (missing). Intended fail-closed windows, not
+/// outages: Morpho has no way to consume a price the publisher priced
+/// against a NAV that no longer exists, or a vault price whose NAV binding
+/// was never published.
 ///
 /// Every market's adapter is a `BeaconProxy` over one shared
 /// `UpgradeableBeacon`, so a single beacon upgrade retargets all deployed
@@ -202,21 +229,21 @@ contract MorphoPairAdapter is Initializable, IOracle {
     /// Morpho Blue's `1e36 * 10^loanDec / 10^collDec` convention.
     /// @dev THE RATIO GATES THE PRICE. A price is only valid against the NAV
     /// ratio it was computed at; Morpho has no notion of "use it anyway,
-    /// slightly stale", so a stored ratio that no longer matches the live
-    /// vault means there is NO valid price and the only correct behaviour is
-    /// to revert. When the stored ratio is non-zero, the collateral token is
-    /// the wt-vault whose NAV the publisher priced against: the adapter
-    /// probes its live `convertToAssets(NAV_RATIO_SHARES)` and requires EXACT
-    /// equality (`RatioMismatch` otherwise). The ratio is piecewise-constant
-    /// — it steps only at vault distributions — so exact matching rejects
-    /// nothing in normal operation; from a distribution until the publisher's
-    /// next update this market's pricing (health checks AND liquidations)
-    /// reverts, which is the intended fail-closed window, not an outage. A
-    /// collateral token that cannot be probed for a live ratio while the
-    /// store carries a non-zero one fails closed too (`UnverifiableRatio`) —
-    /// the adapter never serves a price whose ratio it cannot verify. A ZERO
-    /// stored ratio is the store's "no ratio" sentinel (non-vault collateral):
-    /// no assertion is performed.
+    /// slightly stale", so the only correct behaviour outside the two valid
+    /// quadrants is to revert. The read first CLASSIFIES the collateral by
+    /// probing its live `convertToAssets(NAV_RATIO_SHARES)` — on EVERY read,
+    /// including the zero-ratio path, one extra staticcall paid deliberately
+    /// so vault-ness is established before the sentinel is trusted — then
+    /// applies the truth table (see the contract NatSpec, "The NAV-ratio
+    /// gate"): a probed vault requires a non-zero stored ratio
+    /// (`NavRatioMissing`) that EXACTLY equals the live one
+    /// (`RatioMismatch`); a non-vault collateral requires the zero sentinel
+    /// (`UnverifiableRatio` otherwise). The ratio is piecewise-constant — it
+    /// steps only at vault distributions — so exact matching rejects nothing
+    /// in normal operation; from a distribution (or a publisher omitting the
+    /// ratio on a vault market) until the next well-formed update this
+    /// market's pricing (health checks AND liquidations) reverts, which is
+    /// the intended fail-closed window, not an outage.
     /// @dev `Math.mulDiv` floors (rounds DOWN). This is deliberate and MUST NOT
     /// change: the result is the Morpho *collateral* price, and under-stating
     /// collateral is the conservative direction (less borrowing power, earlier
@@ -228,17 +255,19 @@ contract MorphoPairAdapter is Initializable, IOracle {
     function price() external view returns (uint256) {
         MainStorage storage $ = _main();
         (uint256 central, uint256 ratio) = iCentral.price($.pairId);
-        if (ratio != 0) {
-            address base = $.baseToken;
-            // Low-level staticcall rather than a typed call so EVERY probe
-            // failure — no code at the token, a reverting implementation, or
-            // malformed return data — lands in the same descriptive
-            // fail-closed revert instead of bubbling an opaque one.
-            // slither-disable-next-line low-level-calls
-            (bool ok, bytes memory data) = base.staticcall(abi.encodeCall(IERC4626.convertToAssets, (NAV_RATIO_SHARES)));
-            if (!ok || data.length != 32) revert UnverifiableRatio(base, ratio);
+        address base = $.baseToken;
+        // Low-level staticcall rather than a typed call so every probe
+        // failure — no code at the token, a reverting implementation, or
+        // malformed return data — uniformly classifies the collateral as
+        // not-a-vault instead of bubbling an opaque revert.
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory data) = base.staticcall(abi.encodeCall(IERC4626.convertToAssets, (NAV_RATIO_SHARES)));
+        if (ok && data.length == 32) {
             uint256 liveRatio = abi.decode(data, (uint256));
+            if (ratio == 0) revert NavRatioMissing(base, liveRatio);
             if (liveRatio != ratio) revert RatioMismatch(ratio, liveRatio);
+        } else if (ratio != 0) {
+            revert UnverifiableRatio(base, ratio);
         }
         uint256 scaled = Math.mulDiv(central, $.scaleNumerator, $.scaleDenominator);
         if (scaled == 0) revert PriceRoundsToZero(central);
