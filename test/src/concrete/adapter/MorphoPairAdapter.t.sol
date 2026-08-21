@@ -25,6 +25,8 @@ import {MorphoPairAdapterV2} from "../../../mocks/MorphoPairAdapterV2.sol";
 import {MockERC20Decimals} from "../../../mocks/MockERC20Decimals.sol";
 import {MockNavVaultToken} from "../../../mocks/MockNavVaultToken.sol";
 import {MockRevertingNavVaultToken} from "../../../mocks/MockRevertingNavVaultToken.sol";
+import {MockWordRevertingNavVaultToken} from "../../../mocks/MockWordRevertingNavVaultToken.sol";
+import {MockMalformedNavVaultToken} from "../../../mocks/MockMalformedNavVaultToken.sol";
 
 /// @title MorphoPairAdapterTest
 /// @notice Unit coverage for the `MorphoPairAdapter` beacon-proxied adapter:
@@ -121,6 +123,16 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
     function test_MorphoPairAdapter_IdenticalTokens_Reverts() public {
         vm.expectRevert(IdenticalTokens.selector);
         _deployAdapter(address(base), address(base));
+    }
+
+    /// @notice A zero base that is ALSO equal to a zero quote satisfies both
+    /// init guards at once. The zero-address guard is the one that reports, so
+    /// the operator is told the tokens are unset — the actionable fault —
+    /// rather than that the two unset tokens are "identical". Pins the guard
+    /// order the `initialize` NatSpec states.
+    function test_MorphoPairAdapter_BothTokensZero_ReportsZeroToken() public {
+        vm.expectRevert(ZeroToken.selector);
+        _deployAdapter(address(0), address(0));
     }
 
     /// @notice Fail-closed at init: a quote (loan) token with absurdly large
@@ -375,6 +387,46 @@ contract MorphoPairAdapterTest is SignedPriceTestBase {
         MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
         bytes32 id = oracle.pairId(address(vaultBase), address(quote));
         _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+        vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(vaultBase), uint256(1.05e18)));
+        adapter.price();
+    }
+
+    /// @notice A probe that REVERTS while leaving exactly one 32-byte word in
+    /// returndata — the shape of a successful `convertToAssets` — is still an
+    /// unverifiable probe. The call's success flag decides, not the shape of
+    /// what came back: here the reverted word is the stored ratio itself, so
+    /// reading it as data would produce a "matching" ratio out of a call that
+    /// never succeeded and serve a price against a NAV the vault never
+    /// reported. Fails closed with `UnverifiableRatio` instead.
+    function test_MorphoPairAdapter_ProbeRevertsWithWordSizedData_FailsClosed() public {
+        MockWordRevertingNavVaultToken vaultBase = new MockWordRevertingNavVaultToken();
+        vaultBase.setRevertWord(1.05e18);
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+
+        vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(vaultBase), uint256(1.05e18)));
+        adapter.price();
+    }
+
+    /// @notice A probe that SUCCEEDS but does not return the single 32-byte
+    /// word ERC-4626 mandates carries no ratio the adapter can verify, so it
+    /// fails closed too. Both malformations are covered: an empty return (the
+    /// call reports success while saying nothing) and an over-long return
+    /// whose leading word happens to equal the stored ratio (so a decode that
+    /// ignored the length would serve a price on the strength of returndata no
+    /// conforming vault produces).
+    function test_MorphoPairAdapter_ProbeReturnsMalformedData_FailsClosed() public {
+        MockMalformedNavVaultToken vaultBase = new MockMalformedNavVaultToken();
+        MorphoPairAdapter adapter = _deployAdapter(address(vaultBase), address(quote));
+        bytes32 id = oracle.pairId(address(vaultBase), address(quote));
+        _push(id, 42e18, block.timestamp, block.timestamp + DEFAULT_VALIDITY, 1.05e18);
+
+        vaultBase.setProbeReturn(0, 0);
+        vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(vaultBase), uint256(1.05e18)));
+        adapter.price();
+
+        vaultBase.setProbeReturn(64, 1.05e18);
         vm.expectRevert(abi.encodeWithSelector(UnverifiableRatio.selector, address(vaultBase), uint256(1.05e18)));
         adapter.price();
     }
