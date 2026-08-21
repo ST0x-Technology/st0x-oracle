@@ -36,7 +36,12 @@ import {
 } from "../../../mocks/MockRevertingCorporateActions.sol";
 import {CorporateActionsListHarness} from "../../../mocks/CorporateActionsListHarness.sol";
 import {TestERC1967Proxy} from "../../../mocks/TestERC1967Proxy.sol";
-import {ACTION_TYPE_STOCK_SPLIT_V1, ACTION_TYPE_INIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {
+    ICorporateActionsV1,
+    ACTION_TYPE_STOCK_SPLIT_V1,
+    ACTION_TYPE_INIT_V1
+} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {CompletionFilter} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 import {InvalidMask} from "st0x-deploy-0.1.1/src/error/ErrCorporateAction.sol";
 import {FixedDecimalOverflow} from "rain-math-float-0.1.1/src/error/ErrDecimalFloat.sol";
 
@@ -102,6 +107,24 @@ contract DIAVaultOracleTest is Test {
         MockERC4626 vaultNoAsset = new MockERC4626(); // asset() defaults to 0
         DIAVaultOracleConfig memory config = _defaultConfig();
         config.vault = address(vaultNoAsset);
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectRevert(ZeroCorporateActionsVault.selector);
+        oracle.initialize(abi.encode(config));
+    }
+
+    /// @notice The derived corporate-actions vault is checked BEFORE the
+    /// pause-config validation, so a config broken in BOTH ways — a vault
+    /// whose `asset()` is zero AND a pause config that is incoherent on every
+    /// count — reports the VAULT error. That is the root cause: the auto-pause
+    /// is wired to nothing, and an operator who "fixed" the mask and the
+    /// windows first would still be left with a silently disabled auto-pause.
+    function testInitReportsZeroCorporateActionsVaultBeforePauseConfig() external {
+        MockERC4626 vaultNoAsset = new MockERC4626(); // asset() defaults to 0
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.vault = address(vaultNoAsset);
+        config.actionTypeMask = 0;
+        config.pauseTimeBefore = 0;
+        config.pauseTimeAfter = 0;
         DIAVaultOracle oracle = _deployUninit();
         vm.expectRevert(ZeroCorporateActionsVault.selector);
         oracle.initialize(abi.encode(config));
@@ -329,6 +352,40 @@ contract DIAVaultOracleTest is Test {
         assertEq(ok.initialize(abi.encode(config)), ICLONEABLE_V2_SUCCESS, "valid mask must initialize");
     }
 
+    /// @notice The init probe hands each configured window to the side it
+    /// governs — `pauseTimeBefore` sizes the PENDING (pre-action) query,
+    /// `pauseTimeAfter` the COMPLETED (post-action) one. With a matching
+    /// pending action already inside the pre-window the probe is answered from
+    /// the pending side alone and the completed side is never consulted. A
+    /// probe that handed the windows over in the wrong order would size the
+    /// pre-window by the (much shorter) `pauseTimeAfter`, miss the pending
+    /// action and fall through to the completed query. The two windows are
+    /// deliberately far apart here so they are not interchangeable.
+    function testInitProbeAppliesPreWindowToThePendingSide() external {
+        DIAVaultOracleConfig memory config = _defaultConfig();
+        config.maxAge = 1;
+        config.pauseTimeBefore = 1 hours;
+        // The tightest post-window the cross-epoch invariant allows.
+        config.pauseTimeAfter = 2;
+        // Pending split ten seconds out: inside the 1h pre-window, far outside
+        // the 2s post-window.
+        actions.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + 10));
+
+        DIAVaultOracle oracle = _deployUninit();
+        vm.expectCall(
+            address(actions),
+            abi.encodeCall(
+                ICorporateActionsV1.latestActionOfType, (ACTION_TYPE_STOCK_SPLIT_V1, CompletionFilter.COMPLETED)
+            ),
+            0
+        );
+        assertEq(
+            oracle.initialize(abi.encode(config)),
+            ICLONEABLE_V2_SUCCESS,
+            "probe must resolve from the pending side alone"
+        );
+    }
+
     /// @notice Config fields are validated in DECLARATION order, so the FIRST
     /// offending field is the one reported. An integrator debugging a bad
     /// deploy config fixes one field at a time and expects the next error to
@@ -366,6 +423,29 @@ contract DIAVaultOracleTest is Test {
         config.pauseTimeAfter = 0;
         vm.expectRevert(InvalidPauseConfig.selector);
         oracle.initialize(abi.encode(config));
+
+        // The mask-coherence check leads the whole pause ladder, not just the
+        // relative invariant: with the mask incoherent AND the mandatory
+        // pre-window zero it is still `InvalidPauseConfig` that surfaces. An
+        // incoherent mask means the auto-pause never fires at all, so it must
+        // be named before any question of how long the windows are.
+        config.pauseTimeBefore = 0;
+        vm.expectRevert(InvalidPauseConfig.selector);
+        oracle.initialize(abi.encode(config));
+
+        // With the mask coherent the mandatory pre-window speaks next, ahead
+        // of the absolute window caps and the cross-epoch invariant.
+        config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
+        vm.expectRevert(ZeroPauseTimeBefore.selector);
+        oracle.initialize(abi.encode(config));
+
+        // Then the absolute pre-window cap, naming the offending value, still
+        // ahead of the relative invariant that the same config also violates.
+        config.pauseTimeBefore = uint64(30 days) + 1;
+        vm.expectRevert(abi.encodeWithSelector(PauseWindowTooLarge.selector, uint64(30 days) + 1));
+        oracle.initialize(abi.encode(config));
+
+        config.pauseTimeBefore = PAUSE_BEFORE;
 
         // ...and once the mask is coherent, the invariant check speaks.
         config.actionTypeMask = ACTION_TYPE_STOCK_SPLIT_V1;
@@ -663,6 +743,22 @@ contract DIAVaultOracleTest is Test {
         assertEq(oracle.decimals(), 8);
         assertEq(oracle.description(), SYMBOL);
         assertEq(oracle.version(), 1);
+    }
+
+    /// @notice The two absolute scale guards are part of the PUBLIC surface —
+    /// a deploy script or an integrator sizing a config reads them off the
+    /// contract rather than restating the numbers. Pin both the exposure and
+    /// the exact values, plus the documented relation between them:
+    /// `MAX_AGE_LIMIT` sits strictly below `MAX_PAUSE_WINDOW` so the
+    /// cross-epoch invariant (`pauseTimeAfter > maxAge`) stays satisfiable
+    /// even with `maxAge` at its cap.
+    function testScaleGuardConstantsAreExposedAndExact() external view {
+        assertEq(implementation.MAX_AGE_LIMIT(), 7 days, "MAX_AGE_LIMIT must be exactly 7 days");
+        assertEq(uint256(implementation.MAX_PAUSE_WINDOW()), 30 days, "MAX_PAUSE_WINDOW must be exactly 30 days");
+        assertTrue(
+            implementation.MAX_AGE_LIMIT() < uint256(implementation.MAX_PAUSE_WINDOW()),
+            "MAX_AGE_LIMIT must sit strictly below MAX_PAUSE_WINDOW"
+        );
     }
 
     /// @notice `description()` deliberately returns the BARE DIA feed symbol
