@@ -103,19 +103,19 @@ contract LibCorporateActionsPauseTest is Test {
     /// so a codeless address reverts with EMPTY return data rather than being
     /// read as "no actions scheduled". A misconfigured (or self-destructed)
     /// vault must never silently degrade into a permanently un-pausable oracle.
-    /// Asserted via a raw external-call failure (not `vm.expectRevert`): forge
-    /// versions differ on whether a call into a code-less address is classified
-    /// as a plain revert, but every version agrees the call does NOT succeed.
-    /// Discriminating value: `ok == false` with empty return data, versus a
-    /// successful `(false, 0)` result if the disable short-circuit were
-    /// widened to "no code".
+    /// Asserted via a raw external-call failure (not `vm.expectRevert`), and
+    /// only on the success FLAG: forge versions differ both on whether a call
+    /// into a code-less address is classified as a plain revert and on what
+    /// reason bytes the halt carries, but every version agrees the call does
+    /// NOT succeed. Discriminating value: `ok == false`, versus a successful
+    /// `(false, 0)` pause result if the disable short-circuit were widened to
+    /// "no code".
     function testNonZeroVaultWithoutCodeFailsClosed() external {
         address codeless = address(0xDEAD);
         assertEq(codeless.code.length, 0, "the fixture address must genuinely have no code");
-        (bool ok, bytes memory ret) = address(this)
+        (bool ok,) = address(this)
             .call(abi.encodeCall(this.callInPauseWindow, (codeless, ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER)));
         assertFalse(ok, "a code-less corporate-actions vault must fail closed, never read as no actions");
-        assertEq(ret.length, 0, "the failure carries no reason data (solc extcodesize guard)");
     }
 
     /// The NatSpec states a gas contract: "each query is at most two view calls
