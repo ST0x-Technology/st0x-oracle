@@ -43,7 +43,9 @@ contract DeployTest is Test {
     bytes32 internal constant DEPLOYMENT_EVENT_SIG = keccak256("Deployment(address,address)");
 
     /// @dev Selector a failed `vm.env*` read reverts with. Lets the test tell an
-    /// aborted env read apart from one of the script's own `require`s.
+    /// aborted env read apart from one of the script's own `require`s: the
+    /// env-var tests below prove the deploy aborted ON THE ENV READ rather than
+    /// somewhere deeper, without pinning the cheatcode's exact message text.
     bytes4 internal constant CHEATCODE_ERROR_SELECTOR = bytes4(keccak256("CheatcodeError(string)"));
 
     MockDIAOracle internal diaOracle;
@@ -192,11 +194,13 @@ contract DeployTest is Test {
         // The two admin env vars land on DIFFERENT roles, and each lands on the
         // role it was named for. ST0X_ADMIN holds DEFAULT_ADMIN_ROLE — the
         // role-admin that can grant ORACLE_ADMIN_ROLE, i.e. the only way back
-        // in if the oracle admin is lost — while ST0X_ORACLE_ADMIN holds the
-        // operational role. Assert the negatives too: collapsing the two env
-        // vars onto one address (or feeding the same one twice) would leave
-        // every positive assertion above green while quietly destroying the
-        // separation the deploy exists to establish.
+        // in if the oracle admin is lost, and so the way to rotate the
+        // publisher signer — while ST0X_ORACLE_ADMIN holds the operational
+        // ORACLE_ADMIN_ROLE only. Assert the negatives too: asserting the
+        // grants are DISJOINT is what catches one env var being dropped and the
+        // other passed twice. That collapses the separation the deploy exists
+        // to establish into a single key while leaving every positive
+        // role-presence assertion above green.
         assertTrue(central.hasRole(central.DEFAULT_ADMIN_ROLE(), ST0X_ADMIN), "admin granted DEFAULT_ADMIN_ROLE");
         assertFalse(
             central.hasRole(central.DEFAULT_ADMIN_ROLE(), ST0X_ORACLE_ADMIN), "oracleAdmin is not the default admin"
@@ -321,6 +325,24 @@ contract DeployTest is Test {
                 "abort names the DEPLOYMENT_KEY env read"
             );
         }
+
+        // ----- run(): DEPLOYMENT_KEY is REQUIRED, never defaulted -----
+        // The broadcast key has no default. An unset (or unparseable)
+        // DEPLOYMENT_KEY must abort the whole deploy on the env read, not fall
+        // back to some other key and ship the stack broadcast — and owned — by
+        // it. Driven through the signed-price suite, the one that MINTS, so
+        // "aborted before doing anything" is provable by the absence of the
+        // central store's `Deployment` log and not by a revert alone: a
+        // defaulting accessor would sail past the beacon-owner and
+        // key-separation guards (none of which the default key trips) and
+        // deploy the whole stack.
+        vm.setEnv("DEPLOYMENT_SUITE", "signed-price-stack");
+        vm.setEnv("DEPLOYMENT_KEY", "");
+        vm.recordLogs();
+        (bool keyRead, bytes memory keyErr) = address(deploy).call(abi.encodeWithSignature("run()"));
+        assertFalse(keyRead, "an unset DEPLOYMENT_KEY aborts the deploy");
+        assertEq(bytes4(keyErr), CHEATCODE_ERROR_SELECTOR, "aborts on the env read, not deeper in the deploy");
+        assertEq(_countDeploymentLogs(), 0, "nothing is deployed without a broadcast key");
         vm.setEnv("DEPLOYMENT_KEY", vm.toString(deployKey));
 
         // ----- run() forwards the REAL deploy key to the guards (#267) -----
