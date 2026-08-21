@@ -3,9 +3,13 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.1/src/Test.sol";
-import {NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
+import {CompletionFilter, NODE_NONE} from "st0x-deploy-0.1.1/src/lib/LibCorporateActionNode.sol";
 import {LibCorporateActionsPause} from "../../../src/lib/LibCorporateActionsPause.sol";
-import {ACTION_TYPE_INIT_V1, ACTION_TYPE_STOCK_SPLIT_V1} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
+import {
+    ICorporateActionsV1,
+    ACTION_TYPE_INIT_V1,
+    ACTION_TYPE_STOCK_SPLIT_V1
+} from "st0x-deploy-0.1.1/src/interface/ICorporateActionsV1.sol";
 import {MockCorporateActions} from "../../mocks/MockCorporateActions.sol";
 import {
     MockRevertingCorporateActions,
@@ -90,6 +94,73 @@ contract LibCorporateActionsPauseTest is Test {
         MockRevertingCorporateActions reverting = new MockRevertingCorporateActions();
         vm.expectRevert(CorporateActionsUnavailable.selector);
         this.callInPauseWindow(address(reverting), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+    }
+
+    /// A NON-ZERO vault address with no deployed code must fail CLOSED. Only
+    /// `address(0)` is the documented "auto-pause disabled" short-circuit; any
+    /// other address is asserted to implement `ICorporateActionsV1`, and a
+    /// high-level call expecting return data carries solc's extcodesize guard,
+    /// so a codeless address reverts with EMPTY return data rather than being
+    /// read as "no actions scheduled". A misconfigured (or self-destructed)
+    /// vault must never silently degrade into a permanently un-pausable oracle.
+    /// Asserted via a raw external-call failure (not `vm.expectRevert`), and
+    /// only on the success FLAG: forge versions differ both on whether a call
+    /// into a code-less address is classified as a plain revert and on what
+    /// reason bytes the halt carries, but every version agrees the call does
+    /// NOT succeed. Discriminating value: `ok == false`, versus a successful
+    /// `(false, 0)` pause result if the disable short-circuit were widened to
+    /// "no code".
+    function testNonZeroVaultWithoutCodeFailsClosed() external {
+        address codeless = address(0xDEAD);
+        assertEq(codeless.code.length, 0, "the fixture address must genuinely have no code");
+        (bool ok,) = address(this)
+            .call(abi.encodeCall(this.callInPauseWindow, (codeless, ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER)));
+        assertFalse(ok, "a code-less corporate-actions vault must fail closed, never read as no actions");
+    }
+
+    /// The NatSpec states a gas contract: "each query is at most two view calls
+    /// into the vault". That bound is what justifies the whole earliest-pending
+    /// / latest-completed shape, and nothing else in the suite observes call
+    /// COUNTS, so a refactor that always performed both reads (or added a third)
+    /// would be invisible. This arm pins the cheap path: an open pending
+    /// pre-window is decided by the FIRST read, so the completed read is never
+    /// made at all — exactly ONE call into the vault.
+    function testOpenPendingPreWindowMakesExactlyOneVaultCall() external {
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + BEFORE / 2));
+        vm.expectCall(address(mock), _pendingCalldata(), 1);
+        vm.expectCall(address(mock), _completedCalldata(), 0);
+        (bool paused,) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "the single pending read is enough to decide");
+    }
+
+    /// The other arm of the two-call bound: a pending action OUTSIDE its
+    /// pre-window falls through, and the completed read is then made exactly
+    /// once — two calls in total, never three.
+    function testPendingFallThroughMakesExactlyTwoVaultCalls() external {
+        mock.setEarliestPending(1, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp + 2 * BEFORE + 1));
+        mock.setLatestCompleted(2, ACTION_TYPE_STOCK_SPLIT_V1, uint64(block.timestamp - AFTER / 2));
+        vm.expectCall(address(mock), _pendingCalldata(), 1);
+        vm.expectCall(address(mock), _completedCalldata(), 1);
+        (bool paused,) =
+            LibCorporateActionsPause.inPauseWindow(address(mock), ACTION_TYPE_STOCK_SPLIT_V1, BEFORE, AFTER);
+        assertEq(paused, true, "the fall-through decides on exactly one completed read");
+    }
+
+    /// The exact calldata of the PENDING read the library is specified to make:
+    /// `earliestActionOfType(mask, PENDING)`.
+    function _pendingCalldata() internal pure returns (bytes memory) {
+        return abi.encodeCall(
+            ICorporateActionsV1.earliestActionOfType, (ACTION_TYPE_STOCK_SPLIT_V1, CompletionFilter.PENDING)
+        );
+    }
+
+    /// The exact calldata of the COMPLETED read the library is specified to
+    /// make: `latestActionOfType(mask, COMPLETED)`.
+    function _completedCalldata() internal pure returns (bytes memory) {
+        return abi.encodeCall(
+            ICorporateActionsV1.latestActionOfType, (ACTION_TYPE_STOCK_SPLIT_V1, CompletionFilter.COMPLETED)
+        );
     }
 
     /// External wrapper around the internal library call so revert-propagation
