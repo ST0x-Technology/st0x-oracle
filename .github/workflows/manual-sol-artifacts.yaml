@@ -33,7 +33,7 @@ on:
         type: string
         default: ''
       st0x-signer:
-        description: 'signed-price-stack ONLY: global publisher signer address (checksummed).'
+        description: 'signed-price-stack ONLY: global publisher signer address (checksummed). Must NOT be the deploy key.'
         required: false
         type: string
         default: ''

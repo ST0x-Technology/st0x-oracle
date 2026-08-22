@@ -40,12 +40,14 @@ bytes32 constant DEPLOYMENT_SUITE_SIGNED_PRICE_STACK = keccak256("signed-price-s
 /// environment variable; the broadcast key comes from DEPLOYMENT_KEY and the
 /// beacon owner from BEACON_INITIAL_OWNER (both required, no defaults).
 ///
-/// Run a suite manually with:
+/// Run a suite manually with (DEPLOYMENT_KEY must be in the ENVIRONMENT —
+/// `run()` reads it via `vm.envUint`, so a bare `--private-key` flag with an
+/// unexported shell variable aborts with "environment variable not found"):
 ///     DEPLOYMENT_SUITE=dia-vault-oracle \
 ///     BEACON_INITIAL_OWNER=0x<governance-multisig> \
+///     DEPLOYMENT_KEY=0x<deploy-key> \
 ///         forge script script/Deploy.sol:Deploy \
-///         --rpc-url $ETH_RPC_URL --broadcast \
-///         --private-key $DEPLOYMENT_KEY
+///         --rpc-url $ETH_RPC_URL --broadcast
 ///
 /// Omit `--broadcast` to dry-run.
 contract Deploy is Script {
@@ -132,10 +134,12 @@ contract Deploy is Script {
             MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: beaconInitialOwner, central: central})
         );
 
-        // Postcondition: the central store carries the requested signer and the
-        // ORACLE_ADMIN_ROLE grant, so signer rotation is callable from
-        // day one and no post-deploy grant step is left dangling.
+        // Postcondition: the central store carries the requested signer and
+        // BOTH role grants, so signer rotation and role administration are
+        // callable from day one and no post-deploy grant step is left
+        // dangling.
         require(central.signer() == signer, "signer mismatch");
+        require(central.hasRole(central.DEFAULT_ADMIN_ROLE(), admin), "admin role not granted");
         require(central.hasRole(central.ORACLE_ADMIN_ROLE(), oracleAdmin), "oracle admin role not granted");
 
         // Postcondition: both beacons — which control the implementation behind
