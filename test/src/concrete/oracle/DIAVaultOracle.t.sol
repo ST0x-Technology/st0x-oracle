@@ -59,7 +59,7 @@ contract DIAVaultOracleTest is Test {
     // clock skew, so the default config carries a 1h margin over the 1h maxAge.
     uint64 internal constant PAUSE_AFTER = 2 hours;
 
-    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
+    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config, address corporateActionsVault);
 
     function setUp() public {
         implementation = new DIAVaultOracle();
@@ -715,7 +715,7 @@ contract DIAVaultOracleTest is Test {
         DIAVaultOracleConfig memory config = _defaultConfig();
 
         vm.expectEmit(true, false, false, true, address(oracle));
-        emit DIAVaultOracleInitialized(address(this), config);
+        emit DIAVaultOracleInitialized(address(this), config, address(actions));
 
         bytes32 ok = oracle.initialize(abi.encode(config));
         assertEq(ok, ICLONEABLE_V2_SUCCESS);

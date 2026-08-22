@@ -378,10 +378,12 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
     }
 
     /// @notice Emitted when the oracle is initialized. Single source of
-    /// truth for off-chain indexers — all immutable config in one event.
+    /// truth for off-chain indexers — all immutable state in one event.
     /// @param sender The caller that initialized the proxy.
     /// @param config The initialization configuration.
-    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config);
+    /// @param corporateActionsVault The derived `ICorporateActionsV1` vault
+    /// gating the mandatory auto-pause.
+    event DIAVaultOracleInitialized(address indexed sender, DIAVaultOracleConfig config, address corporateActionsVault);
 
     constructor() {
         _disableInitializers();
@@ -547,7 +549,7 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         $.pauseTimeBefore = config.pauseTimeBefore;
         $.pauseTimeAfter = config.pauseTimeAfter;
 
-        emit DIAVaultOracleInitialized(msg.sender, config);
+        emit DIAVaultOracleInitialized(msg.sender, config, derivedCorporateActionsVault);
 
         return ICLONEABLE_V2_SUCCESS;
     }
