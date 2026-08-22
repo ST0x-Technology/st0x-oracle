@@ -166,8 +166,10 @@ error HistoricalRoundDataUnsupported(uint80 roundId);
 /// start pausing. Must be non-zero, sized above the worst-case ex-date →
 /// `effectiveTime` lead — see `ZeroPauseTimeBefore`.
 /// @param pauseTimeAfter Seconds after a completed action's `effectiveTime` to
-/// keep pausing. Both windows are individually mandatory (each has its own
-/// strict check), AND `pauseTimeAfter > maxAge` (STRICTLY) is REQUIRED and
+/// keep pausing. Both windows are mandatory: a zero `pauseTimeBefore` has its
+/// own strict check, and a zero `pauseTimeAfter` is subsumed by the
+/// cross-epoch invariant below (`maxAge` is non-zero, so zero can never
+/// exceed it). `pauseTimeAfter > maxAge` (STRICTLY) is REQUIRED and
 /// enforced at init
 /// (`PauseTimeAfterBelowMaxAge`) — the post-action pause must outlast the DIA
 /// staleness window so a pre-action price can never be served against the
