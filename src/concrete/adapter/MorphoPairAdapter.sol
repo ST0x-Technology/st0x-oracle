@@ -39,7 +39,7 @@ error PriceRoundsToZero(uint256 central);
 error RatioMismatch(uint256 storedRatio, uint256 liveRatio);
 
 /// @dev The stored central price carries a non-zero NAV ratio but the
-/// collateral token could not be probed for a live one (no code, a reverting
+/// collateral token could not be probed for a live one (a reverting
 /// `convertToAssets`, or malformed return data). The adapter never serves a
 /// price whose ratio it cannot verify, so the read fails closed.
 /// @param baseToken The collateral token that failed the ratio probe.
@@ -256,10 +256,14 @@ contract MorphoPairAdapter is Initializable, IOracle {
         MainStorage storage $ = _main();
         (uint256 central, uint256 ratio) = iCentral.price($.pairId);
         address base = $.baseToken;
-        // Low-level staticcall rather than a typed call so every probe
-        // failure — no code at the token, a reverting implementation, or
-        // malformed return data — uniformly classifies the collateral as
-        // not-a-vault instead of bubbling an opaque revert.
+        // Low-level staticcall rather than a typed call so a probe failure —
+        // a reverting implementation or malformed return data — uniformly
+        // classifies the collateral as not-a-vault instead of bubbling the
+        // revert. A code-less token cannot reach this read (initialize's
+        // typed `decimals()` call rejects it, and deployed code cannot
+        // vanish). A pathologically large return is copied before the length
+        // check and exhausts gas instead of classifying — fail-closed, since
+        // an out-of-gas read serves nothing.
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory data) = base.staticcall(abi.encodeCall(IERC4626.convertToAssets, (NAV_RATIO_SHARES)));
         if (ok && data.length == 32) {
