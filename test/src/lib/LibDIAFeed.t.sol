@@ -9,9 +9,11 @@ import {DIA_FEED_BASE} from "../../../src/lib/LibDIAFeed.sol";
 /// @notice `DIA_FEED_BASE` is the single repo-level constant for the live DIA
 /// push-oracle feed on Base. It is a deployment-address fact, not a derived
 /// value, so the only thing a test can prove offline is that it has not
-/// DRIFTED: every DIA-backed vault oracle is wired to whatever this literal
-/// says, and a silent edit (a fat-fingered nibble, a copy-paste from another
-/// chain's deployment) would point every oracle at an address with no feed.
+/// DRIFTED: no contract under `src/` reads it — per-vault oracles take their
+/// feed from config — but the fork test and the README wiring example both
+/// key off this literal, so a silent edit (a fat-fingered nibble, a
+/// copy-paste from another chain's deployment) would steer every operator
+/// copying the example to an address with no feed.
 ///
 /// Before this test the constant was referenced only by the fork test, which
 /// `vm.mockCall`s `getValue` AT that address — so the mock answers for any
