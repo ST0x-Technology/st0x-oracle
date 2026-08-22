@@ -4,7 +4,7 @@
 # it by hand.
 [package]
 name = "st0x-oracle"
-version = "0.1.0"
+version = "0.1.1"
 
 [profile.default]
 libs = ['dependencies']
