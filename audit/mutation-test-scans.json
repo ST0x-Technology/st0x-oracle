@@ -33,5 +33,30 @@
       "filed": [],
       "note": "Final pre-audit run over the fully-remediated tree (#291-298 merged). 4 group workers, fresh clone each. Every non-equivalent mutant killed by the existing suite; no coverage gap, no new test. 4 provably-equivalent mutants; 1 further survivor is a defensive postcondition require() in Deploy.sol whose deletion is equivalent (redundant with an external assertEq, condition-flip killed) \u2014 not a coverage gap. Zero adversarial candidates, zero findings filed."
     }
+  },
+  {
+    "timestamp": "2026-08-20T14:30:00Z",
+    "commit": "b35c172838446de0f2422e144c960f725b65079a",
+    "testsAfterCommit": "c4514e1c1d5fe496fcce618bdb6f6c7a68d3f931",
+    "publishedTag": null,
+    "commitsAheadOfTag": null,
+    "scope": "whole repo",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.34.0",
+    "summary": {
+      "behaviours": 276,
+      "killedByExisting": 227,
+      "gapsFilled": 43,
+      "equivalentArgued": 5,
+      "candidates": 43,
+      "filed": [
+        "#324",
+        "#325",
+        "#326",
+        "#327",
+        "#328"
+      ],
+      "note": "Post-remediation main (Protofire fixes #301-#306, NAV ratio #300). 13 opus workers, fresh clone each, probe via mutation-probe. Coverage landed as PRs #311-#317, #319-#323 (207 -> 243 tests at c4514e1). 43 adversarial candidates: 5 filed, 1 pre-answered by #318, remainder documented-intent (dispositions in the campaign record)."
+    }
   }
 ]
