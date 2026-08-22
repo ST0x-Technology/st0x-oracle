@@ -22,6 +22,7 @@ import {
     EmptySymbol,
     DIAPriceNotSet,
     DIAPriceStale,
+    DIAPriceFarFuture,
     ZeroVaultSupply,
     ZeroVaultSharePrice,
     VaultSharePriceOverflow,
@@ -1068,6 +1069,46 @@ contract DIAVaultOracleTest is Test {
 
         int256 answer = oracle.latestAnswer();
         assertEq(answer, int256(100e8), "future-timestamped push is fresh, not stale");
+    }
+
+    /// @notice Forward acceptance is BOUNDED: a push stamped `maxAge` or more
+    /// ahead of block time reverts `DIAPriceFarFuture` carrying the offending
+    /// stamp. Unbounded acceptance would let a wrong-scale (e.g. milliseconds)
+    /// or corrupt stamp hold the feed "fresh" until wall clock caught up —
+    /// staleness protection disabled for the whole overshoot. The edge fails
+    /// closed, mirroring the stale edge: exactly `now + maxAge` is rejected.
+    function testFarFutureTimestampRejectedAtBound() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        uint256 atBound = block.timestamp + MAX_AGE;
+        diaOracle.setValue(SYMBOL, 100e18, uint128(atBound));
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceFarFuture.selector, atBound));
+        oracle.latestAnswer();
+
+        // A milliseconds-scale stamp (the wrong-units class) lands far past the
+        // bound and is rejected with the same selector.
+        uint256 msScale = block.timestamp * 1000;
+        diaOracle.setValue(SYMBOL, 100e18, uint128(msScale));
+        vm.expectRevert(abi.encodeWithSelector(DIAPriceFarFuture.selector, msScale));
+        oracle.latestAnswer();
+    }
+
+    /// @notice One second inside the forward bound is accepted and served as
+    /// fresh, with `latestRoundData` clamping the reported time to the block
+    /// clock. Pins the accepted window's upper edge as open at exactly
+    /// `now + maxAge`: `now + maxAge - 1` serves, `now + maxAge` reverts.
+    function testFarFutureBoundUpperEdgeIsOpen() external {
+        DIAVaultOracle oracle = _deployProxy(_defaultConfig());
+        vault.setTotalAssets(1e18);
+        vault.setTotalSupply(1e18);
+
+        uint256 justInside = block.timestamp + MAX_AGE - 1;
+        diaOracle.setValue(SYMBOL, 100e18, uint128(justInside));
+        (, int256 answer,, uint256 updatedAt,) = oracle.latestRoundData();
+        assertEq(answer, int256(100e8), "one second inside the bound is fresh");
+        assertEq(updatedAt, block.timestamp, "reported time is clamped to the block clock");
     }
 
     /// @notice The staleness edge fails closed: a push aged EXACTLY `maxAge`

@@ -98,6 +98,18 @@ error DIAPriceNotSet();
 /// @param timestamp The `block.timestamp` of the stale DIA push.
 error DIAPriceStale(uint256 timestamp);
 
+/// @dev Error raised when the DIA reading is stamped `maxAge` or more AHEAD
+/// of block time. Small forward source-clock skew is tolerated as fresh (age
+/// 0), but a stamp at wrong scale (e.g. milliseconds) or from a corrupt push
+/// would otherwise be served as perpetually fresh until wall clock caught up
+/// — staleness protection silently disabled for the whole overshoot. The
+/// accepted source-stamp window is therefore symmetric and open at both
+/// edges: `(block.timestamp - maxAge, block.timestamp + maxAge)`. A dedicated
+/// selector so integrators can tell a far-future push from a stale or unset
+/// one.
+/// @param timestamp The source timestamp of the far-future push.
+error DIAPriceFarFuture(uint256 timestamp);
+
 /// @dev Error raised on every read inside a corporate-action pause window.
 /// @param effectiveTime The `effectiveTime` of the action whose window is
 /// currently open. When a pending and a completed action's window overlap
@@ -580,11 +592,14 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
     ///
     /// `startedAt`/`updatedAt` are the push's source timestamp CLAMPED to
     /// `block.timestamp`. `_readDIAChecked` deliberately accepts a future-dated
-    /// push (a feed running slightly ahead) as fresh; returning that raw
-    /// future timestamp here would make a Chainlink-style consumer computing
-    /// `block.timestamp - updatedAt` underflow-revert. Clamping reports such a
-    /// fresh push as age 0 — which is what "fresh" means — and never emits a
-    /// timestamp ahead of the block clock.
+    /// push as fresh up to `maxAge` ahead (beyond that it reverts
+    /// `DIAPriceFarFuture`); returning that raw future timestamp here would
+    /// make a Chainlink-style consumer computing `block.timestamp - updatedAt`
+    /// underflow-revert. Clamping reports such a fresh push as age 0 — which
+    /// is what "fresh" means — and never emits a timestamp ahead of the block
+    /// clock. The same bound is what keeps the `uint80` round id window
+    /// honest: a source stamp can never exceed `block.timestamp + maxAge`, so
+    /// truncation is unreachable for any plausible deployment lifetime.
     function latestRoundData()
         external
         view
@@ -644,10 +659,15 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         //
         // A push timestamped at or before `now` applies the `maxAge` window. A
         // push timestamped in the FUTURE (a feed running slightly ahead, or a
-        // chain-time regression / reorg) is treated as fresh (age 0), never
-        // stale: the `<= block.timestamp` guard short-circuits the subtraction
-        // so it can never underflow into a bare `Panic(0x11)` that integrators
-        // cannot disambiguate from `DIAPriceStale` / `DIAPriceNotSet`.
+        // chain-time regression / reorg) is treated as fresh (age 0) up to
+        // `maxAge` ahead: the `<= block.timestamp` guard short-circuits the
+        // subtraction so it can never underflow into a bare `Panic(0x11)` that
+        // integrators cannot disambiguate from `DIAPriceStale` /
+        // `DIAPriceNotSet`. Beyond that bound the push reverts
+        // `DIAPriceFarFuture`: unbounded forward acceptance would let a
+        // wrong-scale or corrupt stamp disable staleness until wall clock
+        // caught up. Both edges fail closed, so the accepted window is
+        // symmetric and open: `(now - maxAge, now + maxAge)`.
         //
         // The staleness edge fails closed (`>=`): a push exactly `maxAge` old is
         // STALE. This is deliberate — it tightens the cross-epoch invariant by
@@ -656,6 +676,10 @@ contract DIAVaultOracle is AggregatorV2V3Interface, ICloneableV2, Initializable 
         // own make the invariant "airtight" — the margin `pauseTimeAfter -
         // maxAge` must still cover the feed's forward source-clock skew, which
         // is why init requires that margin to be strictly positive.
+        // slither-disable-next-line timestamp
+        if (uint256(timestamp) >= block.timestamp + $.maxAge) {
+            revert DIAPriceFarFuture(uint256(timestamp));
+        }
         // slither-disable-next-line timestamp
         if (uint256(timestamp) <= block.timestamp && block.timestamp - uint256(timestamp) >= $.maxAge) {
             revert DIAPriceStale(uint256(timestamp));
