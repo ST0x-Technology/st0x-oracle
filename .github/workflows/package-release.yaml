@@ -20,8 +20,12 @@ jobs:
     uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
     with:
       soldeer-package: st0x-oracle
-    # inherit, not an explicit list: CACHIX_AUTH_TOKEN is consumed by the
-    # reusable's nix-cachix-setup composite without being a declared
-    # workflow_call secret, so it only arrives via inherit. Publishing needs
-    # SOLDEER_API_TOKEN available to this repo (org or repo secret).
-    secrets: inherit
+    # Explicit, not `secrets: inherit`: inherit resolves every secret to
+    # empty across this cross-org reusable call (probed — the same secrets
+    # resolve fine in a workflow local to this repo), the same reason
+    # st0x.deploy's caller passes its secrets explicitly. Only secrets the
+    # reusable declares in `workflow_call` can be passed; CACHIX_AUTH_TOKEN
+    # is consumed by its nix-cachix-setup composite without being declared,
+    # so cachix pushing stays disabled here until rainix declares it.
+    secrets:
+      SOLDEER_API_TOKEN: ${{ secrets.SOLDEER_API_TOKEN }}
