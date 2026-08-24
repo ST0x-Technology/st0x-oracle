@@ -7,6 +7,8 @@ import {AccessControlUpgradeable} from "@openzeppelin-contracts-upgradeable-5.6.
 import {ECDSA} from "@openzeppelin-contracts-5.6.1/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin-contracts-5.6.1/utils/cryptography/MessageHashUtils.sol";
 
+import {IST0xPriceOracle} from "../../interface/IST0xPriceOracle.sol";
+
 /// @title ST0xPriceOracle
 /// @notice Singleton multi-pair price store. Lives behind a beacon proxy:
 /// Initializable + AccessControl with ERC-7201 namespaced storage.
@@ -93,7 +95,13 @@ import {MessageHashUtils} from "@openzeppelin-contracts-5.6.1/utils/cryptography
 ///  - `DEFAULT_ADMIN_ROLE` — role administration only (granted to `admin`
 ///    at `initialize`).
 ///  - `ORACLE_ADMIN_ROLE` — `setSigner`.
-contract ST0xPriceOracle is Initializable, AccessControlUpgradeable {
+///
+/// The permissionless surface is declared by `IST0xPriceOracle`, which is
+/// what downstream consumers import instead of hand-copying signatures;
+/// implementing it here makes the compiler reject any drift between the
+/// two (see the interface's NatSpec for why that drift is otherwise
+/// silent).
+contract ST0xPriceOracle is IST0xPriceOracle, Initializable, AccessControlUpgradeable {
     /// @notice Role gating `setSigner` (rotation of the global publisher
     /// key). Granted to `oracleAdmin` at `initialize`; distinct from
     /// `DEFAULT_ADMIN_ROLE`, which only administers roles and cannot itself
