@@ -11,6 +11,7 @@ on:
           - base_sepolia
           - ethereum
           - sepolia
+          - hyperevm
       suite:
         description: 'Suite to deploy'
         required: true
@@ -37,6 +38,12 @@ on:
         required: false
         type: string
         default: ''
+      legacy:
+        description: >-
+          Send type-0 (legacy) transactions. Needed for HyperEVM, whose RPC rejects the fee-history ranges EIP-1559 estimation asks for. Type-0 works everywhere, so setting it for other networks is safe too.
+        required: false
+        type: boolean
+        default: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -80,6 +87,7 @@ jobs:
           ST0X_ORACLE_ADMIN: ${{ inputs.st0x-oracle-admin }}
           ST0X_SIGNER: ${{ inputs.st0x-signer }}
           DEPLOY_BROADCAST: '1'
+          DEPLOY_LEGACY: ${{ inputs.legacy && '1' || '' }}
           DEPLOYMENT_KEY: ${{ github.ref == 'refs/heads/main' && secrets.PRIVATE_KEY || secrets.PRIVATE_KEY_DEV }}
           ETH_RPC_URL: ${{ secrets[env.rpc_secret_name] || vars[env.rpc_secret_name] || '' }}
           ETHERSCAN_API_KEY: ${{ secrets[env.etherscan_api_key_secret_name] || vars[env.etherscan_api_key_secret_name] || ''}}
