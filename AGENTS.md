@@ -31,9 +31,9 @@ Via `manual-sol-artifacts.yaml` only (runs `script/Deploy.sol` with a
 `DEPLOYMENT_SUITE`), never locally. Deployed addresses are kept as `.sol`
 constants, not a separate registry file.
 
-- `BEACON_INITIAL_OWNER` and the `st0x-*` role inputs must each differ from the
-  deploy key — beacon owner and signer control every served price, so they are
-  governance, never the hot CI key. `Deploy.sol` enforces this; do not weaken
+- `BEACON_INITIAL_OWNER` must differ from the deploy key — the beacon owner
+  controls the implementation behind every proxy, i.e. every served price, so it
+  is governance, never the hot CI key. `Deploy.sol` enforces this; do not weaken
   it.
 - **Hazard:** a missing `CI_DEPLOY_<NETWORK>_<SUFFIX>` secret resolves to empty
   and the deploy proceeds UNVERIFIED instead of erroring — confirm all five
