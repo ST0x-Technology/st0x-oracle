@@ -6,19 +6,10 @@ import {Script, console2} from "forge-std-1.16.1/src/Script.sol";
 import {Ownable} from "@openzeppelin-contracts-5.6.1/access/Ownable.sol";
 
 import {DIAVaultOracle} from "../src/concrete/oracle/DIAVaultOracle.sol";
-import {ST0xPriceOracle} from "../src/concrete/oracle/ST0xPriceOracle.sol";
 import {
     DIAVaultOracleBeaconSetDeployer,
     DIAVaultOracleBeaconSetDeployerConfig
 } from "../src/concrete/deploy/DIAVaultOracleBeaconSetDeployer.sol";
-import {
-    ST0xPriceOracleBeaconSetDeployer,
-    ST0xPriceOracleBeaconSetDeployerConfig
-} from "../src/concrete/deploy/ST0xPriceOracleBeaconSetDeployer.sol";
-import {
-    MorphoPairAdapterBeaconSetDeployer,
-    MorphoPairAdapterBeaconSetDeployerConfig
-} from "../src/concrete/deploy/MorphoPairAdapterBeaconSetDeployer.sol";
 
 /// @dev Deploys the DIA stack infra: a fresh `DIAVaultOracle` implementation
 /// and its beacon-set deployer. No per-vault proxies are minted — each vault's
@@ -26,21 +17,13 @@ import {
 /// vault's DIA feed + corporate-action pause config.
 bytes32 constant DEPLOYMENT_SUITE_DIA_VAULT_ORACLE = keccak256("dia-vault-oracle");
 
-/// @dev Deploys the signed-price stack infra: a fresh `ST0xPriceOracle`
-/// implementation and its beacon-set deployer, the singleton central store
-/// minted through that deployer, and a `MorphoPairAdapterBeaconSetDeployer`
-/// bound to that singleton. No per-market adapter proxies are minted — those
-/// are deployed per Morpho market through the adapter beacon-set deployer with
-/// the correct base/quote for that market.
-bytes32 constant DEPLOYMENT_SUITE_SIGNED_PRICE_STACK = keccak256("signed-price-stack");
-
 /// @title Deploy
 /// @notice Deployment entry point consumed by `rainix-sol-artifacts`
 /// (`manual-sol-artifacts.yaml`). Dispatches on the DEPLOYMENT_SUITE
 /// environment variable; the broadcast key comes from DEPLOYMENT_KEY and the
 /// beacon owner from BEACON_INITIAL_OWNER (both required, no defaults).
 ///
-/// Run a suite manually with (DEPLOYMENT_KEY must be in the ENVIRONMENT —
+/// Run the suite manually with (DEPLOYMENT_KEY must be in the ENVIRONMENT —
 /// `run()` reads it via `vm.envUint`, so a bare `--private-key` flag with an
 /// unexported shell variable aborts with "environment variable not found"):
 ///     DEPLOYMENT_SUITE=dia-vault-oracle \
@@ -80,87 +63,6 @@ contract Deploy is Script {
         return oracleBSD;
     }
 
-    /// @notice Deploys the signed-price stack infra: a fresh `ST0xPriceOracle`
-    /// implementation and its beacon-set deployer, the singleton central store
-    /// minted through that deployer, and a `MorphoPairAdapterBeaconSetDeployer`
-    /// bound to that singleton. No per-market adapter proxies are minted here.
-    /// Assumes the caller has an active broadcast. Reads the oracle config from
-    /// env: `ST0X_ADMIN`, `ST0X_ORACLE_ADMIN`, `ST0X_SIGNER` (addresses).
-    /// @param beaconInitialOwner Initial owner of both beacons.
-    /// @return central The singleton central `ST0xPriceOracle` store.
-    /// @return oracleBSD The deployed `ST0xPriceOracleBeaconSetDeployer`.
-    /// @return adapterBSD The deployed `MorphoPairAdapterBeaconSetDeployer`.
-    function deploySignedPriceStack(address beaconInitialOwner, address deployer)
-        internal
-        returns (
-            ST0xPriceOracle central,
-            ST0xPriceOracleBeaconSetDeployer oracleBSD,
-            MorphoPairAdapterBeaconSetDeployer adapterBSD
-        )
-    {
-        address admin = vm.envAddress("ST0X_ADMIN");
-        address oracleAdmin = vm.envAddress("ST0X_ORACLE_ADMIN");
-        address signer = vm.envAddress("ST0X_SIGNER");
-
-        // ST0X_ADMIN holds DEFAULT_ADMIN_ROLE, the role-admin for
-        // ORACLE_ADMIN_ROLE — so it can grant itself ORACLE_ADMIN_ROLE and
-        // rotate the publisher signer, i.e. fully control every served
-        // price. It (and ST0X_ORACLE_ADMIN, which rotates it directly) must
-        // therefore be governance, never the hot CI deploy key — the same
-        // separation the beacon owner enforces. Fail the deploy loudly rather
-        // than silently leaving the feed under the deploy key's control.
-        //
-        // ST0X_SIGNER gets the SAME guard: `updatePrice` is permissionless and
-        // authorised solely by this signer's EIP-712 signature, so the signer
-        // controls every served price even MORE directly than the two admin
-        // roles — a copy-pasted signer equal to the hot deploy key would ship
-        // the feed under CI's control with no other guard catching it.
-        require(admin != deployer, "ST0X_ADMIN must not be the deploy key");
-        require(oracleAdmin != deployer, "ST0X_ORACLE_ADMIN must not be the deploy key");
-        require(signer != deployer, "ST0X_SIGNER must not be the deploy key");
-
-        ST0xPriceOracle oracleImpl = new ST0xPriceOracle();
-        oracleBSD = new ST0xPriceOracleBeaconSetDeployer(
-            ST0xPriceOracleBeaconSetDeployerConfig({
-                initialOwner: beaconInitialOwner, initialST0xPriceOracleImplementation: address(oracleImpl)
-            })
-        );
-
-        // The singleton central store, minted through its own beacon-set
-        // deployer so its creation is atomic and recorded (Deployment event).
-        central = oracleBSD.newST0xPriceOracle(admin, oracleAdmin, signer);
-
-        adapterBSD = new MorphoPairAdapterBeaconSetDeployer(
-            MorphoPairAdapterBeaconSetDeployerConfig({initialOwner: beaconInitialOwner, central: central})
-        );
-
-        // Postcondition: the central store carries the requested signer and
-        // BOTH role grants, so signer rotation and role administration are
-        // callable from day one and no post-deploy grant step is left
-        // dangling.
-        require(central.signer() == signer, "signer mismatch");
-        require(central.hasRole(central.DEFAULT_ADMIN_ROLE(), admin), "admin role not granted");
-        require(central.hasRole(central.ORACLE_ADMIN_ROLE(), oracleAdmin), "oracle admin role not granted");
-
-        // Postcondition: both beacons — which control the implementation behind
-        // every proxy, i.e. every served price — must be owned by the requested
-        // owner, never left with the (hot, CI-held) deploy key.
-        require(
-            Ownable(address(oracleBSD.iST0xPriceOracleBeacon())).owner() == beaconInitialOwner,
-            "oracle beacon owner mismatch"
-        );
-        require(
-            Ownable(address(adapterBSD.iMorphoPairAdapterBeacon())).owner() == beaconInitialOwner,
-            "adapter beacon owner mismatch"
-        );
-
-        console2.log("=== Deployed signed-price stack infra ===");
-        console2.log("oracleImpl", address(oracleImpl));
-        console2.log("oracleBSD", address(oracleBSD));
-        console2.log("central", address(central));
-        console2.log("adapterBSD", address(adapterBSD));
-    }
-
     /// @notice Entry point. Dispatches to the requested deployment suite
     /// based on the DEPLOYMENT_SUITE environment variable.
     ///
@@ -182,10 +84,6 @@ contract Deploy is Script {
         if (suite == DEPLOYMENT_SUITE_DIA_VAULT_ORACLE) {
             vm.startBroadcast(deploymentKey);
             deployDIAStackInfra(beaconInitialOwner);
-            vm.stopBroadcast();
-        } else if (suite == DEPLOYMENT_SUITE_SIGNED_PRICE_STACK) {
-            vm.startBroadcast(deploymentKey);
-            deploySignedPriceStack(beaconInitialOwner, deployer);
             vm.stopBroadcast();
         } else {
             revert("Unknown deployment suite");

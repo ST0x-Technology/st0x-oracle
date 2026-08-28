@@ -1,14 +1,14 @@
 # st0x.oracle
 
-Oracle contracts for pricing ST0x tokenized equities on-chain. The repo houses
-**two independent stacks** that share tooling but no runtime dependency — deploy
-either without the other:
+Oracle contracts for pricing ST0x tokenized equities on-chain.
 
-- **DIA stack** — prices `wtStock` ERC-4626 vault shares for
-  Chainlink-compatible lending markets (Euler, Aave V3, Compound V3). One proxy
-  address per vault behind `AggregatorV2V3Interface`.
-- **Signed-price stack** — a publisher-signed multi-pair price store plus a
-  per-market adapter that exposes those prices to Morpho Blue's `IOracle`.
+The repo houses one oracle-adapter stack — the **DIA stack** — which prices
+`wtStock` ERC-4626 vault shares for Chainlink-compatible lending markets (Euler,
+Aave V3, Compound V3), one proxy address per vault behind
+`AggregatorV2V3Interface`. Additional oracle adapters (other price sources,
+other consumer conventions) may be added over time; each follows this same
+pattern — a self-contained consumer-facing contract per vault, minted through
+its own beacon-set deployer.
 
 ## DIA stack
 
@@ -127,8 +127,6 @@ already plug Chainlink feeds into.
 > scans. Nothing is deployed to production yet, so the concrete home of that
 > list (deploy artifacts, `.sol` constants, or a docs page) is TBC along with
 > the rest of the ops process; until it exists, treat no instance as canonical.
-> This applies identically to both stacks (`DIAVaultOracle`, `ST0xPriceOracle`,
-> `MorphoPairAdapter`).
 
 ### Operational Preconditions for Consumers
 
@@ -157,75 +155,6 @@ two constraints, or the pause feature is silently defeated:
    confiscation must be preceded by a scheduled corporate action so the pause
    brackets the discontinuity.
 
-## Signed-price stack
-
-A publisher-signed price feed for Morpho Blue markets, split across two
-contracts: a shared store (`ST0xPriceOracle`) that holds signed prices for many
-pairs, and a thin per-market adapter (`MorphoPairAdapter`) that reshapes one
-pair into the exact convention Morpho expects.
-
-```text
-         EIP-712 signed (pairId, price, timestamp, expiry)
-publisher ───────────────────────────────────────────────▶┌───────────────────┐
-                                                          │  ST0xPriceOracle  │  ← singleton
-                                                          │  multi-pair store │     store
-                                                          │  opaque uint256   │
-                                                          └─────────┬─────────┘
-                                                        price(pairId)│
-                                                                     ▼
-Morpho Blue ────── IOracle.price() ──────────────────────▶┌───────────────────┐
-                                                          │ MorphoPairAdapter │  ← one per
-                                                          │  rescale → 1e36·  │     market
-                                                          │  10^loanDec/collDec│
-                                                          └───────────────────┘
-```
-
-- **`ST0xPriceOracle`** — singleton multi-pair price store behind a beacon
-  proxy. This is the actual pricing source. Pair ids are deterministic
-  (`keccak256(abi.encodePacked(base, quote))`, no registration); values are
-  opaque `uint256`s whose scaling belongs to the publisher. `updatePrice` is
-  permissionless — a global publisher's EIP-712 signature authorises each
-  update, replay-protected by a strict per-pair timestamp inequality
-  (not-strictly-newer payloads no-op, future-dated payloads revert). Every
-  payload also carries the publisher's signed `expiry` — the producer's own
-  validity horizon: a payload whose window has already closed is rejected
-  outright at submission, and `price()` refuses a stored price once its expiry
-  passes. There is no consumer-side staleness knob — the publisher controls the
-  stale window per payload, with nothing to update on-chain (short windows while
-  the underlying market trades, one long window across a close or weekend;
-  window overlap is what bounds a submitter's choice between concurrently-live
-  payloads, so keep it minimal). `expiry - timestamp` is sanity-capped at
-  `MAX_VALIDITY_WINDOW` (30 days) purely to fail a wrong-scale (e.g.
-  milliseconds) signing pipeline closed. The EIP-712 domain deliberately binds
-  name + version only, so one signed payload serves every chain the oracle is
-  deployed on. The global `signer` rotates via an `ORACLE_ADMIN_ROLE`-gated
-  setter.
-- **`MorphoPairAdapter`** — beacon-proxied adapter (not a pricing source, a
-  transformation) exposing one pair on the central store through Morpho Blue's
-  `IOracle.price()`. It owns the decimal conversion: the publisher signs an
-  18-decimal (`PUBLISHER_DECIMALS`) whole-token ratio and the adapter rescales
-  it into Morpho's `1e36·10^loanDec/10^collDec` convention using the pair
-  tokens' on-chain decimals. One shared beacon upgrade retargets every deployed
-  adapter at once.
-
-### Integrator Quickstart
-
-Deploy the store once (via `ST0xPriceOracleBeaconSetDeployer`), then mint one
-adapter per Morpho market through the adapter beacon-set deployer bound to that
-store:
-
-```solidity
-MorphoPairAdapter adapter = morphoPairAdapterBeaconSetDeployer.newMorphoPairAdapter(
-    address(base),   // the pair's base token
-    address(quote)   // the pair's quote token
-);
-```
-
-The `(base, quote)` pair fixes the deterministic `pairId` the adapter reads from
-the store, and the two tokens' on-chain `decimals()` fix the rescale. Hand
-`address(adapter)` to the Morpho market as its `oracle`; the publisher then
-keeps `ST0xPriceOracle` fed with signed prices for that pair.
-
 ## Setup
 
 This project uses Nix flakes for a reproducible toolchain.
@@ -251,26 +180,20 @@ script/
 └── Deploy.sol                       (DEPLOYMENT_SUITE dispatch for CI deploys)
 src/
 ├── concrete/
-│   ├── oracle/                      (pricing sources)
-│   │   ├── DIAVaultOracle.sol       (prices wtStock + corporate-action auto-pause)
-│   │   └── ST0xPriceOracle.sol      (signed multi-pair price store)
-│   ├── adapter/                     (transformations, not pricing sources)
-│   │   └── MorphoPairAdapter.sol    (rescales the store into Morpho's price())
+│   ├── oracle/
+│   │   └── DIAVaultOracle.sol       (prices wtStock + corporate-action auto-pause)
 │   └── deploy/
-│       ├── DIAVaultOracleBeaconSetDeployer.sol
-│       ├── ST0xPriceOracleBeaconSetDeployer.sol
-│       └── MorphoPairAdapterBeaconSetDeployer.sol
+│       └── DIAVaultOracleBeaconSetDeployer.sol
 ├── interface/
 │   ├── IDIAOracleV2.sol         (vendored DIA Data Association's published interface)
-│   ├── IAggregatorV2V3.sol      (vendored Chainlink shape)
-│   └── IOracle.sol              (vendored Morpho Blue oracle shape)
+│   └── IAggregatorV2V3.sol      (vendored Chainlink shape)
 └── lib/
     ├── LibCorporateActionsPause.sol
     └── LibDIAFeed.sol           (single source of truth: DIA Base feed address)
 test/
 ├── mocks/
 └── src/
-    ├── concrete/{oracle,adapter,deploy}/
+    ├── concrete/{oracle,deploy}/
     ├── lib/
     ├── fork/
     ├── script/
